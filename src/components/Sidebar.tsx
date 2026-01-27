@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { usePdf } from '../context/PdfContext';
-import { ChevronRight, ChevronLeft, Trash2, Edit3, CheckSquare, XSquare, Type, History, Layers, Clock, RotateCcw, PanelRightOpen } from 'lucide-react';
+import { ChevronRight, Trash2, Edit3, CheckSquare, XSquare, Type, History, Layers, Clock, RotateCcw, PanelRightOpen } from 'lucide-react';
 
 export const Sidebar: React.FC = () => {
     const { annotations, removeAnnotation, selectedAnnotationId, setSelectedAnnotationId, checkpoints, restoreCheckpoint } = usePdf();
