@@ -59,6 +59,21 @@ export const savePdf = async (file: File, annotations: Annotation[]) => {
                     color: rgb(0, 0.6, 0.2), // Green
                 });
 
+            } else if (annotation.type === 'image' && annotation.imageString) {
+                try {
+                    const pngImage = await pdfDoc.embedPng(annotation.imageString);
+                    const x = annotation.x;
+                    const y = height - annotation.y - (annotation.height || 50); // Bottom-left of image
+
+                    page.drawImage(pngImage, {
+                        x: x,
+                        y: y,
+                        width: annotation.width || 200,
+                        height: annotation.height || 100,
+                    });
+                } catch (e) {
+                    console.error("Failed to embed image", e);
+                }
             } else if (annotation.type === 'x') {
                 const x = annotation.x;
                 const y = height - annotation.y;

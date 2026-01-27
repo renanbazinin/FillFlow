@@ -178,8 +178,19 @@ export const AnnotationLayer: React.FC<AnnotationLayerProps> = ({
                             )}
                             {ann.type === 'check' && <Check size={32 * scale} className="text-green-600" />}
                             {ann.type === 'x' && <X size={32 * scale} className="text-red-600" />}
+                            {ann.type === 'image' && ann.imageString && (
+                                <img
+                                    src={ann.imageString}
+                                    alt="signature"
+                                    className="pointer-events-none select-none"
+                                    style={{
+                                        width: ann.width ? ann.width * scale : 'auto',
+                                        height: ann.height ? ann.height * scale : 'auto',
+                                    }}
+                                />
+                            )}
 
-                            {isSelected && ann.type === 'text' && (
+                            {isSelected && (ann.type === 'text' || ann.type === 'image') && (
                                 <div
                                     className="absolute -bottom-1 -right-1 w-3 h-3 bg-blue-500 border border-white cursor-se-resize"
                                     onMouseDown={(e) => handleResizeMouseDown(e, ann.id, 'se', ann.width || 200, ann.height || 50)}
