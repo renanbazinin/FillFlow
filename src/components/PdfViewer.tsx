@@ -5,7 +5,7 @@ import { PdfPage } from './PdfPage';
 
 export const PdfViewer: React.FC = () => {
     const { file, setNumPages } = usePdf();
-    const [pdfDocument, setPdfDocument] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
+    // const [pdfDocument, setPdfDocument] = useState<pdfjsLib.PDFDocumentProxy | null>(null); // Unused
     const [pages, setPages] = useState<pdfjsLib.PDFPageProxy[]>([]);
     const [loading, setLoading] = useState(false);
     const { setScale } = usePdf();
@@ -19,7 +19,7 @@ export const PdfViewer: React.FC = () => {
                 const arrayBuffer = await file.arrayBuffer();
                 const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
                 const doc = await loadingTask.promise;
-                setPdfDocument(doc);
+                // setPdfDocument(doc);
                 setNumPages(doc.numPages);
 
                 const loadedPages = [];

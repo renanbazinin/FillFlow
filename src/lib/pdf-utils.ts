@@ -24,8 +24,7 @@ export const savePdf = async (file: File, annotations: Annotation[]) => {
             if (annotation.type === 'text' && annotation.content) {
                 // Text needs font size
                 const fontSize = 16; // matched UI roughly
-
-                const textHeight = fontSize; // verify
+                // const textHeight = fontSize; // verify - unused
                 // pdf-lib drawText y is the baseline usually? No, it's bottom-left of text box.
 
                 page.drawText(annotation.content, {
@@ -83,7 +82,7 @@ export const savePdf = async (file: File, annotations: Annotation[]) => {
         }
 
         const pdfBytes = await pdfDoc.save();
-        const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+        const blob = new Blob([pdfBytes as any], { type: 'application/pdf' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
         link.download = `filled_${file.name}`;

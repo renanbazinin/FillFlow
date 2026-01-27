@@ -1,7 +1,6 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { usePdf } from '../context/PdfContext';
-import type { Annotation } from '../types';
-import { Check, X, GripHorizontal, Trash2 } from 'lucide-react';
+import { Check, X, Trash2 } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 
 interface AnnotationLayerProps {
