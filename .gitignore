@@ -118,3 +118,8 @@ dist
 
 # Vite
 dist-electron
+
+# Playwright
+playwright-report/
+test-results/
+blob-report/

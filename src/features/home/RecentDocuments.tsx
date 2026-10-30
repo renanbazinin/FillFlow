@@ -1,0 +1,221 @@
+import { useEffect, useState } from 'react'
+import { Check, Ellipsis, FolderOpen, Trash } from 'lucide-react'
+import { toast } from 'sonner'
+import { Button } from '../../components/ui/button'
+import { confirm } from '../../components/ui/confirm'
+import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../../components/ui/menu'
+import { forgetDocument, listRecentDocuments, loadDocumentBytes, type RecentDocument } from '../../lib/storage/db'
+import { cn } from '../../lib/utils/misc'
+import { useEditor } from '../../store/editor'
+import { usePointerAwareClose } from '../editor/usePointerAwareClose'
+import { displayName } from './pdfFiles'
+import { pluralize, recentMetaLine } from './recentMeta'
+
+/** Recently opened documents (stored only in this browser). Renders nothing when empty. */
+export function RecentDocuments({ className }: { className?: string }) {
+  const [docs, setDocs] = useState<RecentDocument[] | null>(null)
+  const [showSkeleton, setShowSkeleton] = useState(false)
+
+  useEffect(() => {
+    let alive = true
+    const load = () =>
+      listRecentDocuments()
+        .then((list) => alive && setDocs(list))
+        .catch((err) => {
+          console.warn('[recents] could not list documents', err)
+          if (alive) setDocs((prev) => prev ?? [])
+        })
+    // IndexedDB usually answers within a frame; only show a skeleton if it doesn't.
+    const skeletonTimer = window.setTimeout(() => alive && setShowSkeleton(true), 150)
+    void load()
+    // Coming back from the editor, its last save (progress count, thumbnail) may still be
+    // landing: look again shortly, and whenever the tab becomes visible.
+    const refreshTimer = window.setTimeout(load, 900)
+    const onVisible = () => document.visibilityState === 'visible' && void load()
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      alive = false
+      window.clearTimeout(skeletonTimer)
+      window.clearTimeout(refreshTimer)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [])
+
+  const remove = async (doc: RecentDocument) => {
+    const ok = await confirm({
+      title: `Remove “${displayName(doc.name)}”?`,
+      description: 'The file and the work you’ve done on it will be deleted from this device. This can’t be undone.',
+      confirmLabel: 'Remove',
+      danger: true,
+    })
+    if (!ok) return
+    try {
+      await forgetDocument(doc.id)
+      setDocs((list) => list?.filter((d) => d.id !== doc.id) ?? null)
+      toast.success('Removed from this device')
+    } catch {
+      toast.error('Couldn’t remove the document')
+    }
+  }
+
+  const clearAll = async () => {
+    if (!docs?.length) return
+    const ok = await confirm({
+      title: 'Clear all recent documents?',
+      description: `${pluralize(docs.length, 'document')} and the work you’ve done on ${docs.length === 1 ? 'it' : 'them'} will be deleted from this device. This can’t be undone.`,
+      confirmLabel: 'Clear all',
+      danger: true,
+    })
+    if (!ok) return
+    const results = await Promise.allSettled(docs.map((d) => forgetDocument(d.id)))
+    const kept = docs.filter((_, i) => results[i].status === 'rejected')
+    setDocs(kept)
+    if (kept.length) toast.error('Some documents couldn’t be removed')
+    else toast.success('Recent documents cleared')
+  }
+
+  if (docs === null && !showSkeleton) return null
+  if (docs !== null && docs.length === 0) return null
+
+  return (
+    <section aria-labelledby="ff-recents-title" className={className}>
+      <div className="mb-4 flex items-end justify-between gap-4">
+        <div>
+          <h2 id="ff-recents-title" className="text-[15px] font-semibold tracking-[-0.01em] text-fg">
+            Recent documents
+          </h2>
+          <p className="mt-0.5 text-[13px] text-fg-subtle">Saved in this browser only.</p>
+        </div>
+        {docs && (
+          <Button variant="ghost" size="sm" onClick={() => void clearAll()} className="-mr-2 text-fg-subtle">
+            Clear all
+          </Button>
+        )}
+      </div>
+      <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4">
+        {docs
+          ? docs.map((doc, i) => (
+              <RecentCard
+                key={doc.id}
+                doc={doc}
+                index={i}
+                onRemove={() => void remove(doc)}
+                onMissing={() => {
+                  void forgetDocument(doc.id).catch(() => {})
+                  setDocs((list) => list?.filter((d) => d.id !== doc.id) ?? null)
+                }}
+              />
+            ))
+          : Array.from({ length: 4 }, (_, i) => <SkeletonCard key={i} />)}
+      </ul>
+    </section>
+  )
+}
+
+function RecentCard({
+  doc,
+  index,
+  onRemove,
+  onMissing,
+}: {
+  doc: RecentDocument
+  index: number
+  onRemove: () => void
+  /** The file's bytes are gone (storage evicted): drop the stale card. */
+  onMissing: () => void
+}) {
+  const name = displayName(doc.name)
+  const closeHandlers = usePointerAwareClose()
+  const open = async () => {
+    const ok = await useEditor.getState().openRecent(doc.id, doc.name)
+    if (!ok && !(await loadDocumentBytes(doc.id).catch(() => null))) onMissing()
+  }
+  const filled = doc.filledCount ?? 0
+  return (
+    <li
+      className="group relative flex flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-xs transition-[translate,box-shadow,border-color] duration-200 ease-out animate-slide-up [animation-fill-mode:both] hover:-translate-y-0.5 hover:border-line-strong hover:shadow-float"
+      style={{ animationDelay: `${Math.min(index, 8) * 35}ms` }}
+    >
+      <div className="relative aspect-[4/3] overflow-hidden border-b border-line bg-surface-2">
+        <div className="absolute inset-x-[14%] top-[13%] h-[120%] overflow-hidden rounded-t-[4px] bg-white shadow-page transition-transform duration-300 ease-out group-hover:-translate-y-1">
+          {doc.thumbnail ? (
+            <img src={doc.thumbnail} alt="" loading="lazy" decoding="async" draggable={false} className="w-full select-none" />
+          ) : (
+            <PagePlaceholder />
+          )}
+        </div>
+        {filled > 0 && (
+          <span className="absolute bottom-2 left-2 inline-flex h-[22px] items-center gap-1 rounded-full border border-line bg-surface/95 px-2 text-[11px] font-semibold text-success shadow-xs backdrop-blur">
+            <Check className="size-3" strokeWidth={3} />
+            {filled} filled
+          </span>
+        )}
+      </div>
+      <div className="min-w-0 px-3 pb-3 pt-2.5">
+        <div className="truncate text-left text-[13.5px] font-medium text-fg" title={doc.name} dir="auto">
+          {name}
+        </div>
+        <div className="mt-0.5 truncate text-[12px] text-fg-subtle">{recentMetaLine(doc.pageCount, doc.openedAt)}</div>
+      </div>
+
+      {/* Stretched button: the whole card opens the document. */}
+      <button
+        type="button"
+        onClick={() => void open()}
+        aria-label={`Open ${name}`}
+        title={doc.name}
+        className="absolute inset-0 rounded-2xl focus-visible:outline-offset-[-2px]"
+      />
+
+      <Menu>
+        <MenuTrigger asChild>
+          <button
+            type="button"
+            aria-label={`More options for ${name}`}
+            className="absolute right-2 top-2 z-10 inline-flex size-8 items-center justify-center rounded-lg border border-line bg-surface/95 text-fg-muted opacity-0 shadow-xs backdrop-blur transition-[opacity,color,background-color] duration-150 hover:bg-surface-3 hover:text-fg focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100 pointer-coarse:opacity-100"
+          >
+            <Ellipsis className="size-4" />
+          </button>
+        </MenuTrigger>
+        <MenuContent align="end" className="min-w-56 [&_[role^=menuitem]]:pointer-coarse:h-11" {...closeHandlers}>
+          <MenuItem icon={<FolderOpen />} onSelect={() => void open()}>
+            Open
+          </MenuItem>
+          <MenuSeparator />
+          <MenuItem icon={<Trash />} danger onSelect={onRemove}>
+            Remove from this device
+          </MenuItem>
+        </MenuContent>
+      </Menu>
+    </li>
+  )
+}
+
+/** Stand-in for a missing thumbnail: an abstract page of text lines. */
+function PagePlaceholder() {
+  const lines = ['72%', '88%', '64%', null, '80%', '92%', '56%', null, '84%', '70%', '78%']
+  return (
+    <div className="flex flex-col gap-2 px-[12%] pt-[12%]" aria-hidden>
+      <div className="mb-1 h-[7px] w-[46%] rounded-full bg-[#cfd5de]" />
+      {lines.map((w, i) =>
+        w ? (
+          <div key={i} className="h-[5px] rounded-full bg-[#e6e9ef]" style={{ width: w }} />
+        ) : (
+          <div key={i} className="h-1" />
+        ),
+      )}
+    </div>
+  )
+}
+
+function SkeletonCard() {
+  return (
+    <li className="overflow-hidden rounded-2xl border border-line bg-surface" aria-hidden>
+      <div className="aspect-[4/3] skeleton" />
+      <div className="space-y-2 px-3 pb-3.5 pt-3">
+        <div className={cn('h-3 w-3/4 rounded-full skeleton')} />
+        <div className="h-2.5 w-1/2 rounded-full skeleton" />
+      </div>
+    </li>
+  )
+}

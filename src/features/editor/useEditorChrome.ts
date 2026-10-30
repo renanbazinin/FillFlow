@@ -1,0 +1,83 @@
+import { useEffect } from 'react'
+import { toast } from 'sonner'
+import { getFormDocumentInfo } from '../../lib/pdf/formFields'
+import { useSaveStatus } from '../../lib/storage/autosave'
+import { useEditor } from '../../store/editor'
+import { displayName } from '../home/pdfFiles'
+import { fillableFieldCount, formFieldsMessage } from './docInfo'
+import { RIGHT_PANEL_INLINE } from './useMediaQuery'
+
+/** Documents we've already announced form fields for (once per page load). */
+const announced = new Set<string>()
+
+/** Window-level side effects of the editor: tab title, unsaved-work guard, first-open toast. */
+export function useEditorChrome(): void {
+  const docId = useEditor((s) => s.doc?.id ?? null)
+  const docName = useEditor((s) => s.doc?.name ?? null)
+  const saveFailed = useSaveStatus((s) => s.state === 'error')
+
+  // Tab title: "Lease agreement — FillFlow".
+  useEffect(() => {
+    if (!docName) return
+    const previous = document.title
+    document.title = `${displayName(docName)} — FillFlow`
+    return () => {
+      document.title = previous
+    }
+  }, [docName])
+
+  // If the last save failed, leaving would lose work: ask first.
+  useEffect(() => {
+    if (!saveFailed) return
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      // Legacy browsers need returnValue set to show the prompt.
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [saveFailed])
+
+  // A document with a form: tell people they can just click into fields (once per document).
+  useEffect(() => {
+    if (!docId) return
+    const toastId = `form-fields:${docId}`
+    // Let the document paint first so the toast doesn't compete with the page appearing.
+    const timer = announced.has(docId)
+      ? 0
+      : window.setTimeout(() => {
+          const s = useEditor.getState()
+          if (s.doc?.id !== docId) return
+          announced.add(docId)
+          const count = fillableFieldCount(s.doc.formFields)
+          const formVisible =
+            s.rightPanelOpen && s.rightPanelTab === 'form' && window.matchMedia(RIGHT_PANEL_INLINE).matches
+          if (!count) {
+            if (getFormDocumentInfo(s.doc.pdf)?.pureXfa) {
+              toast.warning('This dynamic XFA form can’t be filled in a browser', {
+                id: toastId,
+                description: 'You can still type, check and sign on top of the pages.',
+                duration: 8000,
+                action: formVisible
+                  ? undefined
+                  : { label: 'Details', onClick: () => useEditor.getState().setRightPanelOpen(true, 'form') },
+              })
+            }
+            return
+          }
+          const touch = window.matchMedia('(pointer: coarse)').matches
+          toast(formFieldsMessage(count, touch), {
+            id: toastId,
+            duration: 6000,
+            action: formVisible
+              ? undefined
+              : { label: 'Show form', onClick: () => useEditor.getState().setRightPanelOpen(true, 'form') },
+          })
+        }, 450)
+    return () => {
+      window.clearTimeout(timer)
+      // It's about this document: don't let it linger on the home screen or over the next file.
+      toast.dismiss(toastId)
+    }
+  }, [docId])
+}

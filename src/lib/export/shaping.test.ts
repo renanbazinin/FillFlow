@@ -1,0 +1,122 @@
+import { describe, expect, it } from 'vitest'
+import { firstStrongDirection, hasMissingGlyphs, paintableText, shapeLine, shapeText, visualRuns } from './shaping'
+import { testFont } from './testing/fonts'
+
+const sans = testFont('sans', false)
+const mono = testFont('mono', false)
+
+/** Characters of each glyph in visual order. */
+function visual(text: string, base?: 'ltr' | 'rtl'): string {
+  return shapeLine(sans, text, base)
+    .flatMap((r) => r.glyphs.map((g) => String.fromCodePoint(...g.codePoints)))
+    .join('')
+}
+
+describe('visualRuns', () => {
+  it('keeps pure LTR text as one run', () => {
+    expect(visualRuns('Hello, world 123')).toEqual([{ start: 0, end: 16, level: 0, rtl: false, text: 'Hello, world 123' }])
+  })
+
+  it('orders an RTL paragraph with embedded Latin right-to-left', () => {
+    const runs = visualRuns('שלום Hello')
+    expect(runs.map((r) => [r.start, r.end, r.rtl])).toEqual([
+      [5, 10, false],
+      [0, 5, true],
+    ])
+  })
+
+  it('places an RTL run inside an LTR paragraph', () => {
+    const runs = visualRuns('Hello שלום world')
+    expect(runs.map((r) => [r.start, r.end, r.rtl])).toEqual([
+      [0, 6, false],
+      [6, 10, true],
+      [10, 16, false],
+    ])
+  })
+
+  it('keeps numbers left-to-right inside RTL text', () => {
+    const runs = visualRuns('מספר 123')
+    expect(runs.map((r) => [line(r), r.rtl])).toEqual([
+      ['123', false],
+      ['מספר ', true],
+    ])
+    function line(r: { start: number; end: number }) {
+      return 'מספר 123'.slice(r.start, r.end)
+    }
+  })
+
+  it('mirrors brackets in RTL runs', () => {
+    const [run] = visualRuns('(שלום)')
+    expect(run.rtl).toBe(true)
+    expect(run.text).toBe(')שלום(')
+  })
+
+  it('honours a forced base direction', () => {
+    expect(visualRuns('Hello!', 'rtl').map((r) => [r.start, r.end, r.rtl])).toEqual([
+      [5, 6, true],
+      [0, 5, false],
+    ])
+  })
+})
+
+describe('shapeLine', () => {
+  it('produces glyphs in visual order for Hebrew', () => {
+    expect(visual('שלום')).toBe('םולש')
+  })
+
+  it('does not reverse Latin that follows Hebrew (fontkit would)', () => {
+    expect(visual('שלום Hello')).toBe('Hello םולש')
+    expect(visual('Hello שלום')).toBe('Hello םולש')
+  })
+
+  it('renders mirrored brackets correctly', () => {
+    expect(visual('(שלום)')).toBe('(םולש)')
+    expect(visual('שלום (עולם)')).toBe('(םלוע) םולש')
+  })
+
+  it('handles numbers and punctuation in Hebrew sentences', () => {
+    expect(visual('מספר 123.')).toBe('.123 רפסמ')
+    expect(visual('טלפון: 03-1234567')).toBe('03-1234567 :ןופלט')
+  })
+
+  it('positions combining marks with GPOS offsets', () => {
+    const { glyphs, positions } = shapeText(sans, 'é', 'ltr')
+    expect(glyphs).toHaveLength(2)
+    expect(positions[1].xAdvance).toBe(0)
+    expect(positions[1].xOffset).not.toBe(0)
+  })
+
+  it('drops invisible bidi controls instead of painting them as spaces', () => {
+    const plain = shapeText(sans, 'abc', 'ltr')
+    const marked = shapeText(sans, '‏abc‎', 'ltr')
+    expect(marked.glyphs.map((g) => g.id)).toEqual(plain.glyphs.map((g) => g.id))
+    expect(marked.advance).toBe(plain.advance)
+  })
+
+  it('does not apply kerning or ligatures', () => {
+    const av = shapeText(sans, 'AV', 'ltr')
+    expect(av.advance).toBe(sans.glyphForCodePoint(65).advanceWidth + sans.glyphForCodePoint(86).advanceWidth)
+    // Cousine has a discretionary ligature table; it must stay off.
+    expect(shapeText(mono, 'ffi', 'ltr').glyphs).toHaveLength(3)
+  })
+})
+
+describe('helpers', () => {
+  it('detects the first strong direction', () => {
+    expect(firstStrongDirection('123 שלום abc')).toBe('rtl')
+    expect(firstStrongDirection('  abc שלום')).toBe('ltr')
+    expect(firstStrongDirection('123 !?')).toBeNull()
+  })
+
+  it('maps ASCII whitespace and strips ignorables', () => {
+    expect(paintableText('a\tb\r‍c')).toBe('a b c')
+  })
+
+  it('finds characters the font lacks', () => {
+    expect(hasMissingGlyphs(sans, 'Hello שלום Привет Γειά')).toBe(false)
+    expect(hasMissingGlyphs(sans, 'Thumbs 👍')).toBe(true)
+    expect(hasMissingGlyphs(sans, 'مرحبا')).toBe(true)
+    expect(hasMissingGlyphs(sans, '日本')).toBe(true)
+    expect(hasMissingGlyphs(sans, 'tab\there‏')).toBe(false)
+  })
+})
