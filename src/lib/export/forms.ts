@@ -17,7 +17,7 @@ import {
   type PDFForm,
   type PDFWidgetAnnotation,
 } from 'pdf-lib'
-import type { FormField, FormValues, TextAlign } from '../../model/types'
+import type { FormField, FormValues, PageInfo, TextAlign } from '../../model/types'
 import {
   AppearanceFonts,
   hasNormalStream,
@@ -50,6 +50,18 @@ export interface ApplyFormOptions {
    * when a value contains characters the standard Helvetica (WinAnsi) font can't encode.
    */
   getUnicodeFont: () => Promise<PDFFont>
+  /** Page geometry as the editor saw it (the same `pages` the field rects are relative to). */
+  pages: PageInfo[]
+  /**
+   * The document was rewritten by pdf.js (decrypted or repaired) before export, so its object
+   * numbers changed: the pdf.js widget ids in `fields` don't refer to this document's objects.
+   */
+  rewritten: boolean
+}
+
+export interface ApplyFormResult {
+  /** Names of fields whose values could not be written into the PDF. */
+  unwritten: string[]
 }
 
 interface Ctx {
@@ -249,8 +261,9 @@ export async function applyFormValues(
   fields: FormField[],
   values: FormValues,
   opts: ApplyFormOptions,
-): Promise<void> {
-  if (!fields.length) return
+): Promise<ApplyFormResult> {
+  const unwritten: string[] = []
+  if (!fields.length) return { unwritten }
   let ctx: Ctx
   let index: FieldIndex
   try {
@@ -265,7 +278,7 @@ export async function applyFormValues(
     }
   } catch (err) {
     console.warn('[forms] could not read the form; exporting without form values', err)
-    return
+    return { unwritten: fields.filter((f) => !f.readOnly).map((f) => f.name) }
   }
 
   // Fields whose appearance may be stale: never bake those into the page.
@@ -275,6 +288,7 @@ export async function applyFormValues(
     const target = index.find(field)
     if (!target) {
       console.warn(`[forms] field "${field.name}" was not found in the PDF`)
+      unwritten.push(field.name)
       continue
     }
     if (handled.has(target)) continue
@@ -283,6 +297,7 @@ export async function applyFormValues(
       await fillField(ctx, field, target, values)
     } catch (err) {
       broken.add(target)
+      unwritten.push(field.name)
       console.warn(`[forms] could not fill "${field.name}"`, err)
     }
   }
@@ -309,4 +324,5 @@ export async function applyFormValues(
     // the bidi layout (and Hebrew glyphs in viewers whose fallback fonts lack them).
     setNeedAppearances(ctx.form, broken.size > 0)
   }
+  return { unwritten }
 }

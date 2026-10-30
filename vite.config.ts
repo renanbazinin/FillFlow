@@ -1,6 +1,6 @@
 /// <reference types="vitest/config" />
 import { createReadStream, cpSync, existsSync, statSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
@@ -24,7 +24,15 @@ function pdfjsAssets(): Plugin {
         const path = req.url?.split('?')[0] ?? ''
         const match = path.match(/\/pdfjs\/(cmaps|standard_fonts|wasm|iccs)\/([^/]+)$/)
         if (!match) return next()
-        const file = join(PDFJS_ROOT, match[1], decodeURIComponent(match[2]))
+        let name: string
+        try {
+          name = decodeURIComponent(match[2])
+        } catch {
+          return next()
+        }
+        // Plain file names only: an encoded "..%2F" or "..%5C" must never escape the folder.
+        if (name !== basename(name) || name.includes('..') || /[/\\:]/.test(name)) return next()
+        const file = join(PDFJS_ROOT, match[1], name)
         if (!existsSync(file) || !statSync(file).isFile()) return next()
         res.setHeader('Content-Type', file.endsWith('.wasm') ? 'application/wasm' : 'application/octet-stream')
         createReadStream(file).pipe(res)

@@ -21,6 +21,7 @@ vi.mock('./forms', () => ({
     if (values.agree) form.getCheckBox('agree').check()
     if (/[^\x20-\x7e]/.test(String(values.name))) name.updateAppearances(await opts.getUnicodeFont())
     if (opts.flatten) form.flatten()
+    return { unwritten: [] }
   }),
 }))
 

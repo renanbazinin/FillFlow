@@ -59,6 +59,8 @@ function revealInScrollArea(el: HTMLElement, center: boolean) {
 export interface ThumbnailsProps {
   /** Called after a thumbnail navigates the document (e.g. to close a mobile drawer). */
   onNavigate?: (pageIndex: number) => void
+  /** False while the list is hidden (collapsed panel): no rendering or auto-scrolling then. */
+  active?: boolean
 }
 
 /**

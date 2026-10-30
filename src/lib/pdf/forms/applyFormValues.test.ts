@@ -25,6 +25,8 @@ async function exportForm(values: FormValues, opts: ExportOptions = {}) {
   let unicodeRequests = 0
   await applyFormValues(doc, fields, { ...defaultFormValues(fields), ...values }, {
     flatten: !!opts.flatten,
+    pages,
+    rewritten: false,
     getUnicodeFont: () => {
       unicodeRequests++
       return (unicode ??= doc.embedFont(arimoBytes, { subset: opts.subset ?? true }))
@@ -209,7 +211,7 @@ describe('applyFormValues', () => {
 
     const values = { tall: 'Along the page', wide: 'Upright' }
     const flat = await PDFDocument.load(bytes)
-    await applyFormValues(flat, fields, values, { flatten: true, getUnicodeFont: () => Promise.reject(new Error('unused')) })
+    await applyFormValues(flat, fields, values, { flatten: true, getUnicodeFont: () => Promise.reject(new Error('unused')), pages, rewritten: false })
     const out = await openWithPdfjs(await flat.save())
     const items = (await (await out.raw.getPage(1)).getTextContent()).items as { str: string; transform: number[] }[]
     const t = (s: string) => items.find((i) => i.str === s)!.transform
@@ -221,7 +223,7 @@ describe('applyFormValues', () => {
     await out.raw.loadingTask.destroy()
 
     const live = await PDFDocument.load(bytes)
-    await applyFormValues(live, fields, values, { flatten: false, getUnicodeFont: () => Promise.reject(new Error('unused')) })
+    await applyFormValues(live, fields, values, { flatten: false, getUnicodeFont: () => Promise.reject(new Error('unused')), pages, rewritten: false })
     const rotationOf = (name: string) => live.getForm().getTextField(name).acroField.getWidgets()[0].getAppearanceCharacteristics()?.getRotation() ?? 0
     expect(rotationOf('wide')).toBe(90) // synced so other viewers draw it upright too
     expect(rotationOf('tall')).toBe(0)
@@ -244,7 +246,7 @@ describe('applyFormValues', () => {
     expect(widget.rect.height).toBeGreaterThan(widget.rect.width)
 
     const doc = await PDFDocument.load(bytes)
-    await applyFormValues(doc, fields, { spine: 'Volume 1' }, { flatten: true, getUnicodeFont: () => Promise.reject(new Error('unused')) })
+    await applyFormValues(doc, fields, { spine: 'Volume 1' }, { flatten: true, getUnicodeFont: () => Promise.reject(new Error('unused')), pages, rewritten: false })
     const out = await openWithPdfjs(await doc.save())
     const items = (await (await out.raw.getPage(1)).getTextContent()).items.filter((i) => 'str' in i && i.str === 'Volume 1')
     expect(items).toHaveLength(1)
@@ -268,7 +270,7 @@ describe('applyFormValues', () => {
     expect(fields[0].defaultValue).toBe('Default text')
 
     const doc = await PDFDocument.load(bytes)
-    await applyFormValues(doc, fields, defaultFormValues(fields), { flatten: false, getUnicodeFont: () => Promise.reject(new Error('unused')) })
+    await applyFormValues(doc, fields, defaultFormValues(fields), { flatten: false, getUnicodeFont: () => Promise.reject(new Error('unused')), pages, rewritten: false })
     expect(doc.getForm().getTextField('dv_only').getText()).toBe('Default text')
   })
 
@@ -289,6 +291,8 @@ describe('applyFormValues', () => {
     await applyFormValues(doc, fields, { ...defaultFormValues(fields), 'applicant.first_name': 'שלום', 'applicant.last_name': 'Doe' }, {
       flatten: true,
       getUnicodeFont: () => Promise.reject(new Error('font download failed')),
+      pages,
+      rewritten: false,
     })
     const saved = await PDFDocument.load(await doc.save())
     const form = saved.getForm()
@@ -308,15 +312,17 @@ describe('applyFormValues', () => {
       applyFormValues(doc, [ghost, ...fields], { agree: 'yes' as unknown as boolean, langs: 'fr' as unknown as string[], color: 'purple' }, {
         flatten: false,
         getUnicodeFont: () => Promise.reject(new Error('no font')),
+        pages,
+        rewritten: false,
       }),
-    ).resolves.toBeUndefined()
+    ).resolves.toEqual({ unwritten: ['does.not.exist'] })
     const saved = await PDFDocument.load(await doc.save())
     expect(saved.getForm().getOptionList('langs').getSelected()).toEqual(['fr'])
     expect(saved.getForm().getRadioGroup('color').getSelected()).toBeUndefined()
 
     const plain = await PDFDocument.create()
     plain.addPage()
-    await applyFormValues(plain, [], {}, { flatten: true, getUnicodeFont: () => Promise.reject(new Error('unused')) })
+    await applyFormValues(plain, [], {}, { flatten: true, getUnicodeFont: () => Promise.reject(new Error('unused')), pages: [], rewritten: false })
     expect(plain.catalog.has(PDFName.of('AcroForm'))).toBe(false)
   })
 })

@@ -47,7 +47,7 @@ async function run(input: ExportInput, deps: ExportDeps): Promise<Uint8Array> {
   const pause = deps.yieldToUI ?? yieldToUI
 
   progress({ phase: 'prepare', done: 0, total: 0 })
-  const { doc, info: recovered } = await openForWriting(input, deps)
+  const { doc, info: recovered, rewritten } = await openForWriting(input, deps)
   doc.registerFontkit(fontkit)
   throwIfAborted(signal)
 
@@ -66,7 +66,13 @@ async function run(input: ExportInput, deps: ExportDeps): Promise<Uint8Array> {
   if (hasFields) {
     progress({ phase: 'forms', done: 0, total: 0 })
     try {
-      await applyFormValues(doc, input.formFields, input.formValues, { flatten, getUnicodeFont: fonts.getUnicodeFont })
+      const { unwritten } = await applyFormValues(doc, input.formFields, input.formValues, {
+        flatten,
+        getUnicodeFont: fonts.getUnicodeFont,
+        pages: input.pages,
+        rewritten,
+      })
+      if (unwritten.length) console.warn(`[export] ${unwritten.length} field value(s) could not be written`, unwritten)
     } catch (err) {
       if (err instanceof ExportError) throw err
       throw new ExportError('forms', undefined, { cause: err })
@@ -148,7 +154,10 @@ const LOAD_OPTIONS = { updateMetadata: false, parseSpeed: ParseSpeeds.Fast } as 
  * objects), so encrypted input is rewritten unencrypted by pdf.js first. Files pdf-lib can't
  * parse get the same treatment as a repair.
  */
-async function openForWriting(input: ExportInput, deps: ExportDeps): Promise<{ doc: PDFDocument; info?: RecoveredInfo }> {
+async function openForWriting(
+  input: ExportInput,
+  deps: ExportDeps,
+): Promise<{ doc: PDFDocument; info?: RecoveredInfo; rewritten: boolean }> {
   let doc: PDFDocument | null = null
   let pageCount = -1
   try {
@@ -160,7 +169,7 @@ async function openForWriting(input: ExportInput, deps: ExportDeps): Promise<{ d
     console.warn('[export] pdf-lib could not read the file; rewriting it with pdf.js', err)
   }
 
-  if (doc && !doc.isEncrypted && pageCount === input.pages.length) return { doc }
+  if (doc && !doc.isEncrypted && pageCount === input.pages.length) return { doc, rewritten: false }
 
   // Encrypted object streams can make pdf-lib's parse fail before it sees /Encrypt.
   const encrypted = doc ? doc.isEncrypted : looksEncrypted(input.bytes)
@@ -188,7 +197,7 @@ async function openForWriting(input: ExportInput, deps: ExportDeps): Promise<{ d
   if (rewritten.isEncrypted || rewritten.getPageCount() !== input.pages.length) {
     throw new ExportError(encrypted ? 'encrypted' : 'damaged')
   }
-  return { doc: rewritten, info: copy.info }
+  return { doc: rewritten, info: copy.info, rewritten: true }
 }
 
 /** Cheap check for an /Encrypt entry in a trailer or cross-reference stream dictionary. */
