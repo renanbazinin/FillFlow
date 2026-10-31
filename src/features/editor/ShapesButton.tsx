@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { toast } from 'sonner'
 import { Kbd } from '../../components/ui/controls'
 import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/menu'
 import { cn } from '../../lib/utils/misc'
@@ -23,9 +24,16 @@ export function ShapesButton() {
     setOpen(false)
   }
 
+  const toggle = (next: boolean) => {
+    // The popover opens where passing toasts sit, and any left up would cover its items: clear them
+    // (the messages that stay until acted on sit under the top bar, and stay).
+    if (next) for (const t of toast.getToasts()) if (!('type' in t && t.type === 'error' && t.duration === Infinity)) toast.dismiss(t.id)
+    setOpen(next)
+  }
+
   return (
     <span className="relative inline-flex">
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover open={open} onOpenChange={toggle}>
         <PopoverTrigger asChild>
           <ToolButton
             tool={{ label: 'Shapes', hint: 'Rectangle, ellipse or line', icon: TOOL_BY_ID[current].icon }}

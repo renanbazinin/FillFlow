@@ -14,6 +14,7 @@ const announced = new Set<string>()
 export function useEditorChrome(): void {
   const docId = useEditor((s) => s.doc?.id ?? null)
   const docName = useEditor((s) => s.doc?.name ?? null)
+  const loadFailed = useEditor((s) => s.doc?.sessionLoadFailed === true)
   const saveFailed = useSaveStatus((s) => s.state === 'error')
 
   // Tab title: "Lease agreement — FillFlow".
@@ -40,7 +41,9 @@ export function useEditorChrome(): void {
 
   // A document with a form: tell people they can just click into fields (once per document).
   useEffect(() => {
-    if (!docId) return
+    // Its saved work didn't load: that warning stays in front, not a hint inviting the user to type
+    // into the blank form. Once a reload (the same document again) brings the work, the hint comes.
+    if (!docId || loadFailed) return
     const toastId = `form-fields:${docId}`
     // Let the document paint first so the toast doesn't compete with the page appearing.
     const timer = announced.has(docId)
@@ -79,5 +82,5 @@ export function useEditorChrome(): void {
       // It's about this document: don't let it linger on the home screen or over the next file.
       toast.dismiss(toastId)
     }
-  }, [docId])
+  }, [docId, loadFailed])
 }

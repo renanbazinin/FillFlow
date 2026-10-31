@@ -15,9 +15,10 @@ const CANCEL_AFTER_MS = 3000
 const OVERLAY = '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [data-radix-popper-content-wrapper]'
 
 /**
- * What had focus when the "Opening…" card took it, and the document then on screen. Focus goes
- * back there when the open is given up: cancelled, or ended in the password prompt or an error
- * that is then closed. Not once a document has opened.
+ * What had focus when the "Opening…" card took it (or got it back from the menu or confirmation
+ * that started the open), and the document then on screen. Focus goes back there when the open is
+ * given up: cancelled, or ended in the password prompt or an error that is then closed. Not once
+ * a document has opened.
  */
 let returnFocus: { el: HTMLElement; doc: LoadedDocument | null } | null = null
 
@@ -83,14 +84,29 @@ function LoadingCard({ fileName }: { fileName: string }) {
   useLayoutEffect(() => {
     const el = card.current
     if (!el) return
+    const keep = (e?: Event) => {
+      if (document.activeElement?.closest(OVERLAY)) return
+      // Focus handed back (from nowhere) by the menu or confirmation that started this open, as
+      // it closes: that is where focus returns if the open is given up.
+      if (!returnFocus && e instanceof FocusEvent && !e.relatedTarget && e.target instanceof HTMLElement) {
+        returnFocus = { el: e.target, doc: useEditor.getState().doc }
+      }
+      el.focus({ preventScroll: true })
+      // A Tab typed while nothing had focus moves into the card, as one typed in it does (see
+      // `keepTabInside`).
+      if (e instanceof KeyboardEvent && e.key === 'Tab') {
+        e.preventDefault()
+        cancelButton.current?.focus()
+      }
+    }
+    // Focus on the page: remember it, and take it. In a menu or a confirmation, or nowhere (that
+    // confirmation already gone), it is about to be handed back: wait for that (see `keep`). Keys
+    // typed meanwhile are caught all the same.
     const active = document.activeElement
     if (active instanceof HTMLElement && active !== document.body && !active.closest(OVERLAY)) {
       returnFocus = { el: active, doc: useEditor.getState().doc }
+      keep()
     }
-    const keep = () => {
-      if (!document.activeElement?.closest(OVERLAY)) el.focus({ preventScroll: true })
-    }
-    keep()
     // Focus moving out (a press on a toast, a dialog handing focus back as it closes), and a key
     // or a paste while nothing has focus, which would go to the page.
     const events = ['keydown', 'paste', 'cut'] as const

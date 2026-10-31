@@ -90,8 +90,11 @@ export function selectAllOnPage(page: number): void {
   s.select(s.elements.filter((e) => e.page === page).map((e) => e.id))
 }
 
-/** Scrolls an element into view. */
-export function revealElement(el: Element, behavior: ScrollBehavior = 'smooth'): void {
+/**
+ * Scrolls an element into view. Unless told otherwise, the viewer animates the scroll only when
+ * motion is welcome and the jump is short.
+ */
+export function revealElement(el: Element, behavior?: ScrollBehavior): void {
   viewer.scrollToRect(el.page, elementRect(el), { behavior, margin: 48 })
 }
 

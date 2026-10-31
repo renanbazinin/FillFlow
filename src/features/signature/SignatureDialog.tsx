@@ -93,8 +93,9 @@ export function SignatureDialog() {
 
   // Keys anywhere in the dialog, even once focus fell to <body>: ⌘Z undoes the last stroke, and
   // ⌘S / ⌘O never open the browser's "Save page" / "Open file" dialogs (the editor's handlers,
-  // which would prevent those, never see the keys the dialog keeps to itself). Letters go by
-  // physical key too, like the browser's own shortcuts, so this holds on Hebrew and other layouts.
+  // which would prevent those, never see the keys the dialog keeps to itself). Like the browser's
+  // own shortcuts, letters go by what the layout types, or by physical key where it types no Latin
+  // letter (Hebrew…), so this holds on any layout.
   useEffect(() => {
     if (!openRole) return
     const onKeyDown = (e: KeyboardEvent) => {
@@ -250,6 +251,9 @@ export function SignatureDialog() {
         <Tabs.Root value={tab} onValueChange={(v) => setTab(v as SignatureTab)}>
           <Tabs.List
             aria-label={`How to create your ${noun}`}
+            // A pressed tab focuses itself. Without this, Radix takes the press for a click on the
+            // list, and the next Tab into the list stops on the list itself (unseen), not the tab.
+            onMouseDown={(e) => e.preventDefault()}
             className="grid h-10 w-full grid-cols-3 items-center rounded-lg bg-surface-3 p-0.5 sm:inline-grid sm:h-9 sm:w-auto"
           >
             {SIGNATURE_TABS.map((t) => {

@@ -323,9 +323,9 @@ async function ensureAppearances(ctx: Ctx, target: PDFField) {
  * elements are drawn. Must not throw because of a single bad field.
  *
  * - Our fields are found by widget (by page and position when the file was rewritten, see
- *   FieldIndex); widgets missing from the field tree, or cut off from their field by the
- *   rewrite, are linked into it first, and fields the rewrite cut off from their parents are
- *   put back under them.
+ *   FieldIndex); widgets missing from the field tree are linked into it first, then fields the
+ *   rewrite cut off from their parents are put back under them, and widgets it cut off from
+ *   their field are linked back into it.
  * - Only fields whose stored value differs from the wanted one are rewritten; the others keep
  *   their original appearance (unless it is missing or the file asked for regeneration).
  * - Text, combo and list appearances are drawn by us with bidi-aware layout (see
@@ -351,7 +351,14 @@ export async function applyFormValues(
     if (adopted) console.warn(`[forms] ${adopted} widget(s) were missing from the field list`)
     let index = new FieldIndex(form, pages, fields, opts)
     if (opts.rewritten) {
-      // The rewrite may have cut widgets off their fields: link them back, then match again.
+      // The rewrite may have cut fields off the parents their names need: put them back first,
+      // as the fields rebuilt below are placed by name.
+      const moved = relinkCutOffFields(form, fields, index)
+      if (moved) {
+        console.warn(`[forms] ${moved} field(s) had lost their parent in the rewrite`)
+        index = new FieldIndex(form, pages, fields, opts)
+      }
+      // It may also have cut widgets off their fields: link them back, then match again.
       try {
         const relinked = relinkBareWidgets(form, pages, fields, index, opts.pages)
         if (relinked) console.warn(`[forms] ${relinked} widget(s) had lost their field in the rewrite`)
@@ -359,12 +366,6 @@ export async function applyFormValues(
         console.warn('[forms] could not link widgets back to their fields', err)
       }
       index = new FieldIndex(form, pages, fields, opts)
-      // It may also have cut fields off the parents their names need: put them back.
-      const moved = relinkCutOffFields(form, fields, index)
-      if (moved) {
-        console.warn(`[forms] ${moved} field(s) had lost their parent in the rewrite`)
-        index = new FieldIndex(form, pages, fields, opts)
-      }
     }
     ctx = {
       doc: pdfDoc,

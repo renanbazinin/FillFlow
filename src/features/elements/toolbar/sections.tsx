@@ -18,7 +18,7 @@ import { Segmented, type SegmentedOption } from '../../../components/ui/controls
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuRadioGroup, MenuRadioItem, MenuSeparator, MenuTrigger, Popover, PopoverContent, PopoverTrigger } from '../../../components/ui/menu'
 import { Tooltip } from '../../../components/ui/tooltip'
 import { HIGHLIGHT_COLOR, INK_COLORS, MAX_FONT_SIZE, MIN_FONT_SIZE } from '../../../model/elements'
-import { cssFontFamily, FONT_IDS, FONTS, loadFont } from '../../../model/fonts'
+import { cssFontFamily, FONT_IDS, FONTS, fontDef, loadFont } from '../../../model/fonts'
 import type { Element, FontId, ImageElement, InkElement, MarkElement, MarkShape, ShapeElement, TextAlign, TextElement } from '../../../model/types'
 import { useEditor } from '../../../store/editor'
 import { modKeyLabel } from '../../../lib/utils/misc'
@@ -71,20 +71,22 @@ function FontPicker({ value }: { value: FontId }) {
     // Labels are drawn in the fonts themselves.
     for (const id of FONT_IDS) void loadFont(id, false)
   }, [])
+  // The font the text is drawn in: an id this build doesn't know gets the default one.
+  const font = fontDef(value)
   return (
     <>
-      <Segmented size="sm" className="max-sm:hidden" value={value} onValueChange={(fontId) => setTextStyle({ fontId })} options={FONT_OPTIONS} />
+      <Segmented size="sm" className="max-sm:hidden" value={font.id} onValueChange={(fontId) => setTextStyle({ fontId })} options={FONT_OPTIONS} />
       <Menu>
         <Tooltip content="Font">
           <MenuTrigger asChild>
-            <TriggerButton label={`Font: ${FONTS[value].label}`} className="px-2 text-[13px] font-medium text-fg sm:hidden">
-              <span style={{ fontFamily: cssFontFamily(value) }}>{FONTS[value].label}</span>
+            <TriggerButton label={`Font: ${font.label}`} className="px-2 text-[13px] font-medium text-fg sm:hidden">
+              <span style={{ fontFamily: cssFontFamily(font.id) }}>{font.label}</span>
             </TriggerButton>
           </MenuTrigger>
         </Tooltip>
         <MenuContent align="start" className="min-w-40" onCloseAutoFocus={preventFocusWhileEditing}>
           <MenuLabel>Font</MenuLabel>
-          <MenuRadioGroup value={value} onValueChange={(v) => setTextStyle({ fontId: v as FontId })}>
+          <MenuRadioGroup value={font.id} onValueChange={(v) => setTextStyle({ fontId: v as FontId })}>
             {FONT_IDS.map((id) => (
               <MenuRadioItem key={id} value={id}>
                 <span style={{ fontFamily: cssFontFamily(id) }}>{FONTS[id].label}</span>

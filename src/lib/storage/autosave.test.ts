@@ -336,7 +336,11 @@ describe('autosave', () => {
       await saveSession(buildSession({ docId: 'lost', fileName: 'lost.pdf', elements: [], formValues: { Name: 'Ada' }, assets: {} }, 100))
       const doc = await openWithoutWork()
       expect(toast.error).toHaveBeenCalledTimes(1)
-      expect(lastToast()).toMatchObject([NOT_LOADED, { id: 'autosave-outdated', description: 'Reload it to try again before you make changes.' }])
+      // It stays until acted on, in its own stack under the top bar (at the bottom it would cover the dock's popovers).
+      expect(lastToast()).toMatchObject([
+        NOT_LOADED,
+        { id: 'autosave-outdated', description: 'Reload it to try again before you make changes.', duration: Infinity, toasterId: 'staying' },
+      ])
       expect(status().state).toBe('idle')
 
       // The first change finds that work and isn't saved over it; the same toast says so.
@@ -345,7 +349,10 @@ describe('autosave', () => {
       expect((await loadSession('lost'))?.formValues).toEqual({ Name: 'Ada' })
       expect(status()).toMatchObject({ state: 'error', error: `${NOT_LOADED}.` })
       expect(toast.error).toHaveBeenCalledTimes(2)
-      expect(lastToast()).toMatchObject([NOT_LOADED, { id: 'autosave-outdated', description: expect.stringMatching(/aren’t being saved/) }])
+      expect(lastToast()).toMatchObject([
+        NOT_LOADED,
+        { id: 'autosave-outdated', description: expect.stringMatching(/aren’t being saved/), duration: Infinity, toasterId: 'staying' },
+      ])
 
       // "Reload" opens the document again, which reads its saved work again.
       const openDocument = vi.fn(async () => true)
@@ -443,7 +450,7 @@ describe('autosave', () => {
       await waitForSave()
       expect((await loadSession('shared'))?.formValues).toEqual({ Name: 'Grace' })
       expect(status()).toMatchObject({ state: 'error', error: 'This document was changed in another tab.' })
-      expect(lastToast()[0]).toBe('This document was changed in another tab')
+      expect(lastToast()).toMatchObject(['This document was changed in another tab', { duration: Infinity, toasterId: 'staying' }])
 
       // Nothing else is written from this tab.
       useEditor.getState().addElement(mark())

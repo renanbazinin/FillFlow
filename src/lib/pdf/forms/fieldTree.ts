@@ -35,6 +35,7 @@ const TU = PDFName.of('TU')
 const FF = PDFName.of('Ff')
 const V = PDFName.of('V')
 const DV = PDFName.of('DV')
+const I = PDFName.of('I')
 const Q = PDFName.of('Q')
 const MAX_LEN = PDFName.of('MaxLen')
 const OPT = PDFName.of('Opt')
@@ -381,7 +382,9 @@ function rebuildField(acroForm: PDFDict, field: FormField, kids: FoundWidget[]):
  * value (a field merged with its widget keeps its own entries, but not the ones it inherited).
  * Links each bare widget lying where the editor showed a widget of `fields` back into that
  * field: into the field holding its other widgets, or into one rebuilt from what the editor
- * read. Returns how many widgets were linked (`index` is out of date then).
+ * read. A rebuilt field is placed by its name, so put the fields the rewrite cut off from their
+ * parents back first (relinkCutOffFields): until then, one may pass for a parent of that name.
+ * Returns how many widgets were linked (`index` is out of date then).
  */
 export function relinkBareWidgets(
   form: PDFForm,
@@ -420,8 +423,10 @@ export function relinkBareWidgets(
     }
     for (const w of found) {
       // What it kept of a field merged with it would make it a field of its own under this one
-      // (/T), or show over this field's value (pdf.js reads /V and /DV from the widget first).
-      for (const key of [T, V, DV]) w.dict.delete(key)
+      // (/T), or show over this field's value: pdf.js reads /V and /DV from the widget first, and
+      // a list box's selection (/I) from the widget alone, ahead of /V. This field holds the
+      // value, and writing it keeps the field's own /I in step.
+      for (const key of [T, V, DV, I]) w.dict.delete(key)
       // That field's own trigger events and place in the calculation order are this field's now.
       moveFieldEvents(w.dict, acroForm.context.lookup(parent, PDFDict))
       replaceInList(acroForm.lookup(CO), w.ref, parent)
@@ -443,7 +448,11 @@ export function relinkBareWidgets(
 export function relinkCutOffFields(form: PDFForm, fields: readonly FormField[], index: FieldIndex): number {
   const acroForm = form.acroForm.dict
   const context = acroForm.context
-  let moved = 0
+  const list = acroForm.lookup(FIELDS)
+  if (!(list instanceof PDFArray)) return 0
+  // All of them leave the list before any is put back: one that is still to move must not be
+  // taken for the parent of another.
+  const cutOff: { ref: PDFRef; top: PDFDict; parents: string[] }[] = []
   for (const field of fields) {
     for (const target of index.findAll(field)) {
       const name = qualifiedName(target.acroField.dict)
@@ -459,16 +468,17 @@ export function relinkCutOffFields(form: PDFForm, fields: readonly FormField[], 
         ref = up
         top = parent
       }
-      const list = acroForm.lookup(FIELDS)
-      const at = list instanceof PDFArray ? list.indexOf(ref) : undefined
+      const at = list.indexOf(ref)
       // Under a new parent, a field without /T would pass for a widget (pdf-lib tells them apart by /T).
       if (at === undefined || !top.has(T)) continue
-      ;(list as PDFArray).remove(at)
-      const place = parentFields(acroForm, field.name.slice(0, -name.length - 1).split('.'))
-      place.kids.push(ref)
-      if (place.parent) top.set(PARENT, place.parent)
-      moved++
+      list.remove(at)
+      cutOff.push({ ref, top, parents: field.name.slice(0, -name.length - 1).split('.') })
     }
   }
-  return moved
+  for (const { ref, top, parents } of cutOff) {
+    const place = parentFields(acroForm, parents)
+    place.kids.push(ref)
+    if (place.parent) top.set(PARENT, place.parent)
+  }
+  return cutOff.length
 }

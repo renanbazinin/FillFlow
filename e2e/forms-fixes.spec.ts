@@ -357,6 +357,47 @@ test('a secured form keeps the names of copies of a field whose parent its field
   expect(errors).toEqual([])
 })
 
+test('a secured form keeps the choices of list box copies whose parent its field list misses', async ({ page }) => {
+  const errors = trackPageErrors(page)
+  const plain = await formPdf((form, p, doc) => {
+    form.createTextField('listed').addToPage(p, { x: 50, y: 700, width: 200, height: 20 })
+    // Copies of a list box: the parent, missing from the field list, holds the type and options;
+    // each copy is merged with its widget and names its selection by index (/I) too.
+    const opt = ['a', 'b', 'c'].map((o) => PDFString.of(o))
+    const parent = doc.context.register(
+      doc.context.obj({ FT: 'Ch', T: PDFString.of('List1'), Ff: 1 << 21, Opt: opt, DA: PDFString.of('/Helv 0 Tf 0 g'), Kids: [] }),
+    )
+    for (const i of [0, 1]) {
+      const copy = doc.context.register(
+        doc.context.obj({
+          Type: 'Annot',
+          Subtype: 'Widget',
+          T: PDFString.of(String(i)),
+          V: PDFString.of('a'),
+          I: [0],
+          Parent: parent,
+          Rect: [50 + i * 250, 580, 250 + i * 250, 640],
+          F: 4,
+          P: p.ref,
+        }),
+      )
+      doc.context.lookup(parent, PDFDict).lookup(PDFName.of('Kids'), PDFArray).push(copy)
+      p.node.addAnnot(copy)
+    }
+  })
+  await open(page, 'secured-list-copies.pdf', await encryptPdf(plain, { owner: 'owner-only' }))
+  const values = { 'List1.0': ['b'], 'List1.1': ['c'] }
+  for (const [name, value] of Object.entries(values)) await onPage(page, name).locator('select').selectOption(value)
+  const bytes = await downloadWith(page, false)
+
+  // Opened again, every copy shows its own choice, and saving again keeps them.
+  await open(page, 'secured-list-copies-filled.pdf', bytes)
+  for (const [name, value] of Object.entries(values)) await expect(onPage(page, name).locator('select')).toHaveValues(value)
+  const again = (await downloadFillable(page)).getForm()
+  for (const [name, value] of Object.entries(values)) expect(again.getOptionList(name).getSelected()).toEqual(value)
+  expect(errors).toEqual([])
+})
+
 test('moving between fields scrolls without animation when the system asks for less motion', async ({ page }) => {
   const errors = trackPageErrors(page)
   await page.emulateMedia({ reducedMotion: 'reduce' })

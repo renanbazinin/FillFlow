@@ -7,10 +7,17 @@ import { classifyDrag, dragHasFiles, setFileDrag, useFileDrag } from './fileDrag
 import { openFirstPdf } from './openFile'
 import { displayName } from './pdfFiles'
 
-/** While something modal is up, a drop must not swap the document underneath it. */
+/** Open dialogs and sheets, confirmations, popovers (dialogs too) and menus. */
+const OPEN_OVERLAY = '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"], [role="menu"][data-state="open"]'
+
+/**
+ * While something modal is up, a drop must not swap the document underneath it. Nor while a
+ * popover or menu is: like a sheet, it keeps focus (and it floats above the "Opening…" card), so
+ * keys or presses during the load would still change the copy being replaced.
+ */
 function dropBlocked(): boolean {
   const s = useEditor.getState()
-  return s.activeDialog !== null || s.load.status !== 'idle' || !!document.querySelector('[role="alertdialog"]')
+  return s.activeDialog !== null || s.load.status !== 'idle' || !!document.querySelector(OPEN_OVERLAY)
 }
 
 /**

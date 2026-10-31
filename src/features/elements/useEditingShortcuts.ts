@@ -38,6 +38,9 @@ function focusInOverlay(): boolean {
 
 function shouldIgnore(): boolean {
   const s = useEditor.getState()
+  // While a document opens (its password prompt and load error included), keys never change the
+  // one on screen: a new copy replacing it would never show the change, and would save over it.
+  if (s.load.status !== 'idle') return true
   // Mid-drag the pointer tracker owns the keyboard (Esc cancels, Shift/Alt modify).
   return !s.doc || s.activeDialog !== null || focusInOverlay() || useElementsUi.getState().interaction !== 'idle'
 }

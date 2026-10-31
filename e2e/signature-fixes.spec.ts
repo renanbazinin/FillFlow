@@ -123,7 +123,9 @@ test('Ctrl/⌘+S and Ctrl/⌘+O in the signature dialog never open the browser�
   const dialog = await openSignatureDialog(page)
   const pressHebrew = await hebrewKeyboard(page)
   // Whether the browser would still act on each key, read once every handler had its turn. Keys are
-  // told apart by physical key, as the browser's own shortcuts are, whatever letter the layout types.
+  // picked out by physical key. Shortcuts go by the letter a Latin layout types, and by physical key
+  // only where the layout types no Latin letter: on the two layouts used here, US and Hebrew, that
+  // comes to the same keys.
   await page.evaluate(() => {
     const w = window as unknown as { browserKeys: string[] }
     w.browserKeys = []
@@ -201,6 +203,44 @@ test('focus stays in the signature dialog, and Ctrl/⌘+Z keeps undoing strokes'
   await pressHebrew('z')
   await expect(pad).toHaveAccessibleName(/1 stroke so far/)
   expect(errors).toEqual([])
+})
+
+test('after a press on a tab of the signature dialog, Tab into the tab list goes to that tab', async ({ page }) => {
+  const errors = trackPageErrors(page)
+  await openEditor(page)
+  const dialog = await openSignatureDialog(page)
+  const tab = (name: string) => dialog.getByRole('tab', { name })
+  await tab('Type').click()
+  await expect(tab('Type')).toHaveAttribute('aria-selected', 'true')
+  await expect(tab('Type')).toBeFocused()
+  // Out of the tab list and back: focus lands on the pressed tab, not on the list itself (unseen).
+  await page.keyboard.press('Shift+Tab')
+  await expect(dialog.getByRole('button', { name: 'Close' })).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(tab('Type')).toBeFocused()
+  // The arrow keys still switch tabs.
+  await page.keyboard.press('ArrowRight')
+  await expect(tab('Upload')).toBeFocused()
+  await expect(tab('Upload')).toHaveAttribute('aria-selected', 'true')
+  expect(errors).toEqual([])
+})
+
+test.describe('on a touch screen', () => {
+  test.use({ hasTouch: true })
+
+  test('a tap on a tab of the signature dialog switches to it', async ({ page }) => {
+    const errors = trackPageErrors(page)
+    await openEditor(page)
+    const dialog = await openSignatureDialog(page)
+    for (const name of ['Upload', 'Type', 'Draw']) {
+      const tab = dialog.getByRole('tab', { name })
+      await tab.tap()
+      await expect(tab).toHaveAttribute('aria-selected', 'true')
+      await expect(tab).toBeFocused()
+    }
+    await expect(dialog.getByRole('img', { name: /^Drawing area/ })).toBeVisible()
+    expect(errors).toEqual([])
+  })
 })
 
 test('deleting a saved signature from the dialog keeps focus in the dialog', async ({ page }) => {

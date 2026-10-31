@@ -72,15 +72,17 @@ function ImageContent({ el }: { el: ImageElement }) {
 function ShapeContent({ el, scale }: { el: ShapeElement; scale: number }) {
   const w = el.width * scale
   const h = el.height * scale
-  // A rect/ellipse border wider than half the box is drawn at half its smaller side, so the
-  // shape shows solid instead of vanishing (SVG skips a zero-size rect); the exporter does the same.
-  const sw = (el.shape === 'line' ? el.strokeWidth : Math.min(el.strokeWidth, el.width / 2, el.height / 2)) * scale
-  const stroke = el.strokeColor ?? 'none'
-  const strokeWidth = el.strokeColor ? sw : 0
+  // Painted like the export: a border needs a color and a width, and only a border insets the
+  // shape (without one, the fill covers the whole box). A rect/ellipse border wider than half the
+  // box is drawn at half its smaller side, so the shape shows solid instead of vanishing (SVG skips
+  // a zero-size rect).
+  const strokeColor = el.strokeColor && el.strokeWidth > 0 ? el.strokeColor : null
+  const sw = strokeColor ? (el.shape === 'line' ? el.strokeWidth : Math.min(el.strokeWidth, el.width / 2, el.height / 2)) * scale : 0
+  const stroke = strokeColor ?? 'none'
   let shape
   if (el.shape === 'line') {
     const [x1, y1, x2, y2] = el.flip ? [0, h, w, 0] : [0, 0, w, h]
-    shape = <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={stroke} strokeWidth={strokeWidth} strokeLinecap="round" />
+    shape = <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={stroke} strokeWidth={sw} strokeLinecap="round" />
   } else if (el.shape === 'ellipse') {
     shape = (
       <ellipse
@@ -90,7 +92,7 @@ function ShapeContent({ el, scale }: { el: ShapeElement; scale: number }) {
         ry={Math.max(0, (h - sw) / 2)}
         fill={el.fillColor ?? 'none'}
         stroke={stroke}
-        strokeWidth={strokeWidth}
+        strokeWidth={sw}
       />
     )
   } else {
@@ -102,7 +104,7 @@ function ShapeContent({ el, scale }: { el: ShapeElement; scale: number }) {
         height={Math.max(0, h - sw)}
         fill={el.fillColor ?? 'none'}
         stroke={stroke}
-        strokeWidth={strokeWidth}
+        strokeWidth={sw}
       />
     )
   }

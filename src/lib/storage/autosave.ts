@@ -31,6 +31,12 @@ export const SESSIONS_CHANNEL = 'fillflow-sessions'
 
 const CHANGED_ELSEWHERE = 'This document was changed in another tab'
 const NOT_LOADED = 'Your saved work on this document didn’t load'
+/**
+ * The toaster of the messages that stay until acted on (App mounts it just under the top bar, where
+ * nothing opens): with the passing ones at the bottom, they would cover the popovers that open above
+ * the tool dock.
+ */
+export const STAYING_TOASTER = 'staying'
 
 /** Autosave state of one opened document. */
 interface Target {
@@ -169,6 +175,7 @@ export function startAutosave(): () => void {
       id: OUTDATED_TOAST_ID,
       description: 'Reload it to get the latest saved version. Changes made here aren’t being saved.',
       duration: Infinity,
+      toasterId: STAYING_TOASTER,
       action: { label: 'Reload', onClick: () => reload(t.doc) },
     })
   }
@@ -183,6 +190,7 @@ export function startAutosave(): () => void {
       id: OUTDATED_TOAST_ID,
       description: 'Reload it to try again before you make changes.',
       duration: Infinity,
+      toasterId: STAYING_TOASTER,
       action: { label: 'Reload', onClick: () => reload(t.doc) },
     })
   }

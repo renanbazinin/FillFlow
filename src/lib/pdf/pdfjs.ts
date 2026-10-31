@@ -25,11 +25,34 @@ export class PasswordRequiredError extends Error {
   }
 }
 
+/** How long a load that is given up on gets to end its worker politely before it is ended for it. */
+const STOP_GRACE_MS = 1000
+
+/**
+ * Ends a load, or the document it opened, that is no longer wanted. pdf.js's own destroy() waits
+ * for the worker to answer before it ends the worker, so a worker that never answers would live
+ * on: if the polite way hasn't finished shortly, end the load's worker directly.
+ */
+export function stopLoading(task: PDFDocumentLoadingTask): void {
+  // Private to pdf.js: each load (no shared worker port is set) has a worker of its own.
+  const own = task as unknown as { _worker: { destroy(): void } | null }
+  const timer = setTimeout(() => own._worker?.destroy(), STOP_GRACE_MS)
+  void task.destroy().then(
+    () => clearTimeout(timer),
+    () => {},
+  )
+}
+
 /**
  * Opens a PDF with pdf.js. `bytes` is copied because pdf.js transfers the buffer to its worker.
  * Rejects with PasswordRequiredError when the file needs a (different) password.
+ *
+ * Aborting `signal` while the file loads stops the load, its worker included (see stopLoading; the
+ * promise may then never settle). Once it has settled, the document is the caller's: an abort
+ * leaves it alone.
  */
-export async function openPdf(bytes: Uint8Array, password?: string): Promise<PDFDocumentProxy> {
+export async function openPdf(bytes: Uint8Array, password?: string, signal?: AbortSignal): Promise<PDFDocumentProxy> {
+  signal?.throwIfAborted()
   const task: PDFDocumentLoadingTask = pdfjs.getDocument({
     data: bytes.slice(),
     password,
@@ -44,11 +67,15 @@ export async function openPdf(bytes: Uint8Array, password?: string): Promise<PDF
     passwordError = new PasswordRequiredError(reason === pdfjs.PasswordResponses.INCORRECT_PASSWORD)
     void task.destroy()
   }
+  const abort = () => stopLoading(task)
+  signal?.addEventListener('abort', abort, { once: true })
   try {
     return await task.promise
   } catch (err) {
     if (passwordError) throw passwordError
     throw err
+  } finally {
+    signal?.removeEventListener('abort', abort)
   }
 }
 

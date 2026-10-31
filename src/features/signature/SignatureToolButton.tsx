@@ -59,8 +59,9 @@ export function SignatureToolButton({
           useEditor.getState().openDialog(role)
           return
         }
-        // The list opens where toasts sit, and any left up would cover its tiles: clear them all but the
-        // errors that stay until acted on (Reload). A passing autosave failure still shows in the title's save status.
+        // The list opens where passing toasts sit, and any left up would cover its tiles: clear them all.
+        // The errors that stay until acted on (Reload) have a stack of their own under the top bar, and
+        // stay. A passing autosave failure still shows in the title's save status.
         for (const t of toast.getToasts()) if (!('type' in t && t.type === 'error' && t.duration === Infinity)) toast.dismiss(t.id)
         setOpen(true)
       })

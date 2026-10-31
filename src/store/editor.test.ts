@@ -6,6 +6,7 @@ vi.mock('../lib/pdf/pdfjs', () => ({
   looksLikePdf: () => true,
   openPdf: vi.fn(),
   readPageInfos: vi.fn(),
+  stopLoading: (task: { destroy(): Promise<void> }) => void task.destroy(),
   PasswordRequiredError: class extends Error {},
 }))
 vi.mock('../lib/storage/db', () => ({
@@ -376,6 +377,39 @@ describe('opening documents', () => {
     expect(s().load).toEqual({ status: 'idle' })
   })
 
+  it('a cancel stops pdf.js at once, and the load it stops is never reported as a failure', async () => {
+    vi.mocked(pdfjs.openPdf).mockClear()
+    vi.mocked(console.error).mockClear()
+    // As pdf.js does: a stopped load fails (or never ends).
+    vi.mocked(pdfjs.openPdf).mockImplementationOnce(
+      (_bytes, _password, signal) => new Promise((_, reject) => signal?.addEventListener('abort', () => reject(new Error('Loading aborted')))),
+    )
+    const late = s().openDocument(bytes)
+    const signal = vi.mocked(pdfjs.openPdf).mock.lastCall?.[2]
+    expect(signal?.aborted).toBe(false)
+    s().cancelOpen()
+    expect(signal?.aborted).toBe(true)
+    expect(await late).toBe(false)
+    await settled()
+    expect(s().load).toEqual({ status: 'idle' })
+    expect(console.error).not.toHaveBeenCalled()
+  })
+
+  it('lets go of the parsed document at once when a later step that never ends is given up on, and never of the open one', async () => {
+    await openFully()
+    const open = s().doc
+    const pdf = fakePdf()
+    vi.mocked(pdfjs.openPdf).mockResolvedValueOnce(pdf as never)
+    vi.mocked(pdfjs.readPageInfos).mockReset().mockReturnValueOnce(new Promise(() => {}))
+    const late = s().openDocument({ name: 'g.pdf', bytes: bytes.bytes })
+    await vi.waitFor(() => expect(pdfjs.readPageInfos).toHaveBeenCalled())
+    s().cancelOpen()
+    expect(await late).toBe(false)
+    expect(pdf.loadingTask.destroy).toHaveBeenCalledTimes(1)
+    expect(s().doc).toBe(open)
+    expect(open?.pdf.loadingTask.destroy).not.toHaveBeenCalled()
+  })
+
   it('a stored document read after a cancel neither opens nor reports a failure', async () => {
     vi.mocked(pdfjs.openPdf).mockClear()
     const found = deferred<Uint8Array | null>()
@@ -420,6 +454,8 @@ describe('opening documents', () => {
     expect(s().load).toEqual({ status: 'loading', fileName: 'f.pdf', unlocking: true })
     await s().submitPassword(null)
     expect(s().load).toEqual({ status: 'idle' })
+    // pdf.js is told at once.
+    expect(vi.mocked(pdfjs.openPdf).mock.lastCall?.[2]?.aborted).toBe(true)
     await attempt
     const pdf = fakePdf()
     trying.resolve(pdf)

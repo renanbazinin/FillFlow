@@ -15,7 +15,8 @@ vi.mock('sonner', () => ({ toast: vi.fn() }))
 const { useEditor } = await import('../../../store/editor')
 const { createTextElement, DEFAULT_STYLES } = await import('../../../model/elements')
 const { startNewText, editText, finishTextEdit, finishActiveTextEdit, registerTextarea, hasTextarea, takePendingCaret } = await import('./textEdit')
-const { deleteElements, deleteSelection, nudgeSelection, selectAllOnPage, setLocked, toggleLockSelection } = await import('./commands')
+const { deleteElements, deleteSelection, nudgeSelection, revealElement, selectAllOnPage, setLocked, toggleLockSelection } = await import('./commands')
+const { registerViewer } = await import('../../viewer/viewerApi')
 const { copySelection, pasteItems, clipboardMarker, isClipboardMarker, systemClipboardIsNewer, pastePlainText, writeClipboardMarker } = await import('./clipboard')
 const styles = await import('../toolbar/styleActions')
 const place = await import('../create/place')
@@ -219,6 +220,19 @@ describe('commands', () => {
     deleteElements(['a', 'b'])
     expect(s().elements.map((e) => e.id)).toEqual(['a'])
     expect(s().selection).toEqual([])
+  })
+
+  it('leaves it to the viewer whether revealing an item animates (reduced motion, long jumps)', () => {
+    const scrollToRect = vi.fn()
+    registerViewer({ scrollToRect } as never)
+    try {
+      revealElement(mark('a', 100, 200, 1))
+      expect(scrollToRect).toHaveBeenLastCalledWith(1, { x: 100, y: 200, width: 14, height: 14 }, { behavior: undefined, margin: 48 })
+      revealElement(mark('a'), 'auto')
+      expect(scrollToRect).toHaveBeenLastCalledWith(0, expect.anything(), { behavior: 'auto', margin: 48 })
+    } finally {
+      registerViewer(null)
+    }
   })
 })
 

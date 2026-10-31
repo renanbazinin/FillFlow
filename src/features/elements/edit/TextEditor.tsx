@@ -34,9 +34,10 @@ export function TextEditor({ el, scale }: { el: TextElement; scale: number }) {
     if (caret !== null) applyCaret(node, caret)
     return () => {
       registerTextarea(id, null)
-      // Unmounted because editing moved on (undo, tool change, another item…) or because its
-      // page layer went away (large documents only mount layers near the viewport): commit.
-      // A StrictMode re-mount registers again right away, so it doesn't end the session.
+      // Unmounted because editing moved on (undo, tool change, another item…), or, as a safety
+      // net, while still editing (scrolling can't cause that: the page being edited keeps its
+      // layer mounted, see PageView): commit. A StrictMode re-mount registers again right away,
+      // so it doesn't end the session.
       queueMicrotask(() => {
         if (useEditor.getState().editingId !== id || !hasTextarea(id)) finishTextEdit(id)
       })
