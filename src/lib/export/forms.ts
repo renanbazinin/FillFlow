@@ -62,6 +62,12 @@ export interface ApplyFormOptions {
    * numbers changed: the pdf.js widget ids in `fields` don't refer to this document's objects.
    */
   rewritten: boolean
+  /**
+   * Names of fields to flatten even when `flatten` is off: fields that items placed by the user
+   * cover (a signature placed in its signature field…). Left as fields, viewers would paint them
+   * over those items.
+   */
+  flattenAlso?: string[]
 }
 
 export interface ApplyFormResult {

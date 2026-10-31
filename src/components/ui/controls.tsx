@@ -110,18 +110,22 @@ export function Segmented<T extends string>({
   onValueChange,
   options,
   size = 'md',
+  label,
   className,
 }: {
   value: T
   onValueChange: (value: T) => void
   options: SegmentedOption<T>[]
   size?: 'sm' | 'md'
+  /** Accessible name of the group ("Text alignment"…). */
+  label?: string
   className?: string
 }) {
   return (
     <ToggleGroup.Root
       type="single"
       value={value}
+      aria-label={label}
       onValueChange={(v) => v && onValueChange(v as T)}
       className={cn('inline-flex items-center gap-0.5 rounded-lg bg-surface-3 p-0.5', className)}
     >
@@ -206,6 +210,7 @@ export function ColorSwatches({
   allowCustom = true,
   allowNone = false,
   size = 'md',
+  label = 'Color',
   className,
 }: {
   value: string | null
@@ -214,12 +219,14 @@ export function ColorSwatches({
   allowCustom?: boolean
   allowNone?: boolean
   size?: 'sm' | 'md'
+  /** Accessible name of the group ("Text color", "Fill"…). */
+  label?: string
   className?: string
 }) {
   const dim = size === 'sm' ? 'size-5' : 'size-6'
   const isCustom = value !== null && !colors.some((c) => c.toLowerCase() === value.toLowerCase())
   return (
-    <div className={cn('flex flex-wrap items-center gap-1.5', className)} role="radiogroup" aria-label="Color">
+    <div className={cn('flex flex-wrap items-center gap-1.5', className)} role="radiogroup" aria-label={label}>
       {allowNone && (
         <button
           type="button"

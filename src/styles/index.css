@@ -67,6 +67,8 @@
   --color-surface-3: var(--ff-surface-3);
   --color-line: var(--ff-line);
   --color-line-strong: var(--ff-line-strong);
+  /* Resting border of interactive controls (inputs, checkboxes…): ≥ 3:1 against their background. */
+  --color-control: var(--ff-control);
   --color-fg: var(--ff-fg);
   --color-fg-muted: var(--ff-fg-muted);
   --color-fg-subtle: var(--ff-fg-subtle);
@@ -105,6 +107,7 @@
   --ff-surface-3: #eef0f4;
   --ff-line: #e3e6eb;
   --ff-line-strong: #cdd2da;
+  --ff-control: #7b8597;
   --ff-fg: #0e1726;
   --ff-fg-muted: #4f5a6b;
   /* Small-text colors (fg-subtle, success, warning) stay ≥ 4.5:1 on the backgrounds they sit on. */
@@ -135,6 +138,7 @@
   --ff-surface-3: #222836;
   --ff-line: #262d3b;
   --ff-line-strong: #364052;
+  --ff-control: #6b7790;
   --ff-fg: #e8ebf1;
   --ff-fg-muted: #a3acbb;
   --ff-fg-subtle: #8a94a6;

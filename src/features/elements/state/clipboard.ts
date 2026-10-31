@@ -1,6 +1,7 @@
 import { createImageElement, createTextElement, IMAGE_DEFAULT_WIDTH } from '../../../model/elements'
 import type { Asset, Element, Point } from '../../../model/types'
 import { getSelectedElements, useEditor } from '../../../store/editor'
+import { firstStrongDirection } from '../../../lib/text/direction'
 import { createId } from '../../../lib/utils/id'
 import { importImageAsset } from '../../signature/decode'
 import { viewer } from '../../viewer/viewerApi'
@@ -173,6 +174,8 @@ export function pastePlainText(text: string): boolean {
   const el = createTextElement(page, { x: 0, y: 0 }, s.styles.text, clean.slice(0, 20000))
   const fitted = fitRectInPage({ x: center.x - el.width / 2, y: center.y - el.height / 2, width: el.width, height: el.height }, size)
   finishActiveTextEdit()
-  s.addElement({ ...el, x: fitted.x, y: fitted.y })
+  // Right-to-left text (Hebrew, Arabic…) lines up on the right, as it is read.
+  const align = firstStrongDirection(clean) === 'rtl' ? 'right' : el.align
+  s.addElement({ ...el, align, x: fitted.x, y: fitted.y })
   return true
 }

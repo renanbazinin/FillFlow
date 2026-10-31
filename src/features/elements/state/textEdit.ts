@@ -1,5 +1,7 @@
 import { flushSync } from 'react-dom'
 import { toast } from 'sonner'
+import { firstStrongDirection } from '../../../lib/text/direction'
+import { withTextLayout } from '../../../model/elements'
 import type { TextElement } from '../../../model/types'
 import { useEditor } from '../../../store/editor'
 
@@ -17,6 +19,8 @@ interface Session {
   isNew: boolean
   /** The text when editing began. */
   before: string
+  /** Where a new block was started (its left edge, at the click). */
+  origin?: number
 }
 
 export type CaretRequest = number | 'end' | 'all'
@@ -72,10 +76,30 @@ export function startNewText(el: TextElement): void {
   finishActiveTextEdit()
   const s = useEditor.getState()
   s.beginGesture()
-  session = { id: el.id, isNew: true, before: el.text }
+  session = { id: el.id, isNew: true, before: el.text, origin: el.x }
   pendingCaret = { id: el.id, caret: 'end' }
   flushSync(() => s.addElement(el, { edit: true }))
   focusWithPendingCaret(el.id)
+}
+
+/**
+ * The text of the block being edited changed (typing, pasting, deleting). A new block whose text
+ * turns out to run right to left (Hebrew, Arabic…) right-aligns with its right edge where it was
+ * started, so it grows leftwards from there like the line it is typed on. Only while it is still
+ * left-aligned: an alignment chosen for it stays.
+ */
+export function setEditedText(id: string, text: string): void {
+  const s = useEditor.getState()
+  const el = s.elements.find((e) => e.id === id)
+  if (!el || el.kind !== 'text') return
+  const opts = { coalesce: `text:${id}` }
+  const own = session?.id === id ? session : null
+  if (own?.isNew && own.origin !== undefined && el.align === 'left' && !firstStrongDirection(el.text) && firstStrongDirection(text) === 'rtl') {
+    const laid = withTextLayout({ ...el, text, align: 'right', x: own.origin, width: 0 })
+    s.updateElement(id, { text, align: 'right', x: laid.x, width: laid.width, height: laid.height }, opts)
+    return
+  }
+  s.updateElement(id, { text }, opts)
 }
 
 /** Starts (or continues) editing an existing text block. */

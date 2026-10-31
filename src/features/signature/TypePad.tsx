@@ -4,7 +4,7 @@ import { Check } from 'lucide-react'
 import { FieldLabel, Input } from '../../components/ui/controls'
 import { cn } from '../../lib/utils/misc'
 import { useSignatureDraft } from './draft'
-import { SIGNATURE_FONTS, signatureFontStack, type SignatureFontId } from './fonts'
+import { SIGNATURE_FONTS, signatureFontLabel, signatureFontScale, signatureFontStack, type SignatureFontId } from './fonts'
 import type { SignatureRole } from './library'
 import { FitText, InkSwatches } from './parts'
 
@@ -61,7 +61,7 @@ export function TypePad({ role, onSubmit, inputRef }: { role: SignatureRole; onS
           <RadioGroup.Item
             key={f.id}
             value={f.id}
-            aria-label={f.label}
+            aria-label={signatureFontLabel(f, sample)}
             className={cn(
               'group relative flex h-[84px] min-w-0 flex-col rounded-xl border border-line bg-white px-3 pb-2 pt-1 text-left shadow-xs transition-[border-color,box-shadow] duration-150 hover:border-line-strong data-[state=checked]:border-accent data-[state=checked]:ring-3 data-[state=checked]:ring-accent/20',
               CARD_SPAN[i],
@@ -70,12 +70,12 @@ export function TypePad({ role, onSubmit, inputRef }: { role: SignatureRole; onS
             <FitText
               dir="auto"
               className={cn('flex-1', !text.trim() && 'opacity-35')}
-              style={{ fontFamily: signatureFontStack(f), fontSize: `${Math.round(30 * f.scale)}px`, color }}
+              style={{ fontFamily: signatureFontStack(f), fontSize: `${Math.round(30 * signatureFontScale(f, sample))}px`, color }}
             >
               {sample}
             </FitText>
             <span className="flex h-4 items-center justify-between gap-2">
-              <span className="truncate text-[11px] font-medium leading-none text-black/45">{f.label}</span>
+              <span className="truncate text-[11px] font-medium leading-none text-black/45">{signatureFontLabel(f, sample)}</span>
               <RadioGroup.Indicator className="inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-accent text-accent-fg animate-scale-in">
                 <Check className="size-2.5" strokeWidth={3.5} />
               </RadioGroup.Indicator>

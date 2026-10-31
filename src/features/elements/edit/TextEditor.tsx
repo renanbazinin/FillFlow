@@ -3,7 +3,7 @@ import type { TextElement } from '../../../model/types'
 import { useEditor } from '../../../store/editor'
 import { shortcutLetter } from '../lib/keys'
 import { textCss, useBaselineShift } from '../render/textStyle'
-import { applyCaret, finishTextEdit, hasTextarea, registerTextarea, takePendingCaret } from '../state/textEdit'
+import { applyCaret, finishTextEdit, hasTextarea, registerTextarea, setEditedText, takePendingCaret } from '../state/textEdit'
 import { isIOS } from './platform'
 
 /** Caret color when the text itself is too light to see on white paper. */
@@ -102,8 +102,7 @@ export function TextEditor({ el, scale }: { el: TextElement; scale: number }) {
         rows={1}
         onChange={(e) => {
           const raw = e.target.value
-          const text = raw.includes('\t') ? raw.replace(/\t/g, '    ') : raw
-          useEditor.getState().updateElement(id, { text }, { coalesce: `text:${id}` })
+          setEditedText(id, raw.includes('\t') ? raw.replace(/\t/g, '    ') : raw)
         }}
         onKeyDown={onKeyDown}
         onBlur={(e) => {

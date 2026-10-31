@@ -14,7 +14,7 @@ vi.mock('sonner', () => ({ toast: vi.fn() }))
 
 const { useEditor } = await import('../../../store/editor')
 const { createTextElement, DEFAULT_STYLES } = await import('../../../model/elements')
-const { startNewText, editText, finishTextEdit, finishActiveTextEdit, registerTextarea, hasTextarea, takePendingCaret } = await import('./textEdit')
+const { startNewText, editText, finishTextEdit, finishActiveTextEdit, registerTextarea, hasTextarea, setEditedText, takePendingCaret } = await import('./textEdit')
 const { deleteElements, deleteSelection, nudgeSelection, revealElement, selectAllOnPage, setLocked, toggleLockSelection } = await import('./commands')
 const { registerViewer } = await import('../../viewer/viewerApi')
 const { copySelection, pasteItems, clipboardMarker, isClipboardMarker, systemClipboardIsNewer, pastePlainText, writeClipboardMarker } = await import('./clipboard')
@@ -75,6 +75,48 @@ describe('text editing sessions', () => {
     expect(s().past.length).toBe(before + 1)
     s().undo()
     expect(s().elements).toHaveLength(0)
+  })
+
+  it('right-aligns a new block typed in Hebrew, keeping its right edge where it was started', () => {
+    const el = createTextElement(0, { x: 200, y: 10 }, s().styles.text)
+    startNewText(el)
+    const text = () => s().elements[0] as TextElement
+    // Neutral characters first (digits, a bracket): no direction yet, so it stays as it was.
+    setEditedText(el.id, '12 (')
+    expect(text().align).toBe('left')
+    expect(text().x).toBe(200)
+    // The first Hebrew letter decides: from now on it grows leftwards from where it was started.
+    setEditedText(el.id, '12 (ש')
+    expect(text().align).toBe('right')
+    expect(text().x + text().width).toBeCloseTo(200)
+    setEditedText(el.id, '12 (שלום)')
+    expect(text().x + text().width).toBeCloseTo(200)
+    expect(text().x).toBeLessThan(200)
+    finishActiveTextEdit()
+    s().undo()
+    expect(s().elements).toHaveLength(0)
+  })
+
+  it('leaves the alignment of English text, of existing blocks, and one chosen while typing', () => {
+    const english = createTextElement(0, { x: 200, y: 10 }, s().styles.text)
+    startNewText(english)
+    setEditedText(english.id, 'Hello שלום')
+    expect(s().elements.find((e) => e.id === english.id)).toMatchObject({ align: 'left', x: 200 })
+    finishActiveTextEdit()
+
+    const existing = { ...createTextElement(0, { x: 200, y: 60 }, s().styles.text, '12'), id: 'existing' }
+    s().addElement(existing)
+    editText(existing.id)
+    setEditedText(existing.id, '12 שלום')
+    expect(s().elements.find((e) => e.id === existing.id)).toMatchObject({ align: 'left', x: 200 })
+    finishActiveTextEdit()
+
+    const centered = createTextElement(0, { x: 200, y: 110 }, s().styles.text)
+    startNewText(centered)
+    s().updateElement(centered.id, { align: 'center' })
+    setEditedText(centered.id, 'שלום')
+    expect(s().elements.find((e) => e.id === centered.id)).toMatchObject({ align: 'center' })
+    finishActiveTextEdit()
   })
 
   it('removes an existing block emptied while editing (undoable)', () => {
@@ -330,7 +372,11 @@ describe('clipboard', () => {
     const t = s().elements[0] as TextElement
     expect(t.text).toBe('Hello\nworld    !')
     expect(t.x + t.width).toBeLessThanOrEqual(600)
+    expect(t.align).toBe('left')
     expect(pastePlainText('   ')).toBe(false)
+    // Hebrew lines up on the right, as it is read.
+    expect(pastePlainText('ישראל כהן\nרחוב הרצל 12')).toBe(true)
+    expect((s().elements[1] as TextElement).align).toBe('right')
   })
 })
 

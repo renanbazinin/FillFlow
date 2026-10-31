@@ -60,4 +60,4 @@ src/
 
 ## Fonts
 
-Arimo, Tinos and Cousine are bundled under the SIL Open Font License (see `src/assets/fonts/*-OFL.txt`). Interface fonts (Inter, Instrument Serif) and handwriting fonts come from [Fontsource](https://fontsource.org/).
+Arimo, Tinos and Cousine are bundled under the SIL Open Font License (see `src/assets/fonts/*-OFL.txt`). Interface fonts (Inter, Instrument Serif) and handwriting fonts come from [Fontsource](https://fontsource.org/), including Hebrew handwriting faces (Gveret Levin, Playpen Sans Hebrew, Amatic SC) so typed Hebrew signatures look handwritten too.
