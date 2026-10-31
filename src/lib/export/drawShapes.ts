@@ -82,7 +82,10 @@ function shapePaint(el: ShapeElement, H: number): PDFOperator[] | null {
   const strokeC = el.strokeColor && el.strokeWidth > 0 ? parseColor(el.strokeColor) : null
   const fillC = el.shape !== 'line' && el.fillColor ? parseColor(el.fillColor) : null
   if (!strokeC && !fillC) return null
-  const sw = strokeC ? el.strokeWidth : 0
+  if (el.shape !== 'line' && (el.width <= 0 || el.height <= 0)) return null
+  // A rect/ellipse border wider than half the box is drawn at half its smaller side (as on
+  // screen): the shape is then solid, and the stroke never spills out of the box.
+  const sw = !strokeC ? 0 : el.shape === 'line' ? el.strokeWidth : Math.min(el.strokeWidth, el.width / 2, el.height / 2)
   const ops: PDFOperator[] = []
   if (fillC) ops.push(setFillingRgbColor(fillC.r, fillC.g, fillC.b))
   if (strokeC) ops.push(setStrokingRgbColor(strokeC.r, strokeC.g, strokeC.b), setLineWidth(r(sw)))

@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, type ReactNode } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from 'react'
 import { PanelLeftClose, PanelRightClose } from 'lucide-react'
 import { Tabs } from 'radix-ui'
 import { IconButton } from '../../components/ui/button'
@@ -40,8 +40,17 @@ function DockedPanel({
   label: string
   children: ReactNode
 }) {
+  const ref = useRef<HTMLElement>(null)
+  // Closing makes the panel inert, which would drop focus inside it (e.g. on its own close
+  // button) to <body>: hand it to the panel's toggle in the top bar instead.
+  useLayoutEffect(() => {
+    if (!open && ref.current?.contains(document.activeElement)) {
+      document.querySelector<HTMLElement>(`[data-panel-toggle="${side}"]`)?.focus({ preventScroll: true })
+    }
+  }, [open, side])
   return (
     <aside
+      ref={ref}
       aria-label={label}
       inert={!open}
       style={{ width: open ? width : 0 }}
@@ -69,14 +78,12 @@ function PanelHeader({
   onClose: () => void
   closeLabel: string
   closeIcon: ReactNode
-  /** In a modal sheet: the title takes initial focus (no ring, no tooltip popping up on open). */
+  /** Inside a modal sheet (which takes initial focus itself): no tooltip on the close button. */
   sheet?: boolean
 }) {
   return (
     <div className="flex h-12 shrink-0 items-center gap-2 border-b border-line pl-3 pr-2">
-      <div tabIndex={sheet ? 0 : undefined} className="flex min-w-0 flex-1 items-center gap-2 outline-none">
-        {children}
-      </div>
+      <div className="flex min-w-0 flex-1 items-center gap-2">{children}</div>
       <IconButton label={closeLabel} icon={closeIcon} size="icon-sm" onClick={onClose} tooltip={!sheet} className="pointer-coarse:size-10" />
     </div>
   )
@@ -106,7 +113,8 @@ export function PagesPanel() {
         <span className="text-[12px] tabular-nums text-fg-subtle">{pageCount}</span>
       </PanelHeader>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain scrollbar-thin">
-        <Thumbnails />
+        {/* Collapsed, the panel stays mounted: no thumbnail rendering or scrolling then. */}
+        <Thumbnails active={open} />
       </div>
     </>
   )
@@ -179,9 +187,16 @@ export function InspectorPanel() {
           <FormPanel />
         </Tabs.Content>
       )}
-      <Tabs.Content value="items" forceMount className={TAB_CONTENT}>
-        <ItemsPanel />
-      </Tabs.Content>
+      {hasForm ? (
+        <Tabs.Content value="items" forceMount className={TAB_CONTENT}>
+          <ItemsPanel />
+        </Tabs.Content>
+      ) : (
+        // Without the Form tab there are no tabs: the list isn't a tab panel.
+        <div className={TAB_CONTENT}>
+          <ItemsPanel />
+        </div>
+      )}
     </Tabs.Root>
   )
 
@@ -205,9 +220,10 @@ export function InspectorPanel() {
   )
 }
 
-// Inactive tabs stay mounted (keeps each list's scroll position) but hidden.
+// Inactive tabs stay mounted (keeps each list's scroll position) but hidden. A tab panel is a Tab
+// stop: its focus ring is inset so the panel's edges don't clip it.
 const TAB_CONTENT =
-  'flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain outline-none scrollbar-thin data-[state=inactive]:hidden'
+  'flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain scrollbar-thin focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent data-[state=inactive]:hidden'
 
 function TabTrigger({ value, count, children }: { value: InspectorTab; count: number; children: ReactNode }) {
   return (
@@ -216,7 +232,7 @@ function TabTrigger({ value, count, children }: { value: InspectorTab; count: nu
       className="group inline-flex h-7 items-center gap-1.5 rounded-[7px] px-2.5 text-[13px] font-medium text-fg-muted transition-colors hover:text-fg data-[state=active]:bg-surface data-[state=active]:text-fg data-[state=active]:shadow-xs"
     >
       {children}
-      <span className="min-w-[18px] rounded-full bg-line/80 px-1.5 text-center text-[11px] font-semibold leading-[18px] tabular-nums text-fg-subtle group-data-[state=active]:bg-accent-soft group-data-[state=active]:text-accent-ink">
+      <span className="min-w-[18px] rounded-full bg-line/80 px-1.5 text-center text-[11px] font-semibold leading-[18px] tabular-nums text-fg-muted group-data-[state=active]:bg-accent-soft group-data-[state=active]:text-accent-ink">
         {count}
       </span>
     </Tabs.Trigger>

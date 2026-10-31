@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Asset, Element, ImageElement, MarkElement, TextElement } from '../../model/types'
-import { buildSession, parseSession, referencedAssets } from './session'
+import { buildSession, parseSession, referencedAssets, storedVersion } from './session'
 
 const asset = (id: string): Asset => ({ id, mime: 'image/png', dataUrl: `data:image/png;base64,${id}`, width: 10, height: 5 })
 
@@ -66,6 +66,13 @@ describe('buildSession', () => {
     })
   })
 
+  it('never stores a blank text block (a new one still being typed into)', () => {
+    const blank = { ...text, id: 'blank', text: '' }
+    const spaces = { ...text, id: 'spaces', text: ' \n\t ' }
+    const session = buildSession({ docId: 'd', fileName: 'f.pdf', elements: [blank, mark, spaces, text], formValues: {}, assets: {} }, 1)
+    expect(session.elements.map((e) => e.id)).toEqual(['m1', 't1'])
+  })
+
   it('stores an empty session after everything was cleared', () => {
     const session = buildSession({ docId: 'd', fileName: 'f.pdf', elements: [], formValues: {}, assets: { a: asset('a') } }, 1)
     expect(session.elements).toEqual([])
@@ -118,5 +125,31 @@ describe('parseSession', () => {
   it('fills in missing containers', () => {
     const parsed = parseSession({ version: 1, docId: 'd' })
     expect(parsed).toEqual({ version: 1, docId: 'd', fileName: '', elements: [], formValues: {}, assets: {}, updatedAt: 0 })
+  })
+
+  it('drops blank text blocks saved by an earlier build', () => {
+    const raw = valid() as unknown as Record<string, unknown>
+    raw.elements = [{ ...text, id: 'empty', text: '' }, { ...text, id: 'spaces', text: '   ' }, mark]
+    expect(parseSession(raw)?.elements.map((e) => e.id)).toEqual(['m1'])
+  })
+
+  it('gives text blocks a style this build supports instead of failing to open', () => {
+    const raw = valid() as unknown as Record<string, unknown>
+    raw.elements = [
+      { ...text, id: 'odd', fontId: 'script', bold: 'yes', align: 'justify', lineHeight: 0, letterSpacing: null, color: 7 },
+      { ...text, id: 'fine', fontId: 'mono', bold: true, align: 'right', lineHeight: 1.5, letterSpacing: 2, color: '#c81e1e' },
+    ]
+    const [odd, fine] = (parseSession(raw)?.elements ?? []) as TextElement[]
+    expect(odd).toMatchObject({ id: 'odd', text: text.text, fontId: 'sans', bold: false, align: 'left', lineHeight: 1.2, letterSpacing: 0, color: '#111827' })
+    expect(fine).toEqual({ ...text, id: 'fine', fontId: 'mono', bold: true, align: 'right', lineHeight: 1.5, letterSpacing: 2, color: '#c81e1e' })
+  })
+})
+
+describe('storedVersion', () => {
+  it('is the record’s updatedAt, or 0', () => {
+    expect(storedVersion(buildSession({ docId: 'd', fileName: 'f.pdf', elements: [], formValues: {}, assets: {} }, 5))).toBe(5)
+    expect(storedVersion(undefined)).toBe(0)
+    expect(storedVersion({ version: 1, docId: 'd' })).toBe(0)
+    expect(storedVersion('junk')).toBe(0)
   })
 })

@@ -1,4 +1,4 @@
-import { IMAGE_DEFAULT_WIDTH, MIN_ELEMENT_SIZE, TEXT_LINE_HEIGHT } from '../../../model/elements'
+import { IMAGE_DEFAULT_MAX_HEIGHT, IMAGE_DEFAULT_WIDTH, MIN_ELEMENT_SIZE, TEXT_LINE_HEIGHT } from '../../../model/elements'
 import type { ImageRole, Point, Rect, ToolId } from '../../../model/types'
 import { rectFromPoints } from '../../../lib/pdf/geometry'
 import { clampPoint, fitRectInPage, snapAngle45, type Size } from './geometry'
@@ -37,10 +37,15 @@ export function markRect(center: Point, size: number, page: Size): Rect {
   return fitRectInPage({ x: center.x - size / 2, y: center.y - size / 2, width: size, height: size }, page)
 }
 
-/** An image of the role's default width (shrunk to fit small pages) centered on the click. */
+/**
+ * An image of the role's default width, or narrower when that would make it taller than the
+ * role's default height (initials like "J", tall signatures), shrunk to fit small pages and
+ * centered on the click.
+ */
 export function imageRect(center: Point, role: ImageRole, aspect: number, page: Size): Rect {
   const a = aspect > 0 && Number.isFinite(aspect) ? aspect : 1
-  let width = Math.min(IMAGE_DEFAULT_WIDTH[role], page.width * 0.9)
+  const natural = Math.max(Math.min(IMAGE_DEFAULT_WIDTH[role], IMAGE_DEFAULT_MAX_HEIGHT[role] * a), MIN_ELEMENT_SIZE)
+  let width = Math.min(natural, page.width * 0.9)
   if (width / a > page.height * 0.9) width = page.height * 0.9 * a
   const height = width / a
   return fitRectInPage({ x: center.x - width / 2, y: center.y - height / 2, width, height }, page)

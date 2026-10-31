@@ -1,3 +1,4 @@
+import { storedValue } from '../../lib/pdf/forms/values'
 import type { FormField, FormWidget } from '../../model/types'
 import { useEditor } from '../../store/editor'
 import { viewer } from '../viewer/viewerApi'
@@ -23,7 +24,7 @@ export function findControl(field: FormField, widget?: FormWidget): HTMLElement 
 /** The widget to show for a field: the selected radio option, else the first widget. */
 export function primaryWidget(field: FormField): FormWidget | undefined {
   if (field.type === 'radio') {
-    const value = useEditor.getState().formValues[field.name]
+    const value = storedValue(useEditor.getState().formValues, field.name)
     const on = field.widgets.find((w) => w.exportValue === value)
     if (on) return on
   }

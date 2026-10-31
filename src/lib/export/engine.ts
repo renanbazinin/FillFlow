@@ -12,6 +12,7 @@ import {
 import type { Element, PageInfo } from '../../model/types'
 import { exportMatrix } from '../pdf/geometry'
 import { measureTextCanvas } from '../text/layout'
+import { bakeAnnotationsUnder } from './annotations'
 import { protectOriginalContent } from './contentBalance'
 import { DocFonts } from './docFonts'
 import type { DrawContext } from './drawContext'
@@ -22,13 +23,15 @@ import { applyFormValues } from './forms'
 import { DocImages } from './images'
 import { r } from './num'
 import { DocGraphicsStates, PageResources } from './pageResources'
+import { restoreRewritten } from './restoreRewritten'
 import type { ExportDeps, ExportInput, RecoveredInfo } from './types'
 
 /**
  * The export pipeline (pure: everything environment-specific comes in through `deps`).
  *
  *  1. Load the original with pdf-lib (decrypting / repairing through pdf.js when needed).
- *  2. Make sure original page content can't leak graphics state into what we append.
+ *  2. Make sure original page content can't leak graphics state into what we append, and bake
+ *     the markup annotations that lie under elements into the page content.
  *  3. Write form values (forms engine), optionally flattening.
  *  4. Draw each page's elements in paint order inside `q <exportMatrix> cm … Q`.
  *  5. Embed font subsets, stamp the producer, save.
@@ -61,7 +64,17 @@ async function run(input: ExportInput, deps: ExportDeps): Promise<Uint8Array> {
   const pages = doc.getPages()
   for (const index of touched) if (pages[index]) protectOriginalContent(doc, pages[index])
 
-  const fonts = new DocFonts(doc, deps.loadFontBytes, flatten)
+  // The editor shows the page's markup annotations under the elements; viewers would paint them
+  // on top. The ones under an element become page content, before the forms and the elements.
+  for (const [index, elements] of byPage) {
+    try {
+      bakeAnnotationsUnder(doc, pages[index], input.pages[index], elements)
+    } catch (err) {
+      console.warn(`[export] could not bake the annotations of page ${index + 1}`, err)
+    }
+  }
+
+  const fonts = new DocFonts(doc, deps.loadFontBytes)
 
   if (hasFields) {
     progress({ phase: 'forms', done: 0, total: 0 })
@@ -72,7 +85,10 @@ async function run(input: ExportInput, deps: ExportDeps): Promise<Uint8Array> {
         pages: input.pages,
         rewritten,
       })
-      if (unwritten.length) console.warn(`[export] ${unwritten.length} field value(s) could not be written`, unwritten)
+      if (unwritten.length) {
+        console.warn(`[export] ${unwritten.length} field value(s) could not be written`, unwritten)
+        deps.onUnwrittenFields?.(unwritten)
+      }
     } catch (err) {
       if (err instanceof ExportError) throw err
       throw new ExportError('forms', undefined, { cause: err })
@@ -196,6 +212,11 @@ async function openForWriting(
   if (copy.extraPageIndex !== undefined && copy.extraPageIndex < rewritten.getPageCount()) rewritten.removePage(copy.extraPageIndex)
   if (rewritten.isEncrypted || rewritten.getPageCount() !== input.pages.length) {
     throw new ExportError(encrypted ? 'encrypted' : 'damaged')
+  }
+  try {
+    restoreRewritten(rewritten, copy.catalog)
+  } catch (err) {
+    console.warn('[export] could not restore what the rewrite dropped', err)
   }
   return { doc: rewritten, info: copy.info, rewritten: true }
 }

@@ -82,7 +82,7 @@ describe('documents', () => {
     expect((await db.listRecentDocuments()).map((d) => d.id)).toEqual(['a', 'c', 'b'])
   })
 
-  it(`keeps at most MAX_RECENT_DOCUMENTS, forgetting the oldest with their files and sessions`, async () => {
+  it(`keeps at most MAX_RECENT_DOCUMENTS, dropping the oldest entries and files but keeping their work`, async () => {
     const total = db.MAX_RECENT_DOCUMENTS + 2
     for (let i = 0; i < total; i++) {
       await remember(`d${i}`, 1000 + i)
@@ -95,10 +95,29 @@ describe('documents', () => {
     expect(list.map((d) => d.id)).not.toContain('d1')
     expect(await db.loadDocumentBytes('d0')).toBeNull()
     expect(await db.loadDocumentBytes('d1')).toBeNull()
-    expect(await db.loadSession('d0')).toBeNull()
-    expect(await db.loadSession('d1')).toBeNull()
     expect(await db.loadDocumentBytes('d2')).not.toBeNull()
+    // Opening the same file again restores the work.
+    expect(await db.loadSession('d0')).toEqual(session('d0'))
+    expect(await db.loadSession('d1')).toEqual(session('d1'))
     expect(await db.loadSession('d2')).not.toBeNull()
+  })
+
+  it('takes a document off the list without deleting its work', async () => {
+    await remember('a', 1000)
+    await db.saveSession(session('a'))
+    await db.removeRecentDocument('a')
+    expect(await db.listRecentDocuments()).toEqual([])
+    expect(await db.loadDocumentBytes('a')).toBeNull()
+    expect(await db.loadSession('a')).toEqual(session('a'))
+  })
+
+  it('deletes the work on documents that are no longer listed', async () => {
+    await remember('listed', 1000)
+    await db.saveSession(session('listed'))
+    await db.saveSession(session('unlisted'))
+    await db.forgetUnlistedSessions()
+    expect(await db.loadSession('listed')).not.toBeNull()
+    expect(await db.loadSession('unlisted')).toBeNull()
   })
 
   it('forgets a document completely', async () => {
@@ -137,6 +156,27 @@ describe('documents', () => {
     await set('junk', 'not an entry', createStore('fillflow-recents', 'recents'))
     expect((await db.listRecentDocuments()).map((d) => d.id)).toEqual(['a'])
   })
+
+  it('never hands out an entry without a name, and repairs unusable fields', async () => {
+    const { createStore, set } = await import('idb-keyval')
+    const store = createStore('fillflow-recents', 'recents')
+    // Written by some other build: no name.
+    await set('x', { id: 'x', size: 1, pageCount: 1, addedAt: 1, openedAt: 1 }, store)
+    await set('y', { id: 'y', name: 'y.pdf', size: 'big', pageCount: null, openedAt: 5, thumbnail: 42, filledCount: 'many' }, store)
+    expect(await db.getRecentDocument('x')).toBeNull()
+    expect(await db.patchRecentDocument('x', { filledCount: 1 })).toBe(false)
+    expect(await db.listRecentDocuments()).toEqual([{ id: 'y', name: 'y.pdf', size: 0, pageCount: 0, addedAt: 0, openedAt: 5 }])
+    // Opening it again rewrites a clean entry.
+    await remember('x', 2000)
+    expect(await db.getRecentDocument('x')).toEqual({ id: 'x', name: 'x.pdf', size: 3, pageCount: 1, addedAt: 2000, openedAt: 2000 })
+  })
+
+  it('keeps when work was last saved', async () => {
+    await remember('a', 1000)
+    await db.updateRecentDocument('a', { editedAt: 3000, filledCount: 1 })
+    await remember('a', 5000)
+    expect(await db.getRecentDocument('a')).toMatchObject({ openedAt: 5000, editedAt: 3000 })
+  })
 })
 
 describe('sessions', () => {
@@ -162,6 +202,72 @@ describe('sessions', () => {
     await set('moved', session('elsewhere'), store)
     expect(await db.loadSession('v2')).toBeNull()
     expect(await db.loadSession('moved')).toBeNull()
+  })
+
+  it('commits each write right away, so one started on pagehide survives the unload', async () => {
+    const commit = vi.spyOn(IDBTransaction.prototype, 'commit')
+    await db.saveSession(session('a'))
+    expect(commit).toHaveBeenCalledTimes(1)
+    await db.saveSession(session('a', { updatedAt: 20 }), { updatedAt: 10 })
+    expect(commit).toHaveBeenCalledTimes(2)
+  })
+
+  it('remembers which version each load found', async () => {
+    expect(db.loadedSessionVersion('a')).toBeNull()
+    await db.loadSession('a')
+    expect(db.loadedSessionVersion('a')).toBe(0)
+    await db.saveSession(session('a', { updatedAt: 42 }))
+    await db.loadSession('a')
+    expect(db.loadedSessionVersion('a')).toBe(42)
+  })
+
+  it('compare-and-swap: replaces only the version this tab knows, and advances it', async () => {
+    const version = { updatedAt: 0 as number | null }
+    // Nothing stored yet.
+    await db.saveSession(session('a', { updatedAt: 10 }), version)
+    expect(version.updatedAt).toBe(10)
+    await db.saveSession(session('a', { updatedAt: 11, formValues: { Name: 'Mine' } }), version)
+    expect(version.updatedAt).toBe(11)
+
+    // Another tab saves newer work…
+    const otherTab = { updatedAt: 11 }
+    await db.saveSession(session('a', { updatedAt: 12, formValues: { Name: 'Theirs' } }), otherTab)
+    // …so this tab's next write is refused instead of overwriting it.
+    await expect(db.saveSession(session('a', { updatedAt: 13, formValues: { Name: 'Stale' } }), version)).rejects.toBeInstanceOf(
+      db.SessionConflictError,
+    )
+    expect(version.updatedAt).toBe(11)
+    expect((await db.loadSession('a'))?.formValues).toEqual({ Name: 'Theirs' })
+
+    // A blind (last-chance) write doesn't check.
+    await db.saveSession(session('a', { updatedAt: 14, formValues: { Name: 'Blind' } }), version, { blind: true })
+    expect(version.updatedAt).toBe(14)
+    expect((await db.loadSession('a'))?.formValues).toEqual({ Name: 'Blind' })
+  })
+
+  it('compare-and-swap: overlapping writes from one tab expect each other', async () => {
+    const version = { updatedAt: 0 as number | null }
+    await Promise.all([
+      db.saveSession(session('a', { updatedAt: 1 }), version),
+      db.saveSession(session('a', { updatedAt: 2 }), version),
+      db.saveSession(session('a', { updatedAt: 3 }), version),
+    ])
+    expect(version.updatedAt).toBe(3)
+    expect((await db.loadSession('a'))?.updatedAt).toBe(3)
+  })
+
+  it('compare-and-swap: an unknown version only writes where nothing is stored', async () => {
+    await db.saveSession(session('a', { updatedAt: 7 }))
+    await expect(db.saveSession(session('a', { updatedAt: 8 }), { updatedAt: null })).rejects.toBeInstanceOf(db.SessionConflictError)
+    const fresh = { updatedAt: null as number | null }
+    await db.saveSession(session('b', { updatedAt: 9 }), fresh)
+    expect(fresh.updatedAt).toBe(9)
+  })
+
+  it('compare-and-swap: work deleted elsewhere is written again', async () => {
+    const version = { updatedAt: 5 }
+    await db.saveSession(session('a', { updatedAt: 6 }), version)
+    expect((await db.loadSession('a'))?.updatedAt).toBe(6)
   })
 })
 

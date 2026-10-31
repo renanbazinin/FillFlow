@@ -2,7 +2,6 @@ import fontkit, { type Font as FkFont } from '@pdf-lib/fontkit'
 import type { PDFDocument, PDFFont } from 'pdf-lib'
 import type { FontId } from '../../model/types'
 import { ExportError } from './errors'
-import { SHAPING_FEATURES } from './shaping'
 import { SubsetFont } from './subsetFont'
 
 /** Parsed fonts, shared across exports while the loader keeps returning the same bytes. */
@@ -15,16 +14,10 @@ export class DocFonts {
   private readonly faces = new Map<string, Promise<{ bytes: Uint8Array; font: FkFont }>>()
   private readonly subsets = new Map<string, Promise<SubsetFont>>()
   private unicode: Promise<PDFFont> | null = null
-  private readonly subsetFormFont: boolean
 
-  /**
-   * @param subsetFormFont subset the form font (fine when fields get flattened; editable fields
-   *   need the full font so viewers can render values typed later).
-   */
-  constructor(doc: PDFDocument, load: (fontId: FontId, bold: boolean) => Promise<Uint8Array>, subsetFormFont: boolean) {
+  constructor(doc: PDFDocument, load: (fontId: FontId, bold: boolean) => Promise<Uint8Array>) {
     this.doc = doc
     this.load = load
-    this.subsetFormFont = subsetFormFont
   }
 
   face(fontId: FontId, bold: boolean): Promise<{ bytes: Uint8Array; font: FkFont }> {
@@ -63,16 +56,12 @@ export class DocFonts {
   }
 
   /**
-   * Arimo Regular as a pdf-lib font, for form field appearances with non-Latin values. When
-   * fields get flattened it shares the overlay text's subset; editable fields get the whole
-   * font so viewers can render whatever is typed into them later.
+   * Arimo Regular as a pdf-lib font, for form field appearances with non-Latin values. It shares
+   * the overlay text's subset, also for fields that stay editable: only their current appearance
+   * uses it, while viewers draw later edits with the field's own /DA font, never this one.
    */
   getUnicodeFont = (): Promise<PDFFont> => {
-    if (!this.unicode) {
-      this.unicode = this.subsetFormFont
-        ? this.subset('sans', false).then((s) => s.asPdfLibFont())
-        : this.face('sans', false).then(({ bytes }) => this.doc.embedFont(bytes, { subset: false, features: SHAPING_FEATURES }))
-    }
+    this.unicode ??= this.subset('sans', false).then((s) => s.asPdfLibFont())
     return this.unicode
   }
 

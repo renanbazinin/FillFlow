@@ -1,4 +1,4 @@
-import type { FormField } from '../../../model/types'
+import type { FormField, FormFieldOption } from '../../../model/types'
 
 /** Lowercase widget-type prefixes form designers glue onto names ("txtFirstName", "chkAgree"). */
 const TYPE_PREFIX = /^(?:txt|tf|chk|chkbx|cbx|cb|rb|rdo|ddl|dd|cmb|lst|lb|btn|fld|sig)(?=[A-Z])/
@@ -59,4 +59,24 @@ export function fieldLabel(field: Pick<FormField, 'name' | 'label'>): string {
 export function optionLabel(value: string): string {
   const t = value.replace(/[_]+/g, ' ').replace(/\s+/g, ' ').trim()
   return t || '(blank)'
+}
+
+/**
+ * The choices of a radio field, one per value in widget order, with readable labels. Separate
+ * buttons that share an export value are numbered: "Yes", "No", "Yes (2)".
+ */
+export function radioOptions(field: Pick<FormField, 'widgets'>): FormFieldOption[] {
+  const out: FormFieldOption[] = []
+  const seen = new Set<string>()
+  const repeats = new Map<string, number>()
+  for (const w of field.widgets) {
+    const value = w.exportValue ?? ''
+    if (seen.has(value)) continue
+    seen.add(value)
+    const label = optionLabel(w.label ?? value)
+    const n = (repeats.get(label) ?? 0) + 1
+    repeats.set(label, n)
+    out.push({ value, label: n > 1 ? `${label} (${n})` : label })
+  }
+  return out
 }

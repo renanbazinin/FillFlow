@@ -4,9 +4,12 @@ import '@fontsource-variable/inter'
 import '@fontsource/instrument-serif'
 import './styles/index.css'
 import App from './App.tsx'
+import { CrashScreen, ErrorBoundary } from './components/ErrorBoundary'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary fallback={<CrashScreen />}>
+      <App />
+    </ErrorBoundary>
   </StrictMode>,
 )

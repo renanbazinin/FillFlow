@@ -86,6 +86,29 @@ describe('shapeLine', () => {
     expect(positions[1].xOffset).not.toBe(0)
   })
 
+  it('composes dagesh and shin/sin dots with their letter whatever the order of the points', () => {
+    const composed = (text: string) => shapeText(sans, text, 'rtl').glyphs.map((g) => g.codePoints)
+    // Canonical order puts the vowel first: shin, qamats, shin dot.
+    expect(composed('\u05E9\u05B8\u05C1')).toEqual(composed('\u05E9\u05C1\u05B8'))
+    expect(composed('\u05E9\u05B8\u05C1')).toContainEqual([0x5e9, 0x5c1])
+    // Bet, qamats, dagesh.
+    expect(composed('\u05D1\u05B8\u05BC')).toContainEqual([0x5d1, 0x5bc])
+    // Shin, qamats, dagesh, shin dot.
+    expect(composed('\u05E9\u05B8\u05BC\u05C1')).toContainEqual([0x5e9, 0x5bc, 0x5c1])
+    // The vowel is still positioned on the composed letter.
+    const { glyphs, positions } = shapeText(sans, '\u05E9\u05B8\u05C1', 'rtl')
+    expect(positions[glyphs.findIndex((g) => g.codePoints[0] === 0x5b8)].xOffset).toBeGreaterThan(0)
+  })
+
+  it('tells which grapheme cluster each glyph belongs to', () => {
+    expect(shapeText(sans, 'e\u0301te', 'ltr').clusters).toEqual([0, 0, 1, 2])
+    // Visual order for RTL: the last letter (final mem) comes first.
+    const shalom = shapeText(sans, '\u05E9\u05B8\u05C1\u05DC\u05D5\u05B9\u05DD', 'rtl')
+    expect(shalom.clusters[0]).toBe(3)
+    expect(shalom.clusters.at(-1)).toBe(0)
+    expect(new Set(shalom.clusters).size).toBe(4)
+  })
+
   it('drops invisible bidi controls instead of painting them as spaces', () => {
     const plain = shapeText(sans, 'abc', 'ltr')
     const marked = shapeText(sans, '‏abc‎', 'ltr')

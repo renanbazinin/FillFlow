@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
 import { cn } from '../../lib/utils/misc'
+import { scrollBehavior } from '../../lib/utils/motion'
 import { TOOL_BY_ID } from '../../model/tools'
 import type { ToolId } from '../../model/types'
 import { useEditor } from '../../store/editor'
@@ -27,7 +28,7 @@ export const ToolDock = memo(function ToolDock() {
         requestAnimationFrame(() => {
           barRef.current
             ?.querySelector<HTMLElement>('[aria-pressed="true"]')
-            ?.scrollIntoView({ inline: 'nearest', block: 'nearest', behavior: 'smooth' })
+            ?.scrollIntoView({ inline: 'nearest', block: 'nearest', behavior: scrollBehavior() })
         })
       },
     )
@@ -46,8 +47,8 @@ export const ToolDock = memo(function ToolDock() {
           'pointer-events-auto flex items-center gap-1 border-line bg-surface/90 shadow-float backdrop-blur-xl backdrop-saturate-150',
           // phones: edge-to-edge bar, 44px targets, scrolls sideways
           'max-sm:w-full max-sm:snap-x max-sm:snap-proximity max-sm:overflow-x-auto max-sm:overscroll-x-contain max-sm:border-t max-sm:px-2 max-sm:pt-1.5 max-sm:pb-[max(6px,env(safe-area-inset-bottom))] max-sm:shadow-none max-sm:scrollbar-none max-sm:[&_button]:size-11',
-          // larger screens: floating pill
-          'sm:rounded-2xl sm:border sm:p-1.5',
+          // larger screens: floating pill (tighter below md, where it only just fits its gutters)
+          'sm:rounded-2xl sm:border sm:p-1.5 sm:max-md:gap-0.5 sm:max-md:p-1',
         )}
       >
         <Group>
@@ -81,11 +82,11 @@ export const ToolDock = memo(function ToolDock() {
 })
 
 function Group({ children }: { children: ReactNode }) {
-  return <div className="flex shrink-0 snap-start scroll-ml-2 items-center gap-1">{children}</div>
+  return <div className="flex shrink-0 snap-start scroll-ml-2 items-center gap-1 sm:max-md:gap-0.5">{children}</div>
 }
 
 function Divider() {
-  return <div aria-hidden className="mx-0.5 h-6 w-px shrink-0 bg-line dark:bg-line-strong" />
+  return <div aria-hidden className="mx-0.5 h-6 w-px shrink-0 bg-line sm:max-md:mx-0 dark:bg-line-strong" />
 }
 
 const PlainTool = memo(function PlainTool({ id }: { id: ToolId }) {

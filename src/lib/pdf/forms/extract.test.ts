@@ -113,6 +113,33 @@ describe('extractFormFields (pdf.js)', () => {
     await raw.loadingTask.destroy()
   })
 
+  it('leaves out a signed signature field whose widget is a separate kid', async () => {
+    const { PDFDocument, PDFHexString, PDFName, PDFString } = await import('pdf-lib')
+    const doc = await PDFDocument.create()
+    const page = doc.addPage([612, 792])
+    const form = doc.getForm()
+    const sigField = (name: string, y: number, signed: boolean) => {
+      const field = doc.context.nextRef()
+      const widget = doc.context.register(doc.context.obj({ Type: 'Annot', Subtype: 'Widget', Rect: [50, y, 250, y + 40], F: 4, P: page.ref, Parent: field }))
+      const dict = doc.context.obj({ FT: 'Sig', T: PDFString.of(name), Kids: [widget] })
+      if (signed) {
+        const sig = doc.context.obj({ Type: 'Sig', Filter: 'Adobe.PPKLite', SubFilter: 'adbe.pkcs7.detached', ByteRange: [0, 10, 20, 10] })
+        sig.set(PDFName.of('Contents'), PDFHexString.of('3082000102'))
+        dict.set(PDFName.of('V'), doc.context.register(sig))
+      }
+      doc.context.assign(field, dict)
+      page.node.addAnnot(widget)
+      form.acroForm.addField(field)
+    }
+    sigField('signed_kid', 600, true)
+    sigField('open_kid', 500, false)
+    form.acroForm.dict.set(PDFName.of('SigFlags'), doc.context.obj(3))
+    const { pdf, raw, pages } = await openWithPdfjs(await doc.save({ updateFieldAppearances: false }))
+    expect(await raw.getSignatures()).toHaveLength(1)
+    expect((await extractFormFields(pdf, pages)).map((f) => f.name)).toEqual(['open_kid'])
+    await raw.loadingTask.destroy()
+  })
+
   it('returns [] for a document without a form', async () => {
     const { PDFDocument } = await import('pdf-lib')
     const doc = await PDFDocument.create()
@@ -158,6 +185,22 @@ describe('buildFormFields', () => {
     expect(fields).toHaveLength(1)
     expect(fields[0]).toMatchObject({ type: 'radio', defaultValue: 'M' })
     expect(fields[0].widgets.map((w) => w.exportValue)).toEqual(['S', 'M'])
+  })
+
+  it('keys radio buttons that repeat an export value per group, unless they turn on in unison', () => {
+    const radio = (id: string, name: string, value: string, x: number, flags = 0) =>
+      widget({ id, fieldName: name, fieldType: 'Btn', radioButton: true, buttonValue: value, fieldValue: 'Yes', fieldFlags: flags, rect: [x, 100, x + 14, 114] })
+    // The same group twice (a form merged with itself): each repeats "Yes".
+    const group = (ids: string[]) => [radio(ids[0], 'q', 'Yes', 100), radio(ids[1], 'q', 'No', 130), radio(ids[2], 'q', 'Yes', 160)]
+    const parentOf = new Map(['1R', '2R', '3R'].map((id) => [id, '10R']).concat(['4R', '5R', '6R'].map((id) => [id, '20R'])) as [string, string][])
+    const [q] = buildFormFields([group(['1R', '2R', '3R']), group(['4R', '5R', '6R'])], [PAGE, { ...PAGE, index: 1 }], { parentOf })
+    expect(q.widgets.map((w) => w.exportValue)).toEqual(['Yes', 'No', 'Yes#2', 'Yes', 'No', 'Yes#2'])
+    expect(q.widgets.map((w) => w.label)).toEqual([undefined, undefined, 'Yes', undefined, undefined, 'Yes'])
+    expect(q.defaultValue).toBe('Yes')
+
+    const UNISON = 1 << 25
+    const [u] = buildFormFields([[radio('1R', 'u', 'Yes', 100, UNISON), radio('2R', 'u', 'Yes', 130, UNISON)]], [PAGE])
+    expect(u.widgets.map((w) => w.exportValue)).toEqual(['Yes', 'Yes'])
   })
 
   it('shares one value across same-name widgets on different pages', () => {

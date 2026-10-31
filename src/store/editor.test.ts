@@ -13,9 +13,17 @@ vi.mock('../lib/storage/db', () => ({
   loadSession: vi.fn(),
   rememberDocument: vi.fn(),
 }))
-vi.mock('../model/fonts', () => ({ loadFont: vi.fn(() => Promise.resolve()) }))
+vi.mock('../model/fonts', async (original) => ({ ...(await original<object>()), loadFont: vi.fn(() => Promise.resolve()) }))
+vi.mock('../lib/utils/misc', async (original) => {
+  const misc = await original<typeof import('../lib/utils/misc')>()
+  return { ...misc, sha256Hex: vi.fn(misc.sha256Hex) }
+})
 
-const { useEditor } = await import('./editor')
+const { useEditor, parseStyles } = await import('./editor')
+const pdfjs = await import('../lib/pdf/pdfjs')
+const db = await import('../lib/storage/db')
+const misc = await import('../lib/utils/misc')
+const { DEFAULT_STYLES } = await import('../model/elements')
 
 const mark = (id: string, x = 10): MarkElement => ({
   id,
@@ -151,5 +159,151 @@ describe('editor store history', () => {
     expect(s().revision).toBe(r0)
     s().addElement(mark('a'))
     expect(s().revision).toBe(r0 + 1)
+  })
+
+  it('keeps locked items when clearing everything', () => {
+    s().addElements([{ ...mark('a'), locked: true } as Element, mark('b')])
+    s().select(['a', 'b'])
+    s().clearAll()
+    expect(s().elements.map((e) => e.id)).toEqual(['a'])
+    expect(s().selection).toEqual(['a'])
+    s().undo()
+    expect(s().elements.map((e) => e.id)).toEqual(['a', 'b'])
+  })
+
+  it('records nothing for a gesture that ends where it started, and keeps redo', () => {
+    s().addElement(mark('a', 50))
+    s().addElement(mark('b'))
+    s().undo()
+    const before = s().past.length
+    // Pushing against the page edge: every move re-applies the same position.
+    s().beginGesture()
+    s().updateElements({ a: { x: 50 } })
+    s().updateElements({ a: { x: 50 } })
+    s().endGesture()
+    // Dragged away and back.
+    s().beginGesture()
+    s().updateElement('a', { x: 80 })
+    s().updateElement('a', { x: 50 })
+    s().endGesture()
+    expect(s().past.length).toBe(before)
+    expect(s().future).toHaveLength(1)
+  })
+
+  it('records nothing for changes that change nothing, and keeps redo', () => {
+    s().addElements([mark('a'), mark('b')])
+    s().addElement(mark('c'))
+    s().undo()
+    const { past, revision } = s()
+    s().reorderElements(['b'], 'front')
+    s().reorderElements(['a'], 'back')
+    s().updateElement('a', { x: 10 })
+    expect(s().past).toBe(past)
+    expect(s().future).toHaveLength(1)
+    expect(s().revision).toBe(revision)
+  })
+
+  it('folds a history-free change into the latest step, dropping a step left changing nothing', () => {
+    s().addElement(mark('a', 0))
+    const before = s().past.length
+    s().updateElement('a', { x: 5 })
+    s().updateElement('a', { y: 30 }, { history: false })
+    expect(s().past.length).toBe(before + 1)
+    s().undo()
+    expect(s().elements[0]).toMatchObject({ x: 0, y: 10 })
+    s().redo()
+    s().updateElement('a', { x: 0, y: 10 }, { history: false })
+    expect(s().past.length).toBe(before)
+    s().addElement(mark('b'))
+    s().removeElements(['b'], { history: false })
+    expect(s().past.length).toBe(before)
+  })
+})
+
+describe('style defaults', () => {
+  it('keeps valid saved values', () => {
+    const saved = {
+      text: { fontId: 'serif', fontSize: 18, color: '#1d4ed8', bold: true },
+      mark: { color: '#c81e1e', size: 20 },
+      shape: { strokeColor: '#047857', fillColor: null, strokeWidth: 3 },
+      ink: { color: '#7c3aed', strokeWidth: 4 },
+      dateFormat: 'yyyy-MM-dd',
+    }
+    expect(parseStyles(saved)).toEqual(saved)
+  })
+
+  it('falls back field by field for unknown or broken values', () => {
+    const styles = parseStyles({
+      text: { fontId: 'script', fontSize: 'big', color: 'red', bold: 1 },
+      mark: { size: -3 },
+      shape: { fillColor: '#ffffff', strokeWidth: Number.NaN },
+      ink: null,
+      dateFormat: 'dd-MM',
+    })
+    expect(styles.text).toEqual(DEFAULT_STYLES.text)
+    expect(styles.mark).toEqual(DEFAULT_STYLES.mark)
+    expect(styles.shape).toEqual({ ...DEFAULT_STYLES.shape, fillColor: '#ffffff' })
+    expect(styles.ink).toEqual(DEFAULT_STYLES.ink)
+    expect(['dd/MM/yyyy', 'MM/dd/yyyy']).toContain(styles.dateFormat)
+    expect(parseStyles('garbage').text).toEqual(DEFAULT_STYLES.text)
+    expect(parseStyles({ text: { fontSize: 999 } }).text.fontSize).toBe(144)
+  })
+})
+
+describe('opening documents', () => {
+  const fakePdf = () => ({ loadingTask: { destroy: vi.fn(() => Promise.resolve()) } })
+  const bytes = { name: 'f.pdf', bytes: new Uint8Array([37, 80, 68, 70]) }
+
+  beforeEach(() => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+  })
+
+  it('destroys the parsed document when a later step fails', async () => {
+    const pdf = fakePdf()
+    vi.mocked(pdfjs.openPdf).mockResolvedValueOnce(pdf as never)
+    vi.mocked(pdfjs.readPageInfos).mockRejectedValueOnce(new Error('Invalid page request.'))
+    expect(await s().openDocument(bytes)).toBe(false)
+    expect(s().load).toMatchObject({ status: 'error', message: 'Invalid page request.' })
+    expect(pdf.loadingTask.destroy).toHaveBeenCalledTimes(1)
+  })
+
+  it('destroys a document that finishes opening after hashing failed', async () => {
+    const pdf = fakePdf()
+    let resolve!: (p: unknown) => void
+    vi.mocked(pdfjs.openPdf).mockReturnValueOnce(new Promise((r) => (resolve = r)) as never)
+    vi.mocked(misc.sha256Hex).mockRejectedValueOnce(new Error('no crypto'))
+    expect(await s().openDocument(bytes)).toBe(false)
+    resolve(pdf)
+    await vi.waitFor(() => expect(pdf.loadingTask.destroy).toHaveBeenCalledTimes(1))
+  })
+
+  it('forgets the pending file after a failed password retry or a dismissed error', async () => {
+    vi.mocked(pdfjs.openPdf).mockClear()
+    vi.mocked(pdfjs.openPdf).mockRejectedValueOnce(new pdfjs.PasswordRequiredError(false))
+    await s().openDocument(bytes)
+    expect(s().load.status).toBe('password')
+    vi.mocked(pdfjs.openPdf).mockResolvedValueOnce(fakePdf() as never)
+    vi.mocked(pdfjs.readPageInfos).mockRejectedValueOnce(new Error('broken'))
+    await s().submitPassword('secret')
+    expect(s().load.status).toBe('error')
+    await s().submitPassword('again')
+    expect(pdfjs.openPdf).toHaveBeenCalledTimes(2)
+    expect(s().load.status).toBe('idle')
+
+    vi.mocked(pdfjs.openPdf).mockRejectedValueOnce(new pdfjs.PasswordRequiredError(false))
+    await s().openDocument(bytes)
+    s().dismissLoadError()
+    await s().submitPassword('late')
+    expect(pdfjs.openPdf).toHaveBeenCalledTimes(3)
+  })
+
+  it('tells a failed read of a stored document apart from a missing one', async () => {
+    vi.mocked(db.loadDocumentBytes).mockRejectedValueOnce(new Error('NotReadableError'))
+    expect(await s().openRecent('id', 'f.pdf')).toBe(false)
+    expect(s().load).toMatchObject({ status: 'error', message: 'Couldn’t read this document from this device’s storage.' })
+    vi.mocked(db.loadDocumentBytes).mockResolvedValueOnce(null)
+    expect(await s().openRecent('id', 'f.pdf')).toBe(false)
+    expect(s().load).toMatchObject({ status: 'error', message: 'This document is no longer stored on this device.' })
   })
 })

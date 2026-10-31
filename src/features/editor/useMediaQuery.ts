@@ -21,3 +21,5 @@ export function useMediaQuery(query: string): boolean {
 export const LEFT_PANEL_INLINE = '(min-width: 1024px)'
 export const RIGHT_PANEL_INLINE = '(min-width: 1280px)'
 export const COMPACT_LAYOUT = '(max-width: 639.98px)'
+/** The top bar hides its zoom group (`max-md`); the overflow menu offers zoom instead. */
+export const ZOOM_IN_MENU = '(max-width: 767.98px)'

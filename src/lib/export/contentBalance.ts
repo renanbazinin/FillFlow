@@ -12,10 +12,10 @@ import {
 
 /**
  * Original page content sometimes leaves the graphics state dirty: an unclosed `q` (with a
- * `cm` inside it), or an unterminated text object. pdf-lib wraps existing content in one
- * q/Q pair, which only undoes *balanced* content. This module scans the original content
- * streams and closes whatever they leave open, so our overlay always starts from the
- * page's default state.
+ * `cm` inside it), an unterminated text object, or a stray `Q` that would pop the q/Q pair
+ * pdf-lib wraps existing content in. This module scans the original content streams, removes
+ * stray `Q`s (viewers ignore them) and closes whatever is left open, so our overlay always
+ * starts from the page's default state.
  */
 
 export interface ContentScan {
@@ -23,7 +23,7 @@ export interface ContentScan {
   depth: number
   /** Inside a BT…ET text object at the end. */
   inText: boolean
-  /** True when a `Q` appeared with no matching `q` (can't be repaired after the fact). */
+  /** True when a `Q` appeared with no matching `q`. */
   underflow: boolean
 }
 
@@ -46,8 +46,15 @@ const C = {
   I: 73,
 }
 
-/** Scans one decoded content stream, continuing from `state` (streams of a page concatenate). */
-export function scanContentStream(bytes: Uint8Array, state: ContentScan = { depth: 0, inText: false, underflow: false }): ContentScan {
+/**
+ * Scans one decoded content stream, continuing from `state` (streams of a page concatenate).
+ * The offsets of `Q`s with no matching `q` are added to `stray` when given.
+ */
+export function scanContentStream(
+  bytes: Uint8Array,
+  state: ContentScan = { depth: 0, inText: false, underflow: false },
+  stray?: number[],
+): ContentScan {
   let { depth, inText, underflow } = state
   const n = bytes.length
   let i = 0
@@ -88,7 +95,10 @@ export function scanContentStream(bytes: Uint8Array, state: ContentScan = { dept
       if (len === 1 && c === 113 /* q */) depth++
       else if (len === 1 && c === 81 /* Q */) {
         if (depth > 0) depth--
-        else underflow = true
+        else {
+          underflow = true
+          stray?.push(start)
+        }
       } else if (len === 2) {
         const c2 = bytes[start + 1]
         if (c === 66 /* B */ && c2 === 84 /* T */) inText = true
@@ -126,10 +136,10 @@ function streamBytes(obj: unknown): Uint8Array | null {
 
 /**
  * Makes sure the page's ORIGINAL content can't leak graphics state into content appended
- * after it. Normalizes the page (pdf-lib then wraps the original streams in q…Q) and, when
- * the original streams leave `q`s or a text object open, inserts a stream that closes them
- * right before pdf-lib's closing `Q`. Returns the scan result (null when there was nothing
- * to scan).
+ * after it. Normalizes the page (pdf-lib then wraps the original streams in q…Q), removes `Q`s
+ * that have no matching `q` (they would pop the wrapper's `q`) and, when the original streams
+ * leave `q`s or a text object open, inserts a stream that closes them right before pdf-lib's
+ * closing `Q`. Returns the scan result (null when there was nothing to scan).
  */
 export function protectOriginalContent(pdfDoc: PDFDocument, page: PDFPage): ContentScan | null {
   const { context } = pdfDoc
@@ -155,9 +165,17 @@ export function protectOriginalContent(pdfDoc: PDFDocument, page: PDFPage): Cont
   for (let k = start + 1; k < end; k++) {
     const ref = refs[k]
     const bytes = streamBytes(ref instanceof PDFRef ? context.lookup(ref) : ref)
-    if (bytes) scan = scanContentStream(bytes, scan)
+    if (!bytes) continue
+    const stray: number[] = []
+    scan = scanContentStream(bytes, scan, stray)
+    if (stray.length) {
+      // Viewers ignore an unmatched Q, so blanking it out keeps the page as it was shown. The
+      // stream may be shared with other pages: this page gets its own copy.
+      const fixed = bytes.slice()
+      for (const at of stray) fixed[at] = 0x20
+      contents.set(k, context.register(context.flateStream(fixed)))
+    }
   }
-  if (scan.underflow) console.warn('[export] page content pops more graphics states than it saves')
   if (scan.depth > 0 || scan.inText) {
     const ops: PDFOperator[] = []
     if (scan.inText) ops.push(PDFOperator.of(PDFOperatorNames.EndText))

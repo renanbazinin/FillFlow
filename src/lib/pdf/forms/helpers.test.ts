@@ -103,6 +103,21 @@ describe('field text layout', () => {
     expect(wrapParagraph('', 4, 2, measure)).toEqual([[0, 0]])
   })
 
+  it('breaks where a <textarea> does: after hyphens and dashes, not at no-break spaces', () => {
+    // 1pt per char at size 2; the browser's breaks are checked in e2e/forms-fixes.spec.ts.
+    const lines = (text: string, width: number) => wrapParagraph(text, width, 2, measure).map(([s, e]) => text.slice(s, e))
+    expect(lines('state-of-the-art, well-known', 10)).toEqual(['state-of-', 'the-art, ', 'well-known'])
+    expect(lines('state-of-the-art, well-known', 8)).toEqual(['state-', 'of-the-', 'art, ', 'well-', 'known'])
+    expect(lines('https://example.com/a-long-page?x=1', 22)).toEqual(['https://example.com/a-', 'long-page?x=1'])
+    expect(lines('call 555-0100 or 2026-10-31', 9)).toEqual(['call 555-', '0100 or ', '2026-10-', '31'])
+    expect(lines('word—word', 6)).toEqual(['word—', 'word'])
+    expect(lines('תל-אביב', 5)).toEqual(['תל-', 'אביב'])
+    // No break: a sign, a Hebrew prefix before a number, a no-break space.
+    expect(lines('x -55', 3)).toEqual(['x ', '-55'])
+    expect(lines('ב-2020', 4)).toEqual(['ב-20', '20'])
+    expect(lines('ab c\u00a0d', 4)).toEqual(['ab ', 'c\u00a0d'])
+  })
+
   it('shrinks auto-sized multi-line text until it fits', () => {
     const short = multiLineLayout('one\ntwo', { width: 200, height: 60 }, measure)
     expect(short.fontSize).toBe(10)

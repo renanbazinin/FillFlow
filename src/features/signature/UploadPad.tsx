@@ -9,7 +9,7 @@ import { useSignatureDraft, type UploadDraft } from './draft'
 import { padBoxPx, type Box } from './imageUtils'
 import type { SignatureRole } from './library'
 import { processUpload, type ProcessedImage } from './render'
-import { PAD_FRAME } from './styles'
+import { PAD_FRAME, SOFT_DISABLED } from './styles'
 import { loadUploadFile, sensitivityToWhitePoint, whitePointToSensitivity } from './upload'
 
 const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer.types).includes('Files')
@@ -175,6 +175,7 @@ function UploadPreview({
   }, [])
 
   const sensitivity = whitePointToSensitivity(upload.whitePoint)
+  const isAuto = upload.whitePoint === upload.autoWhitePoint
 
   return (
     <div>
@@ -226,12 +227,13 @@ function UploadPreview({
               label="Background removal sensitivity"
               onValueChange={(v) => patchUpload(role, { whitePoint: sensitivityToWhitePoint(v) })}
             />
+            {/* aria-disabled: going back to Auto must not take focus away from the button. */}
             <Button
               size="xs"
               variant="ghost"
-              onClick={() => patchUpload(role, { whitePoint: upload.autoWhitePoint })}
-              disabled={upload.whitePoint === upload.autoWhitePoint}
-              className="shrink-0"
+              onClick={() => !isAuto && patchUpload(role, { whitePoint: upload.autoWhitePoint })}
+              aria-disabled={isAuto || undefined}
+              className={cn('shrink-0', SOFT_DISABLED)}
             >
               Auto
             </Button>

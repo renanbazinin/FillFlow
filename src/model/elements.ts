@@ -55,6 +55,8 @@ export const WHITEOUT_COLOR = '#ffffff'
 
 /** Default size (points) of a new signature / initials / image, by role. */
 export const IMAGE_DEFAULT_WIDTH: Record<ImageRole, number> = { signature: 150, initials: 60, image: 180 }
+/** Default height limit (points), by role: narrow or tall content gets narrower instead of taller. */
+export const IMAGE_DEFAULT_MAX_HEIGHT: Record<ImageRole, number> = { signature: 60, initials: 40, image: 240 }
 
 // ---------------------------------------------------------------------------
 // Factories. Positions are the element's top-left in view space unless noted.

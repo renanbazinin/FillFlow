@@ -21,7 +21,7 @@ export function moveToolbarFocus(e: KeyboardEvent<HTMLElement>): void {
   if (e.defaultPrevented || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return
   const t = e.target as HTMLElement
   if (t.closest('input, textarea, [role="slider"]')) return
-  const items = [...e.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input')].filter((el) => el.offsetParent !== null)
+  const items = [...e.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)')].filter((el) => el.offsetParent !== null)
   const i = items.indexOf(t)
   if (i < 0) return
   e.preventDefault()

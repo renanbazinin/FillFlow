@@ -37,12 +37,44 @@ export interface RecoveredInfo {
   creationDate?: Date
 }
 
+/** An optional content group (layer) of the original file, as pdf.js reads it. */
+export interface RecoveredLayer {
+  /** pdf.js id: the group's object reference in the original ("12R"). */
+  id: string
+  name: string | null
+  intent: string[] | null
+  /** /Usage states viewers apply on screen and in print. */
+  view: 'ON' | 'OFF' | null
+  print: 'ON' | 'OFF' | null
+  /** On in the default configuration (before usage states). */
+  on: boolean
+  /** Radio-button sets (group ids) the group belongs to. */
+  rbGroups: string[][]
+}
+
+/** The layers panel order: group ids and (optionally labelled) sub-lists. */
+export type RecoveredLayerOrder = (string | { name: string | null; order: RecoveredLayerOrder })[]
+
+/** Catalog entries the pdf.js rewrite leaves out, read (decrypted) from the original by pdf.js. */
+export interface RecoveredCatalog {
+  layers?: { name: string | null; creator: string | null; groups: RecoveredLayer[]; order: RecoveredLayerOrder | null }
+  /** One label per page. */
+  pageLabels?: string[]
+  pageMode?: string
+  pageLayout?: string
+  viewerPreferences?: Record<string, unknown>
+  /** Tagged PDF flags (/MarkInfo) that are set. */
+  markInfo?: string[]
+  lang?: string
+}
+
 /** Result of rewriting a document with pdf.js (decryption or repair). */
 export interface RewrittenDocument {
   bytes: Uint8Array
   /** Index of an extra (helper) page appended at the end that must be removed, if any. */
   extraPageIndex?: number
   info?: RecoveredInfo
+  catalog?: RecoveredCatalog
 }
 
 /** A text element rendered to a bitmap (fallback for glyphs the embedded fonts lack). */
@@ -80,6 +112,8 @@ export interface ExportDeps {
   /** Converts image bytes pdf-lib can't embed (WebP, GIF…) into PNG. Optional. */
   convertImage?: (bytes: Uint8Array, mime: string) => Promise<Uint8Array | null>
   onProgress?: (progress: ExportProgress) => void
+  /** Told the names of form fields whose values could not be written (the export still succeeds). */
+  onUnwrittenFields?: (names: string[]) => void
   /** Cancels the export between steps (rejects with ExportError('aborted')). */
   signal?: AbortSignal
   /** Lets the UI breathe between pages. Defaults to a macrotask yield. */

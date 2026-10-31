@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { FileUp, FileX } from 'lucide-react'
+import { useSaveStatusStore } from '../../lib/storage/saveStatus'
 import { cn } from '../../lib/utils/misc'
 import { useEditor } from '../../store/editor'
 import { classifyDrag, dragHasFiles, setFileDrag, useFileDrag } from './fileDrag'
@@ -20,6 +21,7 @@ function dropBlocked(): boolean {
 export function FileDropOverlay() {
   const drag = useFileDrag()
   const docName = useEditor((s) => s.doc?.name ?? null)
+  const saveFailed = useSaveStatusStore((s) => s.state === 'error')
 
   useEffect(() => {
     let hideTimer = 0
@@ -83,7 +85,16 @@ export function FileDropOverlay() {
             </div>
             <div className="mt-4 text-[17px] font-semibold tracking-[-0.01em] text-fg">Drop your PDF to open it</div>
             <div className="mt-1.5 text-[13.5px] leading-relaxed text-fg-muted">
-              Your work on <span className="font-medium text-fg">{displayName(docName)}</span> is saved on this device.
+              {saveFailed ? (
+                <>
+                  Your latest changes to <bdi className="font-medium text-fg">{displayName(docName)}</bdi> couldn’t be saved on this
+                  device.
+                </>
+              ) : (
+                <>
+                  Your work on <bdi className="font-medium text-fg">{displayName(docName)}</bdi> is saved on this device.
+                </>
+              )}
             </div>
           </div>
         </div>

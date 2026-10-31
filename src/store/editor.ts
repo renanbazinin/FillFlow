@@ -1,9 +1,10 @@
 import { create } from 'zustand'
 import { subscribeWithSelector } from 'zustand/middleware'
-import { DEFAULT_STYLES, defaultDateFormat, withTextLayout } from '../model/elements'
-import { loadFont } from '../model/fonts'
+import { DATE_FORMATS, DEFAULT_STYLES, defaultDateFormat, MAX_FONT_SIZE, MIN_FONT_SIZE, withTextLayout } from '../model/elements'
+import { FONT_IDS, loadFont } from '../model/fonts'
 import type {
   Asset,
+  DateFormat,
   Element,
   ElementPatch,
   FontId,
@@ -68,7 +69,10 @@ export interface UpdateOptions {
    * `text:<id>`). Ignored while a gesture is active.
    */
   coalesce?: string
-  /** Skip history entirely (rare; e.g. re-measuring text after a font loads). */
+  /**
+   * No undo step of its own: the change becomes part of the latest step, which is dropped if
+   * that leaves it changing nothing (rare; e.g. a locked text getting its text back).
+   */
   history?: false
 }
 
@@ -122,11 +126,12 @@ export interface EditorActions {
   addElements(els: Element[], opts?: { select?: boolean }): void
   updateElement(id: string, patch: ElementPatch, opts?: UpdateOptions): void
   updateElements(patches: Record<string, ElementPatch>, opts?: UpdateOptions): void
-  removeElements(ids: string[]): void
+  /** Locked elements are never removed. */
+  removeElements(ids: string[], opts?: UpdateOptions): void
   duplicateElements(ids: string[], offset?: number): string[]
   reorderElements(ids: string[], where: 'front' | 'back'): void
   setFormValue(name: string, value: FormValue, opts?: UpdateOptions): void
-  /** Removes every element and resets form fields to their original values. */
+  /** Removes every unlocked element and resets form fields to their original values. */
   clearAll(): void
   addAsset(asset: Omit<Asset, 'id'> & { id?: string }): string
   /** Re-measures all text elements (after fonts load). No undo step. */
@@ -163,18 +168,54 @@ export type EditorStore = EditorState & EditorActions
 const STYLE_STORAGE_KEY = 'fillflow:styles'
 
 function loadStyles(): StyleDefaults {
+  let saved: unknown = null
   try {
     const raw = localStorage.getItem(STYLE_STORAGE_KEY)
-    const saved = raw ? (JSON.parse(raw) as Partial<StyleDefaults>) : {}
-    return {
-      text: { ...DEFAULT_STYLES.text, ...saved.text },
-      mark: { ...DEFAULT_STYLES.mark, ...saved.mark },
-      shape: { ...DEFAULT_STYLES.shape, ...saved.shape },
-      ink: { ...DEFAULT_STYLES.ink, ...saved.ink },
-      dateFormat: saved.dateFormat ?? defaultDateFormat(),
-    }
+    saved = raw ? JSON.parse(raw) : null
   } catch {
-    return { ...DEFAULT_STYLES, dateFormat: defaultDateFormat() }
+    /* storage unavailable or unreadable */
+  }
+  return parseStyles(saved)
+}
+
+type Loose = Record<string, unknown>
+
+const loose = (v: unknown): Loose => (v && typeof v === 'object' ? (v as Loose) : {})
+const isColor = (v: unknown): v is string => typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v)
+const isSize = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0
+
+/**
+ * Style defaults as saved by any build (or edited by hand): each field is checked and falls
+ * back to its default, so one bad value can't break placing items or opening documents.
+ */
+export function parseStyles(saved: unknown): StyleDefaults {
+  const s = loose(saved)
+  const text = loose(s.text)
+  const mark = loose(s.mark)
+  const shape = loose(s.shape)
+  const ink = loose(s.ink)
+  const d = DEFAULT_STYLES
+  return {
+    text: {
+      fontId: FONT_IDS.includes(text.fontId as FontId) ? (text.fontId as FontId) : d.text.fontId,
+      fontSize: isSize(text.fontSize) ? clamp(text.fontSize, MIN_FONT_SIZE, MAX_FONT_SIZE) : d.text.fontSize,
+      color: isColor(text.color) ? text.color : d.text.color,
+      bold: typeof text.bold === 'boolean' ? text.bold : d.text.bold,
+    },
+    mark: {
+      color: isColor(mark.color) ? mark.color : d.mark.color,
+      size: isSize(mark.size) ? mark.size : d.mark.size,
+    },
+    shape: {
+      strokeColor: isColor(shape.strokeColor) ? shape.strokeColor : d.shape.strokeColor,
+      fillColor: shape.fillColor === null || isColor(shape.fillColor) ? shape.fillColor : d.shape.fillColor,
+      strokeWidth: isSize(shape.strokeWidth) ? shape.strokeWidth : d.shape.strokeWidth,
+    },
+    ink: {
+      color: isColor(ink.color) ? ink.color : d.ink.color,
+      strokeWidth: isSize(ink.strokeWidth) ? ink.strokeWidth : d.ink.strokeWidth,
+    },
+    dateFormat: DATE_FORMATS.includes(s.dateFormat as DateFormat) ? (s.dateFormat as DateFormat) : defaultDateFormat(),
   }
 }
 
@@ -187,6 +228,30 @@ function applyPatch(el: Element, patch: ElementPatch): Element {
     return withTextLayout(next)
   }
   return next
+}
+
+/** Equal by value: the same keys, each value identical (arrays compared item by item). */
+function sameFields(a: object, b: object): boolean {
+  if (a === b) return true
+  const x = a as Loose
+  const y = b as Loose
+  const keys = Object.keys(x)
+  if (keys.length !== Object.keys(y).length) return false
+  return keys.every((k) => {
+    if (!(k in y)) return false
+    const v = x[k]
+    const w = y[k]
+    return Object.is(v, w) || (Array.isArray(v) && Array.isArray(w) && v.length === w.length && v.every((item, i) => Object.is(item, w[i])))
+  })
+}
+
+/** Whether two contents are the same by value (a drag that ended where it started, a no-op reorder…). */
+function sameContent(a: Content, b: Content): boolean {
+  if (a.elements !== b.elements) {
+    if (a.elements.length !== b.elements.length) return false
+    if (!a.elements.every((e, i) => sameFields(e, b.elements[i]))) return false
+  }
+  return sameFields(a.formValues, b.formValues)
 }
 
 /** Pending input while waiting for a password. */
@@ -210,23 +275,33 @@ const initialView = {
 
 export const useEditor = create<EditorStore>()(
   subscribeWithSelector((set, get) => {
-    /** Records `prev` content as an undo step (honoring gestures and coalescing). */
-    function pushHistory(prev: Content, opts?: UpdateOptions) {
-      if (opts?.history === false || gestureStart) return
+    /** Records `prev` content as an undo step before it becomes `next` (honoring gestures and coalescing). */
+    function pushHistory(prev: Content, next: Content, opts?: UpdateOptions) {
+      if (gestureStart) return
+      const { past, selection } = get()
+      if (opts?.history === false) {
+        // Part of the latest step, which has nothing left to undo once it changes nothing. Either
+        // way, what follows starts a step of its own.
+        lastCoalesce = null
+        if (past.length && sameContent(past[past.length - 1], next)) set({ past: past.slice(0, -1) })
+        return
+      }
       const now = Date.now()
       if (opts?.coalesce && lastCoalesce && lastCoalesce.key === opts.coalesce && now - lastCoalesce.at < COALESCE_MS) {
         lastCoalesce.at = now
         return
       }
       lastCoalesce = opts?.coalesce ? { key: opts.coalesce, at: now } : null
-      const { past, selection } = get()
       set({ past: [...past.slice(-(HISTORY_LIMIT - 1)), { ...prev, selection }], future: [] })
     }
 
-    /** Commits a content change. */
+    /** Commits a content change. One that changes nothing records nothing (and keeps redo). */
     function commit(next: Partial<Content>, opts?: UpdateOptions) {
       const s = get()
-      pushHistory({ elements: s.elements, formValues: s.formValues }, opts)
+      const prev: Content = { elements: s.elements, formValues: s.formValues }
+      const after: Content = { ...prev, ...next }
+      if (sameContent(prev, after)) return
+      pushHistory(prev, after, opts)
       set({ ...next, revision: s.revision + 1 })
     }
 
@@ -239,10 +314,12 @@ export const useEditor = create<EditorStore>()(
       // A newer open (or close) supersedes this one; whoever finishes last must not win.
       const token = ++openToken
       set({ load: { status: 'loading', fileName: name } })
+      let opening: Promise<PDFDocumentProxy> | null = null
       let pdf: PDFDocumentProxy | null = null
       try {
         if (!looksLikePdf(bytes)) throw new Error("This file doesn't look like a PDF.")
-        const [id, opened] = await Promise.all([sha256Hex(bytes), openPdf(bytes, password)])
+        opening = openPdf(bytes, password)
+        const [id, opened] = await Promise.all([sha256Hex(bytes), opening])
         pdf = opened
         const pages = await readPageInfos(pdf)
         const formFields = await extractFormFields(pdf, pages).catch((err) => {
@@ -288,15 +365,17 @@ export const useEditor = create<EditorStore>()(
         )
         return true
       } catch (err) {
-        if (token !== openToken) {
-          if (pdf) void pdf.loadingTask.destroy()
-          return false
-        }
+        // Whatever failed, the parsed document (its worker and its copy of the bytes) goes too,
+        // even one that only arrives after the hashing failed.
+        if (!pdf) void opening?.then((p) => p.loadingTask.destroy(), () => {})
+        else if (get().doc?.pdf !== pdf) void pdf.loadingTask.destroy()
+        if (token !== openToken) return false
         if (err instanceof PasswordRequiredError) {
           pendingOpen = { name, bytes }
           set({ load: { status: 'password', fileName: name, incorrect: err.incorrect } })
           return false
         }
+        pendingOpen = null
         console.error('[open] failed', err)
         const message =
           err instanceof Error && err.name === 'InvalidPDFException'
@@ -350,7 +429,15 @@ export const useEditor = create<EditorStore>()(
 
       async openRecent(id, name) {
         set({ load: { status: 'loading', fileName: name } })
-        const bytes = await loadDocumentBytes(id).catch(() => null)
+        let bytes: Uint8Array | null
+        try {
+          bytes = await loadDocumentBytes(id)
+        } catch (err) {
+          // The record may still be there (and the work saved with it): don't call it gone.
+          console.warn('[storage] could not read document', err)
+          set({ load: { status: 'error', fileName: name, message: 'Couldn’t read this document from this device’s storage.' } })
+          return false
+        }
         if (!bytes) {
           set({ load: { status: 'error', fileName: name, message: 'This document is no longer stored on this device.' } })
           return false
@@ -379,6 +466,7 @@ export const useEditor = create<EditorStore>()(
       },
 
       dismissLoadError() {
+        pendingOpen = null
         set({ load: { status: 'idle' } })
       },
 
@@ -410,12 +498,12 @@ export const useEditor = create<EditorStore>()(
         commit({ elements: next }, opts)
       },
 
-      removeElements(ids) {
+      removeElements(ids, opts) {
         const drop = new Set(ids)
         const { elements, selection, editingId } = get()
         const next = elements.filter((e) => !drop.has(e.id) || e.locked)
         if (next.length === elements.length) return
-        commit({ elements: next })
+        commit({ elements: next }, opts)
         set({ selection: pruneSelection(next, selection), editingId: editingId && drop.has(editingId) ? null : editingId })
       },
 
@@ -452,9 +540,11 @@ export const useEditor = create<EditorStore>()(
       },
 
       clearAll() {
-        const { doc } = get()
-        commit({ elements: [], formValues: doc ? defaultFormValues(doc.formFields) : {} })
-        set({ selection: [], editingId: null })
+        const { doc, elements, selection } = get()
+        // Locked items stay, as with every other way of deleting.
+        const kept = elements.filter((e) => e.locked)
+        commit({ elements: kept, formValues: doc ? defaultFormValues(doc.formFields) : {} })
+        set({ selection: pruneSelection(kept, selection), editingId: null })
       },
 
       addAsset(asset) {
@@ -487,7 +577,8 @@ export const useEditor = create<EditorStore>()(
         gestureStart = null
         if (!start) return
         const { elements, formValues, past, selection } = get()
-        if (start.elements === elements && start.formValues === formValues) return
+        // Compared by value: a drag can go away and come back, or push against the page edge.
+        if (sameContent(start, { elements, formValues })) return
         set({ past: [...past.slice(-(HISTORY_LIMIT - 1)), { ...start, selection }], future: [] })
       },
 

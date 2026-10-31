@@ -107,7 +107,8 @@
   --ff-line-strong: #cdd2da;
   --ff-fg: #0e1726;
   --ff-fg-muted: #4f5a6b;
-  --ff-fg-subtle: #8590a2;
+  /* Small-text colors (fg-subtle, success, warning) stay ≥ 4.5:1 on the backgrounds they sit on. */
+  --ff-fg-subtle: #626c7d;
   --ff-accent: #2563eb;
   --ff-accent-hover: #1d4fd8;
   --ff-accent-ink: #1d4fd8;
@@ -115,9 +116,9 @@
   --ff-accent-fg: #ffffff;
   --ff-danger: #dc2626;
   --ff-danger-soft: rgb(220 38 38 / 0.1);
-  --ff-success: #0e9f6e;
+  --ff-success: #047857;
   --ff-success-soft: rgb(14 159 110 / 0.12);
-  --ff-warning: #c27803;
+  --ff-warning: #a15c07;
   --ff-warning-soft: rgb(234 179 8 / 0.14);
   --ff-overlay: rgb(9 13 22 / 0.42);
   --ff-shadow-1: rgb(16 24 40 / 0.07);
@@ -136,7 +137,7 @@
   --ff-line-strong: #364052;
   --ff-fg: #e8ebf1;
   --ff-fg-muted: #a3acbb;
-  --ff-fg-subtle: #6f798b;
+  --ff-fg-subtle: #8a94a6;
   --ff-accent: #3a76f0;
   --ff-accent-hover: #4c84f5;
   --ff-accent-ink: #7aa7ff;

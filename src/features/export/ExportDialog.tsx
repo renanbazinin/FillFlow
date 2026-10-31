@@ -1,12 +1,13 @@
-import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { toast } from 'sonner'
-import { CircleAlert, CircleCheck, Download, FileText, Info, Printer, Share } from 'lucide-react'
+import { CircleAlert, CircleCheck, Download, FileText, Info, LockOpen, Printer, Share, TriangleAlert } from 'lucide-react'
 import { Button } from '../../components/ui/button'
 import { FieldLabel, Spinner, Switch } from '../../components/ui/controls'
 import { Dialog } from '../../components/ui/dialog'
 import { ExportError } from '../../lib/export/errors'
+import { neededPassword } from '../../lib/storage/protectedDocs'
 import { cn, isMac } from '../../lib/utils/misc'
-import { useEditor } from '../../store/editor'
+import { useEditor, type LoadedDocument } from '../../store/editor'
 import { canSharePdf, downloadPdf, printPdf, sharePdf } from './deliver'
 import {
   countChangedFields,
@@ -14,9 +15,12 @@ import {
   defaultBaseName,
   finalFileName,
   formatFileSize,
+  isOpenShortcut,
   isSaveShortcut,
   plural,
   progressLabel,
+  quotedList,
+  unwrittenFieldLabels,
 } from './exportFile'
 import { errorMessage, latestExport, prepareExport, resetExport, useExportJob, type ExportStatus } from './exportJob'
 
@@ -76,6 +80,8 @@ export function ExportDialog() {
   const changedFields = useEditor((s) => (s.activeDialog === 'export' && s.doc ? countChangedFields(s.doc.formFields, s.formValues) : 0))
   // Only tracked while open (e.g. a text box committing on blur as the dialog takes focus).
   const revision = useEditor((s) => (s.activeDialog === 'export' ? s.revision : -1))
+  const doc = useEditor((s) => s.doc)
+  const formValues = useEditor((s) => (s.activeDialog === 'export' ? s.formValues : null))
   const job = useExportJob()
 
   const [flatten, setFlatten] = useState(readFlatten)
@@ -113,9 +119,44 @@ export function ExportDialog() {
     else resetExport()
   }, [open, flattenForms, revision])
 
+  // A document opened with its password is exported without one (pdf-lib can't write encryption).
+  const [unlocked, setUnlocked] = useState<LoadedDocument | null>(null)
+  useEffect(() => {
+    if (!open || !doc) return
+    let live = true
+    neededPassword(doc).then(
+      (needed) => {
+        if (live) setUnlocked(needed ? doc : null)
+      },
+      () => {},
+    )
+    return () => {
+      live = false
+    }
+  }, [open, doc])
+  const passwordDropped = unlocked !== null && unlocked === doc
+
+  // Values the user entered that the prepared file lacks.
+  const notWritten = useMemo(
+    () => (job.status === 'ready' && doc && formValues ? unwrittenFieldLabels(doc.formFields, formValues, job.unwritten) : []),
+    [job.status, job.unwritten, doc, formValues],
+  )
+
   // Transient toasts sit above dialogs and would cover the sheet's buttons on phones.
   useEffect(() => {
     if (open) toast.dismiss()
+  }, [open])
+
+  // ⌘O / ⌘S never open the browser's "Open file" / "Save page" dialogs, wherever focus is in
+  // here: the shell's handler never sees the keys stopped below, and goes by the typed letter,
+  // which other layouts (Hebrew…) don't produce. This one goes by physical key, like the browser.
+  useEffect(() => {
+    if (!open) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (isOpenShortcut(e, isMac) || isSaveShortcut(e, isMac)) e.preventDefault()
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
   }, [open])
 
   const close = () => useEditor.getState().closeDialog()
@@ -275,11 +316,30 @@ export function ExportDialog() {
           />
         )}
 
-        {nothingAdded && !error && (
+        {nothingAdded && !error && (flattenForms || !passwordDropped) && (
           <p className="-mt-1 flex gap-2 text-[13px] text-fg-muted">
             <Info className="mt-px size-4 shrink-0 text-fg-subtle" aria-hidden />
-            You haven’t added anything yet, so the download will match the original file.
+            {flattenForms
+              ? 'You haven’t added anything yet. The form fields will be flattened, so they can no longer be filled in.'
+              : 'You haven’t added anything yet, so the download will match the original file.'}
           </p>
+        )}
+
+        {passwordDropped && !error && (
+          <p className="-mt-1 flex gap-2 text-[13px] text-fg-muted">
+            <LockOpen className="mt-px size-4 shrink-0 text-fg-subtle" aria-hidden />
+            The downloaded copy won’t be password-protected: anyone who has the file can open it.
+          </p>
+        )}
+
+        {notWritten.length > 0 && !error && (
+          <div role="status" className="flex gap-2.5 rounded-xl border border-warning/25 bg-warning-soft px-3 py-2.5 text-[13px]">
+            <TriangleAlert className="mt-px size-4 shrink-0 text-warning" aria-hidden />
+            <div className="min-w-0">
+              <p className="font-medium text-fg">{notWritten.length === 1 ? 'A field couldn’t be filled in' : 'Some fields couldn’t be filled in'}</p>
+              <p className="mt-0.5 text-fg-muted">The PDF won’t include what you entered in {quotedList(notWritten)}.</p>
+            </div>
+          </div>
         )}
 
         {notice && (

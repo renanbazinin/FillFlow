@@ -20,7 +20,14 @@ export function pluralize(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`
 }
 
-/** "3 pages · edited 2 hours ago" */
-export function recentMetaLine(pageCount: number, editedAt: number, now = Date.now()): string {
-  return `${pluralize(pageCount, 'page')} · edited ${relativeTime(editedAt, now)}`
+/**
+ * "3 pages · edited 2h ago": the latest of saving work on it and opening it ("· opened 5m ago"
+ * when it has been opened since, or never edited).
+ */
+export function recentMetaLine(pageCount: number, at: { openedAt: number; editedAt?: number }, now = Date.now()): string {
+  const { openedAt, editedAt } = at
+  const pages = pluralize(pageCount, 'page')
+  return editedAt !== undefined && editedAt >= openedAt
+    ? `${pages} · edited ${relativeTime(editedAt, now)}`
+    : `${pages} · opened ${relativeTime(openedAt, now)}`
 }

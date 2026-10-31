@@ -1,4 +1,5 @@
 import type { ExportProgress } from '../../lib/export/types'
+import { fieldLabel } from '../../lib/pdf/forms/labels'
 import { suffixedFileName } from '../../lib/utils/misc'
 import type { FormField, FormValue, FormValues } from '../../model/types'
 
@@ -45,14 +46,33 @@ export function countFilledFields(fields: FormField[], values: FormValues): numb
   return n
 }
 
+function isChanged(field: FormField, values: FormValues): boolean {
+  const v = values[field.name]
+  return v !== undefined && JSON.stringify(v) !== JSON.stringify(field.defaultValue)
+}
+
 /** Fields whose value differs from what the file had when it was opened. */
 export function countChangedFields(fields: FormField[], values: FormValues): number {
   let n = 0
-  for (const f of fields) {
-    const v = values[f.name]
-    if (v !== undefined && JSON.stringify(v) !== JSON.stringify(f.defaultValue)) n++
-  }
+  for (const f of fields) if (isChanged(f, values)) n++
   return n
+}
+
+/**
+ * Labels of the fields the user changed whose values the export could not write (`unwritten`
+ * holds field names). Untouched fields keep what the file had, so they aren't listed.
+ */
+export function unwrittenFieldLabels(fields: FormField[], values: FormValues, unwritten: readonly string[]): string[] {
+  if (!unwritten.length) return []
+  const names = new Set(unwritten)
+  return fields.filter((f) => names.has(f.name) && isChanged(f, values)).map((f) => fieldLabel(f))
+}
+
+/** “A”, “A” and “B”, “A”, “B” and “C”, “A”, “B”, “C” and 2 more. */
+export function quotedList(items: string[], max = 3): string {
+  const quoted = items.map((s) => `“${s}”`)
+  if (quoted.length <= max) return quoted.length > 1 ? `${quoted.slice(0, -1).join(', ')} and ${quoted.at(-1)}` : (quoted[0] ?? '')
+  return `${quoted.slice(0, max).join(', ')} and ${quoted.length - max} more`
 }
 
 export function plural(n: number, one: string, many = `${one}s`): string {
@@ -79,9 +99,21 @@ export function formatFileSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`
 }
 
-/** ⌘S on Apple platforms, Ctrl+S elsewhere (by physical key, so it works on any layout). */
-export function isSaveShortcut(e: KeyboardEvent | { key: string; code?: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean }, mac: boolean): boolean {
+type KeyLike = KeyboardEvent | { key: string; code?: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean }
+
+/** ⌘+letter on Apple platforms, Ctrl+letter elsewhere (by physical key, so it works on any layout). */
+function isModLetter(e: KeyLike, mac: boolean, letter: 's' | 'o'): boolean {
   if (e.altKey || e.shiftKey) return false
   if (mac ? !e.metaKey || e.ctrlKey : !e.ctrlKey || e.metaKey) return false
-  return e.code === 'KeyS' || e.key.toLowerCase() === 's'
+  return e.code === `Key${letter.toUpperCase()}` || e.key.toLowerCase() === letter
+}
+
+/** ⌘S / Ctrl+S. */
+export function isSaveShortcut(e: KeyLike, mac: boolean): boolean {
+  return isModLetter(e, mac, 's')
+}
+
+/** ⌘O / Ctrl+O: the browser's "Open file" dialog. */
+export function isOpenShortcut(e: KeyLike, mac: boolean): boolean {
+  return isModLetter(e, mac, 'o')
 }

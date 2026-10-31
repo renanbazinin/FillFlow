@@ -15,12 +15,17 @@ import {
   type PDFPage,
   type PDFWidgetAnnotation,
 } from 'pdf-lib'
-import { PDF_OFF, PageIndex, isHiddenWidget, widgetEntries, type WidgetEntry } from './pdfIndex'
+import { PDF_OFF, PageIndex, nameForLog, widgetEntries, widgetPresence, type WidgetEntry } from './pdfIndex'
 
 /**
  * Flattens form fields into page content, one field at a time, so one exotic field can't
  * take the rest down (pdf-lib's own `form.flatten()` is all-or-nothing, ignores appearance
  * /Matrix and BBox offsets, and leaves dangling widget references in /Annots).
+ *
+ * Page content shows on screen and on paper alike, so widgets that do both are drawn, and a
+ * field with a print-only widget stays a field, so that the widget keeps printing. Screen-only
+ * widgets ("Print" or "Clear form" buttons, on-screen hints) are removed, unless the caller
+ * wants a field's drawn anyway (a value the user typed belongs in the copy).
  */
 
 type Matrix = [number, number, number, number, number, number]
@@ -92,15 +97,27 @@ function removeField(doc: PDFDocument, form: PDFForm, field: PDFField, entries: 
   doc.context.delete(field.ref)
 }
 
-/** Flattens every field of the form. Returns the names of fields that had to be left interactive. */
-export function flattenFields(doc: PDFDocument, form: PDFForm, fields: PDFField[], pages: PageIndex): string[] {
+/**
+ * Flattens every field of the form; `drawScreenOnly` says of which fields the screen-only
+ * widgets are drawn too. Returns the names of fields that had to be left interactive (not
+ * those kept on purpose for their print-only widgets).
+ */
+export function flattenFields(
+  doc: PDFDocument,
+  form: PDFForm,
+  fields: PDFField[],
+  pages: PageIndex,
+  drawScreenOnly: (field: PDFField) => boolean,
+): string[] {
   const failed: string[] = []
   for (const field of fields) {
     try {
       const entries = widgetEntries(field.acroField)
+      if (entries.some((e) => widgetPresence(e.widget) === 'print')) continue
+      const shown = drawScreenOnly(field) ? ['both', 'screen'] : ['both']
       const draws: { page: PDFPage; ap: PDFRef; m: Matrix }[] = []
       for (const entry of entries) {
-        if (isHiddenWidget(entry.widget)) continue
+        if (!shown.includes(widgetPresence(entry.widget))) continue
         const page = pages.pageOf(entry)
         const ap = page ? currentAppearance(doc, field, entry.widget) : null
         const m = ap ? placement(doc, ap, entry.widget) : null
@@ -112,8 +129,8 @@ export function flattenFields(doc: PDFDocument, form: PDFForm, fields: PDFField[
       }
       removeField(doc, form, field, entries, pages)
     } catch (err) {
-      console.warn(`[forms] could not flatten "${field.getName()}"`, err)
-      failed.push(field.getName())
+      console.warn(`[forms] could not flatten "${nameForLog(field)}"`, err)
+      failed.push(nameForLog(field))
     }
   }
   return failed

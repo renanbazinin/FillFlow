@@ -1,4 +1,3 @@
-import type { Glyph, GlyphPosition } from '@pdf-lib/fontkit'
 import {
   PDFHexString,
   PDFOperator,
@@ -9,7 +8,6 @@ import {
   endText,
   popGraphicsState,
   pushGraphicsState,
-  setCharacterSpacing,
   setFillingRgbColor,
   setFontAndSize,
   setGraphicsState,
@@ -23,7 +21,7 @@ import { charCount, layoutTextBlock, type TextMeasurer } from '../text/layout'
 import { parseColor } from './color'
 import type { DrawContext } from './drawContext'
 import { r } from './num'
-import { firstStrongDirection, hasMissingGlyphs, paintableText, shapeLine, type Direction } from './shaping'
+import { firstStrongDirection, hasMissingGlyphs, paintableText, shapeLine, type Direction, type ShapedText } from './shaping'
 import type { SubsetFont } from './subsetFont'
 
 /**
@@ -70,7 +68,6 @@ export async function textOperators(el: TextElement, ctx: DrawContext): Promise<
   const gs = color.a < 1 ? ctx.res.graphicsState({ fill: color.a }) : null
   if (gs) ops.push(pushGraphicsState(), setGraphicsState(gs))
   ops.push(beginText(), setFontAndSize(ctx.res.font(font.ref), r(el.fontSize)), setFillingRgbColor(color.r, color.g, color.b))
-  if (el.letterSpacing) ops.push(setCharacterSpacing(r(el.letterSpacing)))
 
   const base = paragraphDirection(el.text)
   for (const line of layout.lines) {
@@ -80,7 +77,7 @@ export async function textOperators(el: TextElement, ctx: DrawContext): Promise<
     for (const run of shapeLine(face, line.text, base)) {
       if (run.glyphs.length) {
         ops.push(setTextMatrix(1, 0, 0, 1, r(x), r(baseline)))
-        ops.push(...glyphOperators(ctx.doc, font, run.glyphs, run.positions, el.fontSize))
+        ops.push(...glyphOperators(ctx.doc, font, run, el.fontSize, el.letterSpacing))
       }
       x += runWidth(line.text.slice(run.start, run.end), el, ctx.measure)
     }
@@ -97,19 +94,23 @@ function runWidth(text: string, el: TextElement, measure: TextMeasurer): number 
 
 /**
  * Emits glyphs with exact positions. A glyph's displacement in the PDF comes from the font's
- * widths (+ Tc); TJ adjustments correct it to the shaper's advance and x offset, and text rise
- * (Ts) applies y offsets (Hebrew points, combining accents…).
+ * widths; TJ adjustments correct it to the shaper's advance and x offset and add the letter
+ * spacing after each grapheme cluster, as CSS does (character spacing, Tc, would also space out
+ * zero-width marks, and it outlives the text object). Text rise (Ts) applies y offsets (Hebrew
+ * points, combining accents…).
  */
 export function glyphOperators(
   doc: PDFDocument,
   font: SubsetFont,
-  glyphs: Glyph[],
-  positions: GlyphPosition[],
+  run: Pick<ShapedText, 'glyphs' | 'positions' | 'clusters'>,
   size: number,
+  letterSpacing = 0,
 ): PDFOperator[] {
+  const { glyphs, positions, clusters } = run
   const ops: PDFOperator[] = []
   const k = font.scale
   const unit = size / font.font.unitsPerEm
+  const spacing = (letterSpacing * 1000) / size
   let items: (PDFHexString | number)[] = []
   let hex = ''
   let rise = 0
@@ -144,6 +145,7 @@ export function glyphOperators(
     }
     hex += font.cid(g).toString(16).padStart(4, '0')
     pending = -(p.xAdvance - p.xOffset - g.advanceWidth) * k
+    if (clusters[i + 1] !== clusters[i]) pending -= spacing
   }
   flushText()
   if (rise !== 0) ops.push(setTextRise(0))

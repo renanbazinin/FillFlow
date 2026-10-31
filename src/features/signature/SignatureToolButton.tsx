@@ -95,8 +95,13 @@ export function SignatureToolButton({
     } finally {
       confirming.current = false
     }
-    // The tile may be gone: keep keyboard focus inside the popover.
-    requestAnimationFrame(() => contentRef.current?.querySelector<HTMLElement>('[data-saved-tile] button, [data-new]')?.focus())
+    // The tile may be gone: keep keyboard focus inside the popover. Runs after the confirmation's
+    // own focus return, and keeps it if it landed in the popover.
+    setTimeout(() => {
+      const content = contentRef.current
+      if (!content || content.contains(document.activeElement)) return
+      content.querySelector<HTMLElement>('[data-saved-tile] button, [data-new]')?.focus()
+    }, 0)
   }
 
   const keepOpen = (e: Event) => {

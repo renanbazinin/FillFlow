@@ -1,6 +1,6 @@
 import type { PDFDocumentProxy } from './pdfjs'
 import type { FormField, FormValues, PageInfo } from '../../model/types'
-import { buildFormFields } from './forms/extract'
+import { buildFormFields, repeatsRadioValue } from './forms/extract'
 
 export { getFieldExtras, getWidgetRotation, visualTextRotation, type QuarterTurn } from './forms/extract'
 
@@ -31,7 +31,7 @@ async function detectPureXfa(pdf: PDFDocumentProxy): Promise<boolean> {
   }
 }
 
-/** Annotation ids ("12R") of signature fields that hold a digital signature. */
+/** References ("12R") of signature fields that hold a digital signature. */
 async function signedFieldIds(pdf: PDFDocumentProxy): Promise<Set<string>> {
   try {
     const sigs = (await pdf.getSignatures()) as { id?: unknown }[] | null
@@ -39,6 +39,41 @@ async function signedFieldIds(pdf: PDFDocumentProxy): Promise<Set<string>> {
   } catch {
     return new Set()
   }
+}
+
+/** Id of the parent field of every field and widget listed in the AcroForm (null when unknown). */
+async function fieldParents(pdf: PDFDocumentProxy): Promise<Map<string, string> | null> {
+  try {
+    const all: unknown = await pdf.getFieldObjects()
+    if (!all || typeof all !== 'object') return null
+    const parentOf = new Map<string, string>()
+    for (const objects of all instanceof Map ? all.values() : Object.values(all)) {
+      for (const o of Array.isArray(objects) ? (objects as { id?: unknown; kidIds?: unknown }[]) : []) {
+        if (typeof o?.id !== 'string' || !Array.isArray(o.kidIds)) continue
+        for (const kid of o.kidIds) if (typeof kid === 'string') parentOf.set(kid, o.id)
+      }
+    }
+    return parentOf
+  } catch {
+    return null
+  }
+}
+
+/** Signed fields plus every widget below them: a field's widget is often a separate kid. */
+function signedWidgetIds(signed: Set<string>, parentOf: Map<string, string> | null): Set<string> {
+  const out = new Set(signed)
+  if (!parentOf) return out
+  for (const id of parentOf.keys()) {
+    const seen = new Set<string>()
+    for (let p = parentOf.get(id); p !== undefined && !seen.has(p); p = parentOf.get(p)) {
+      seen.add(p)
+      if (signed.has(p)) {
+        out.add(id)
+        break
+      }
+    }
+  }
+  return out
 }
 
 /**
@@ -63,16 +98,21 @@ export async function extractFormFields(pdf: PDFDocumentProxy, pages: PageInfo[]
     }),
   )
   try {
-    return buildFormFields(annotations, pages, { signedIds: await signedIds })
+    const signed = await signedIds
+    // Only pdf.js' field tree tells which field a widget belongs to: needed to find the widgets of
+    // signed fields and to tell apart radio buttons that repeat an export value. Rarely needed.
+    const parentOf = signed.size || repeatsRadioValue(annotations) ? await fieldParents(pdf) : null
+    return buildFormFields(annotations, pages, { signedIds: signedWidgetIds(signed, parentOf), parentOf: parentOf ?? undefined })
   } catch (err) {
     console.warn('[forms] could not build form fields', err)
     return []
   }
 }
 
-/** The values a freshly opened document starts with (whatever is stored in the PDF). */
+/**
+ * The values a freshly opened document starts with (whatever is stored in the PDF). Built with
+ * own properties only: a field may be called "__proto__".
+ */
 export function defaultFormValues(fields: FormField[]): FormValues {
-  const values: FormValues = {}
-  for (const f of fields) values[f.name] = f.defaultValue
-  return values
+  return Object.fromEntries(fields.map((f) => [f.name, f.defaultValue]))
 }

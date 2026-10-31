@@ -94,6 +94,18 @@ describe('exportPdf: form values and overlays', () => {
     expect(applyFormValues).not.toHaveBeenCalled()
   })
 
+  it('passes on the fields whose values could not be written', async () => {
+    const { applyFormValues } = await import('./forms')
+    vi.mocked(applyFormValues).mockResolvedValueOnce({ unwritten: ['name'] })
+    const bytes = await buildPdf([{ size: [612, 792] }], { form: true })
+    const pages = await readPages(bytes)
+    const onUnwrittenFields = vi.fn()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await renderPdf(makeInput(bytes, pages, [], { formFields: FIELDS, formValues: { name: 'x' } }), { ...testDeps, onUnwrittenFields })
+    warn.mockRestore()
+    expect(onUnwrittenFields).toHaveBeenCalledWith(['name'])
+  })
+
   it('reports a forms failure as an ExportError', async () => {
     const { applyFormValues } = await import('./forms')
     vi.mocked(applyFormValues).mockRejectedValueOnce(new Error('boom'))

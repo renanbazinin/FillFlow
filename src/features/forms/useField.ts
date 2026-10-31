@@ -1,5 +1,5 @@
-import { useCallback } from 'react'
-import { coerceValue } from '../../lib/pdf/forms/values'
+import { useCallback, useState } from 'react'
+import { coerceValue, storedValue } from '../../lib/pdf/forms/values'
 import { isMac } from '../../lib/utils/misc'
 import type { FormField, FormValue } from '../../model/types'
 import { useEditor } from '../../store/editor'
@@ -8,8 +8,32 @@ import { fieldSigned } from './signed'
 
 /** The field's current value, coerced to the shape its type expects. */
 export function useFieldValue(field: FormField): FormValue {
-  const raw = useEditor((s) => s.formValues[field.name])
+  const raw = useEditor((s) => storedValue(s.formValues, field.name))
   return coerceValue(field, raw === undefined ? field.defaultValue : raw)
+}
+
+/**
+ * The text input of a combo box that accepts typed text. Typed text that matches an option's
+ * label selects that option (its export value is stored); while the user types, the input keeps
+ * exactly what they typed — typing an export value ("US") must not turn it into the option's
+ * label mid-word. Elsewhere (and after blur) the input shows the stored value's label.
+ */
+export function useComboText(field: FormField, value: string) {
+  const [draft, setDraft] = useState<string | null>(null)
+  const options = field.options ?? []
+  const toValue = (text: string) => options.find((o) => o.label === text)?.value ?? text
+  // A draft is stale once the value changed elsewhere (undo, the other control).
+  const text = draft !== null && toValue(draft) === value ? draft : (options.find((o) => o.value === value)?.label ?? value)
+  return {
+    text,
+    change(typed: string) {
+      setDraft(typed)
+      setFieldValue(field.name, toValue(typed))
+    },
+    endEdit() {
+      setDraft(null)
+    },
+  }
 }
 
 export function useIsActiveField(name: string): boolean {

@@ -7,7 +7,7 @@ import { fieldBoxClass, frameRect, frameStyle, rectStyle } from '../fieldStyles'
 import { LINE_HEIGHT, inputScale, textLook } from '../look'
 import { useFormFontsReady } from '../measure'
 import { CONTROL_ATTR } from '../navigation'
-import { setFieldValue, useControlEvents, useFieldValue, useIsActiveField } from '../useField'
+import { setFieldValue, useComboText, useControlEvents, useFieldValue, useIsActiveField } from '../useField'
 import type { ControlProps } from './types'
 
 function baseStyle(fontPx: number, k: number, color: string): CSSProperties {
@@ -37,8 +37,9 @@ export const DropdownControl = memo(function DropdownControl({ field, widget, sc
   useFormFontsReady()
   const events = useControlEvents(field, { enterAdvances: true })
   const listId = useId()
+  const combo = useComboText(field, value)
   const options = field.options ?? []
-  const label = options.find((o) => o.value === value)?.label ?? value
+  const label = field.editable ? combo.text : (options.find((o) => o.value === value)?.label ?? value)
   const frame = frameRect(widget.rect, rotation)
   const look = textLook(field, frame, label, { singleLine: true })
   const fontPx = look.fontSize * scale
@@ -92,9 +93,10 @@ export const DropdownControl = memo(function DropdownControl({ field, widget, sc
               list={listId}
               autoComplete="off"
               value={label}
-              onChange={(e) => {
-                const typed = e.target.value
-                setFieldValue(field.name, options.find((o) => o.label === typed)?.value ?? typed)
+              onChange={(e) => combo.change(e.target.value)}
+              onBlur={() => {
+                combo.endEdit()
+                events.onBlur()
               }}
             />
             <datalist id={listId}>

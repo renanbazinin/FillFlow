@@ -1,9 +1,14 @@
-import * as pdfjs from 'pdfjs-dist'
+// The legacy build: the default one calls the newest JS built-ins (Promise.try,
+// Map#getOrInsertComputed, Math.sumPrecise…) without polyfills, so it fails in browsers
+// that are only a year or so old. Same API (and types) as 'pdfjs-dist'.
+import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
+import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 import type { PageInfo, PageRotation } from '../../model/types'
 
-pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
+// Unless already set: in Node (unit tests) pdf.js points it at its own worker file, or a test
+// helper sharing this module did, and `workerUrl` only resolves in the browser.
+pdfjs.GlobalWorkerOptions.workerSrc ||= workerUrl
 
 /** Where `vite.config.ts` serves/copies pdf.js runtime assets. */
 const ASSETS = `${import.meta.env.BASE_URL}pdfjs/`

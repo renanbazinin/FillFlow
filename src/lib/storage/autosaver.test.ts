@@ -71,6 +71,39 @@ describe('createAutosaver', () => {
     expect(save).toHaveBeenCalledTimes(1)
   })
 
+  it('flush with nothing queued waits for the save in flight, so its outcome is known', async () => {
+    const { saver, calls, events } = setup()
+    saver.schedule('a')
+    await vi.advanceTimersByTimeAsync(600)
+    let settled = false
+    void saver.flush().then(() => (settled = true))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(settled).toBe(false)
+    calls[0].reject(new Error('full'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(settled).toBe(true)
+    expect(events).toEqual(['start:a', 'error:a'])
+  })
+
+  it('writes a long burst of changes every maxWait ms', async () => {
+    const { saver, save } = setup({ maxWait: 2000 })
+    for (let t = 0; t < 1900; t += 100) {
+      saver.schedule(`s${t}`)
+      await vi.advanceTimersByTimeAsync(100)
+    }
+    expect(save).not.toHaveBeenCalled()
+    saver.schedule('late')
+    await vi.advanceTimersByTimeAsync(100)
+    expect(save).toHaveBeenCalledTimes(1)
+    expect(save).toHaveBeenLastCalledWith('late')
+    // The next burst gets its own full wait.
+    saver.schedule('next')
+    await vi.advanceTimersByTimeAsync(599)
+    expect(save).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(save).toHaveBeenLastCalledWith('next')
+  })
+
   it('cancel drops the queued snapshot', async () => {
     const { saver, save } = setup()
     saver.schedule('a')

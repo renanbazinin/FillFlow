@@ -45,6 +45,13 @@ describe('form progress', () => {
     expect(nextEmptyField(fields, { a: 'x', b: true, d: ['1'] }, [signature], 'a')).toBeUndefined()
   })
 
+  it('reads a field named "__proto__" like any other', () => {
+    const proto = [field('__proto__', { defaultValue: 'hello' })]
+    expect(formProgress(proto, {}, [])).toMatchObject({ total: 1, filled: 1 })
+    expect(formProgress(proto, JSON.parse('{"__proto__": ""}'), [])).toMatchObject({ filled: 0 })
+    expect(formIsDirty(proto, {})).toBe(false)
+  })
+
   it('detects changes from the PDF values', () => {
     expect(formIsDirty(fields, { a: '', b: false })).toBe(false)
     expect(formIsDirty(fields, { d: ['1'] })).toBe(true)

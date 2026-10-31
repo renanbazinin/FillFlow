@@ -17,7 +17,7 @@ export interface TextStyle {
   fontSize: number
   /** Multiple of fontSize. */
   lineHeight: number
-  /** Points added after every character. */
+  /** Points added after every character (grapheme cluster, see `charCount`). */
   letterSpacing: number
 }
 
@@ -55,10 +55,48 @@ export function baselineOffset(fontId: FontId, fontSize: number, lineHeight: num
   return (lineBox - (ascent + descent)) / 2 + ascent
 }
 
-/** Number of user-perceived characters (used for letter spacing). */
+/** Default-ignorable code points (bidi controls, ZWJ/ZWNJ, variation selectors…): invisible, zero width. */
+const IGNORABLE: [number, number][] = [
+  [0x00ad, 0x00ad],
+  [0x034f, 0x034f],
+  [0x061c, 0x061c],
+  [0x115f, 0x1160],
+  [0x17b4, 0x17b5],
+  [0x180b, 0x180f],
+  [0x200b, 0x200f],
+  [0x202a, 0x202e],
+  [0x2060, 0x206f],
+  [0x3164, 0x3164],
+  [0xfe00, 0xfe0f],
+  [0xfeff, 0xfeff],
+  [0xffa0, 0xffa0],
+  [0xfff0, 0xfff8],
+  [0x1bca0, 0x1bca3],
+  [0x1d173, 0x1d17a],
+  [0xe0000, 0xe0fff],
+]
+
+export function isIgnorable(codePoint: number): boolean {
+  for (const [a, b] of IGNORABLE) if (codePoint >= a && codePoint <= b) return true
+  return false
+}
+
+const segmenter = typeof Intl.Segmenter === 'function' ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }) : null
+
+/** Grapheme clusters of `text`: user-perceived characters, e.g. a letter with its niqqud or accents. */
+export function graphemes(text: string): string[] {
+  if (segmenter) return Array.from(segmenter.segment(text), (s) => s.segment)
+  return text.match(/\P{M}\p{M}*|\p{M}+/gu) ?? []
+}
+
+/**
+ * Number of characters that take letter spacing: grapheme clusters, except those made only of
+ * invisible characters (bidi marks, ZWJ…). This is how Chrome applies CSS `letter-spacing`
+ * (once after each cluster, so marks stay on their letter) and how the exporter spaces glyphs.
+ */
 export function charCount(text: string): number {
   let n = 0
-  for (const _ of text) n++
+  for (const cluster of graphemes(text)) if ([...cluster].some((ch) => !isIgnorable(ch.codePointAt(0)!))) n++
   return n
 }
 

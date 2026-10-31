@@ -91,9 +91,11 @@ function PanelToggles() {
   const hasForm = useEditor((s) => (s.doc?.formFields.length ?? 0) > 0)
   return (
     <div className="flex items-center gap-0.5 max-sm:hidden">
+      {/* data-panel-toggle: a docked panel hands focus here when it closes from inside. */}
       <IconButton
         label="Pages"
         icon={<PanelLeft />}
+        data-panel-toggle="left"
         active={left}
         onClick={() => useEditor.getState().setLeftPanelOpen(!left)}
         className={left ? PANEL_ON : undefined}
@@ -101,6 +103,7 @@ function PanelToggles() {
       <IconButton
         label={hasForm ? 'Form & items' : 'Items'}
         icon={<PanelRight />}
+        data-panel-toggle="right"
         active={right}
         onClick={() => useEditor.getState().setRightPanelOpen(!right)}
         className={right ? PANEL_ON : undefined}

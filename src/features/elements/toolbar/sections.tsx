@@ -142,7 +142,14 @@ export function TextControls({ texts }: { texts: TextElement[] }) {
   return (
     <>
       <FontPicker value={first.fontId} />
-      <SizeField label="Font size" value={first.fontSize} min={MIN_FONT_SIZE} max={MAX_FONT_SIZE} onChange={(v) => setTextStyle({ fontSize: v }, 'style:font-size')} />
+      <SizeField
+        label="Font size"
+        value={first.fontSize}
+        min={MIN_FONT_SIZE}
+        max={MAX_FONT_SIZE}
+        locked={texts.every((t) => t.locked)}
+        onChange={(v) => setTextStyle({ fontSize: v }, 'style:font-size')}
+      />
       <IconButton
         size="icon-sm"
         label="Bold"
@@ -170,7 +177,7 @@ export function MarkControls({ marks }: { marks: MarkElement[] }) {
     <>
       <Segmented size="sm" value={first.shape} onValueChange={setMarkShape} options={MARK_OPTIONS} />
       <ColorButton label="Color" value={first.color} onChange={(c) => c && setMarkColor(c)} />
-      <SizeField label="Size" value={round1(first.width)} min={6} max={96} onChange={setMarkSize} />
+      <SizeField label="Size" value={round1(first.width)} min={6} max={96} locked={marks.every((m) => m.locked)} onChange={setMarkSize} />
     </>
   )
 }
@@ -212,7 +219,7 @@ export function InkControls({ inks }: { inks: InkElement[] }) {
   return (
     <>
       <ColorButton label="Pen color" value={first.color} onChange={(c) => c && setInkColor(c)} />
-      <SizeField label="Pen width" value={first.strokeWidth} min={0.5} max={24} step={0.5} onChange={setInkWidth} />
+      <SizeField label="Pen width" value={first.strokeWidth} min={0.5} max={24} step={0.5} locked={inks.every((k) => k.locked)} onChange={setInkWidth} />
     </>
   )
 }

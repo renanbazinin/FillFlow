@@ -35,6 +35,12 @@ describe('caretIndexAt', () => {
     expect(caretIndexAt('', style, 'left', { x: 10, y: 2 }, measure)).toBe(0)
   })
 
+  it('never puts the caret between a letter and its combining marks', () => {
+    // "e" + combining acute is one 12pt cluster; letter spacing comes once per cluster.
+    expect(caretIndexAt('e\u0301te', style, 'left', { x: 8, y: 2 }, measure)).toBe(2)
+    expect(caretIndexAt('e\u0301te', { ...style, letterSpacing: 4 }, 'left', { x: 23, y: 2 }, measure)).toBe(3)
+  })
+
   it('never splits surrogate pairs', () => {
     // '😀' is two UTF-16 units → 12pt wide with this measurer.
     expect(caretIndexAt('a😀b', style, 'left', { x: 13, y: 2 }, measure)).toBe(3)

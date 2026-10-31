@@ -2,16 +2,18 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ExportError } from '../../lib/export/errors'
 import { useEditor, type LoadedDocument } from '../../store/editor'
 
+type Hooks = { signal?: AbortSignal; onProgress?: (p: unknown) => void; onUnwrittenFields?: (names: string[]) => void }
+
 /** A controllable stand-in for the real exporter: each call returns a deferred result. */
-const calls: { flatten: boolean; signal?: AbortSignal; resolve: (b: Uint8Array) => void; reject: (e: unknown) => void }[] = []
+const calls: { flatten: boolean; signal?: AbortSignal; hooks: Hooks; resolve: (b: Uint8Array) => void; reject: (e: unknown) => void }[] = []
 vi.mock('../../lib/export/exportPdf', async () => {
   const errors = await import('../../lib/export/errors')
   return {
     ExportError: errors.ExportError,
     exportCurrentDocument: vi.fn(
-      (options: { flattenForms: boolean }, hooks: { signal?: AbortSignal; onProgress?: (p: unknown) => void }) =>
+      (options: { flattenForms: boolean }, hooks: Hooks) =>
         new Promise<Uint8Array>((resolve, reject) => {
-          calls.push({ flatten: options.flattenForms, signal: hooks.signal, resolve, reject })
+          calls.push({ flatten: options.flattenForms, signal: hooks.signal, hooks, resolve, reject })
           hooks.onProgress?.({ phase: 'pages', done: 0, total: 3 })
           hooks.signal?.addEventListener('abort', () => reject(new errors.ExportError('aborted')))
         }),
@@ -76,6 +78,18 @@ describe('export job', () => {
     expect(useExportJob.getState()).toMatchObject({ status: 'error', error: expect.stringMatching(/fonts/i) })
     prepareExport(true).catch(() => {})
     expect(calls).toHaveLength(2)
+  })
+
+  it('remembers which field values the prepared file lacks', async () => {
+    const run = prepareExport(false)
+    calls[0].hooks.onUnwrittenFields?.(['applicant.last'])
+    calls[0].resolve(new Uint8Array(3))
+    await run
+    expect(useExportJob.getState()).toMatchObject({ status: 'ready', unwritten: ['applicant.last'] })
+    // The next export starts without them.
+    useEditor.setState({ revision: 9 })
+    prepareExport(false).catch(() => {})
+    expect(useExportJob.getState()).toMatchObject({ status: 'working', unwritten: [] })
   })
 
   it('resets to idle when the dialog closes', () => {

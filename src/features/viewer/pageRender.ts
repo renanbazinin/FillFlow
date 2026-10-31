@@ -110,10 +110,34 @@ export async function renderPageBitmap(
   return canvas
 }
 
-/** Lets pdf.js drop a page's parsed resources once nothing shows it (no-op while it's rendering). */
-export function cleanupPage(pdf: PDFDocumentProxy, index: number): void {
-  pdf
-    .getPage(index + 1)
-    .then((page) => page.cleanup())
-    .catch(() => {})
+/** Per document: how many users (a page near the viewport, a thumbnail being rendered) each page has. */
+const pageUsers = new WeakMap<PDFDocumentProxy, Map<number, number>>()
+
+/**
+ * Marks a page as in use; call the returned function when done with it. Once its last user lets
+ * go, pdf.js drops the page's parsed resources (decoded images: tens of MB on a scanned page).
+ * pdf.js waits for a render of the page that is still running before it does.
+ */
+export function retainPage(pdf: PDFDocumentProxy, index: number): () => void {
+  const users = pageUsers.get(pdf) ?? new Map<number, number>()
+  pageUsers.set(pdf, users)
+  users.set(index, (users.get(index) ?? 0) + 1)
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    const left = (users.get(index) ?? 1) - 1
+    if (left > 0) {
+      users.set(index, left)
+      return
+    }
+    users.delete(index)
+    pdf
+      .getPage(index + 1)
+      .then((page) => {
+        // Unless someone started using the page again meanwhile.
+        if (!users.has(index)) page.cleanup()
+      })
+      .catch(() => {})
+  }
 }

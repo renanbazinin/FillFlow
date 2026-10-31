@@ -37,9 +37,11 @@ interface ExportJobState {
   /** Size of the prepared file (bytes). */
   size: number | null
   error: string | null
+  /** Form fields whose values the prepared file lacks (they could not be written). */
+  unwritten: string[]
 }
 
-const IDLE: ExportJobState = { status: 'idle', progress: null, size: null, error: null }
+const IDLE: ExportJobState = { status: 'idle', progress: null, size: null, error: null, unwritten: [] }
 
 export const useExportJob = create<ExportJobState>(() => IDLE)
 
@@ -67,7 +69,7 @@ export function prepareExport(flatten: boolean): Promise<Uint8Array> {
   // Register before starting so progress reported synchronously isn't dropped.
   const job: { key: string; ctrl: AbortController; promise: Promise<Uint8Array> } = { key, ctrl, promise: Promise.resolve(new Uint8Array()) }
   current = job
-  useExportJob.setState({ status: 'working', progress: null, size: null, error: null })
+  useExportJob.setState({ status: 'working', progress: null, size: null, error: null, unwritten: [] })
   const run = ({ exportCurrentDocument }: ExportEngine) =>
     exportCurrentDocument(
       { flattenForms: flatten },
@@ -75,6 +77,9 @@ export function prepareExport(flatten: boolean): Promise<Uint8Array> {
         signal: ctrl.signal,
         onProgress: (progress) => {
           if (isCurrent()) useExportJob.setState({ progress })
+        },
+        onUnwrittenFields: (unwritten) => {
+          if (isCurrent()) useExportJob.setState({ unwritten })
         },
       },
     )

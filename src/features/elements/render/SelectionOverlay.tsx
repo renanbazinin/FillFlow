@@ -117,13 +117,14 @@ function GroupFrame({ elements, scale }: { elements: Element[]; scale: number })
 
 /**
  * Visual handle square (9px) inside a bigger invisible hit area. `dx`/`dy` move the knob back
- * onto the true corner when the hit area is pushed outward (small items).
+ * onto the true corner when the hit area is pushed outward (small items); only the hit area
+ * takes presses, so a knob drawn over a small item's body doesn't turn a move into a resize.
  */
 function HandleKnob({ round, dx = 0, dy = 0 }: { round?: boolean; dx?: number; dy?: number }) {
   return (
     <span
       className={cn(
-        'block size-[9px] border border-selection bg-white shadow-[0_0_0_0.5px_rgb(255_255_255),0_1px_2px_rgb(16_24_40/0.25)]',
+        'pointer-events-none block size-[9px] border border-selection bg-white shadow-[0_0_0_0.5px_rgb(255_255_255),0_1px_2px_rgb(16_24_40/0.25)]',
         round ? 'rounded-full' : 'rounded-[2px]',
       )}
       style={dx || dy ? { transform: `translate(${dx}px, ${dy}px)` } : undefined}

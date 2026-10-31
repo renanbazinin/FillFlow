@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Tabs } from 'radix-ui'
 import { toast } from 'sonner'
 import { ImageUp, PenLine, Type, type LucideIcon } from 'lucide-react'
@@ -6,8 +6,10 @@ import { Button } from '../../components/ui/button'
 import { Spinner } from '../../components/ui/controls'
 import { Dialog } from '../../components/ui/dialog'
 import type { SavedSignature } from '../../lib/storage/db'
-import { cn, isEditableTarget } from '../../lib/utils/misc'
+import { cn, isEditableTarget, isMac } from '../../lib/utils/misc'
 import { useEditor } from '../../store/editor'
+import { shortcutLetter } from '../elements/lib/keys'
+import { isOpenShortcut, isSaveShortcut } from '../export/exportFile'
 import { armPlacement, deleteSavedSignature, placeSavedSignature, releaseTool } from './actions'
 import { firstImageFile } from './decode'
 import { draftHasContent, SIGNATURE_TABS, useSignatureDraft, type SignatureTab } from './draft'
@@ -72,10 +74,12 @@ export function SignatureDialog() {
   }, [openRole])
 
   // Pasting an image anywhere in the dialog uploads it (captured first, so the editor's own
-  // paste handling never drops it onto the page behind the dialog).
+  // paste handling never drops it onto the page behind the dialog). Text pasted into a field
+  // stays text, even when the clipboard also holds a picture of it (as Office copies do).
   useEffect(() => {
     if (!openRole) return
     const onPaste = (e: ClipboardEvent) => {
+      if (isEditableTarget(e.target) && e.clipboardData?.getData('text/plain').trim()) return
       const file = firstImageFile(e.clipboardData?.files) ?? firstImageFile(e.clipboardData?.items)
       if (!file) return
       e.preventDefault()
@@ -87,6 +91,29 @@ export function SignatureDialog() {
     }
     window.addEventListener('paste', onPaste, true)
     return () => window.removeEventListener('paste', onPaste, true)
+  }, [openRole])
+
+  // Keys anywhere in the dialog, even once focus fell to <body>: ⌘Z undoes the last stroke, and
+  // ⌘S / ⌘O never open the browser's "Save page" / "Open file" dialogs (the editor's handlers,
+  // which would prevent those, never see the keys the dialog keeps to itself). Letters go by
+  // physical key too, like the browser's own shortcuts, so this holds on Hebrew and other layouts.
+  useEffect(() => {
+    if (!openRole) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (isSaveShortcut(e, isMac) || isOpenShortcut(e, isMac)) {
+        e.preventDefault()
+        return
+      }
+      const undoKey = (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && shortcutLetter(e) === 'z'
+      if (!undoKey || isEditableTarget(e.target) || useSignatureDraft.getState().tab !== 'draw') return
+      // Not when it's meant for a confirmation on top of the dialog.
+      const dialog = bodyRef.current?.closest('[role="dialog"]')
+      if (e.target !== document.body && !(e.target instanceof Node && dialog?.contains(e.target))) return
+      e.preventDefault()
+      useSignatureDraft.getState().undoStroke(openRole)
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
   }, [openRole])
 
   const close = () => {
@@ -133,16 +160,28 @@ export function SignatureDialog() {
     }
   }
 
-  const onKeyDown = (e: KeyboardEvent) => {
-    if (e.key === 'Escape' || e.key === 'Tab') return
+  const onKeyDown = (e: ReactKeyboardEvent) => {
     // Editor shortcuts (Delete, V, ⌘Z…) must not act on the document behind the dialog.
-    e.stopPropagation()
-    const d = useSignatureDraft.getState()
-    const undoKey = (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'z'
-    if (undoKey && d.tab === 'draw' && !isEditableTarget(e.target)) {
-      e.preventDefault()
-      d.undoStroke(role)
-    }
+    if (e.key !== 'Escape' && e.key !== 'Tab') e.stopPropagation()
+  }
+
+  const removeSaved = async (item: SavedSignature) => {
+    const from = document.activeElement
+    await deleteSavedSignature(item)
+    // The tile may be gone once the confirmation closes: keep focus in the dialog, on the pressed ×
+    // while it's still there. Runs after the confirmation's own focus return, and keeps it if it
+    // landed in the dialog.
+    setTimeout(() => {
+      const dialog = bodyRef.current?.closest('[role="dialog"]')
+      const active = document.activeElement
+      if (!dialog || (active !== dialog && dialog.contains(active))) return
+      const target =
+        from instanceof HTMLElement && from !== dialog && dialog.contains(from)
+          ? from
+          : (bodyRef.current?.querySelector<HTMLElement>('[data-saved-row] button') ??
+            bodyRef.current?.querySelector<HTMLElement>('[role="tab"][data-state="active"]'))
+      target?.focus()
+    }, 0)
   }
 
   const onOpenAutoFocus = (e: Event) => {
@@ -194,7 +233,7 @@ export function SignatureDialog() {
                   key={item.id}
                   item={item}
                   onUse={() => pickSaved(item)}
-                  onDelete={() => void deleteSavedSignature(item)}
+                  onDelete={() => void removeSaved(item)}
                   className={cn('h-[72px] shrink-0', role === 'signature' ? 'w-44' : 'w-28')}
                 />
               ))}

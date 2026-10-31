@@ -80,6 +80,26 @@ describe('exportPdf: geometry', () => {
     await pdf.loadingTask.destroy()
   })
 
+  it('ignores stray Qs in the original content, like viewers do', async () => {
+    const red = (r: number, g: number, b: number) => r > 200 && g < 80 && b < 80
+    const green = (r: number, g: number, b: number) => g > 100 && r < 80 && b < 80
+    const rect: Element = { id: 'r', kind: 'shape', page: 0, x: 50, y: 50, width: 20, height: 20, shape: 'rect', strokeColor: null, fillColor: '#ff0000', strokeWidth: 0, opacity: 1 }
+    for (const content of ['Q 0.5 0 0 0.5 0 0 cm 0 1 0 rg 0 0 10 10 re f', '0.5 0 0 0.5 0 0 cm Q 0 1 0 rg 0 0 10 10 re f']) {
+      const bytes = await buildPdf([{ size: [400, 400], content }])
+      const pages = await readPages(bytes)
+      const original = await openPdfjs(bytes)
+      const before = await renderPage(original, 1, 4)
+      const out = await renderPdf(makeInput(bytes, pages, [rect]), testDeps)
+      const pdf = await openPdfjs(out)
+      const raster = await renderPage(pdf, 1, 4)
+      expect(raster.bbox(red), content).toEqual({ x: 50, y: 50, width: 20, height: 20 })
+      // The page's own content is drawn as the editor showed it.
+      expect(raster.bbox(green), content).toEqual(before.bbox(green))
+      await original.loadingTask.destroy()
+      await pdf.loadingTask.destroy()
+    }
+  })
+
   it('does not touch pages without elements', async () => {
     const bytes = await buildPdf([{ size: [300, 300], content: 'q 2 0 0 2 0 0 cm' }, { size: [300, 300] }])
     const pages = await readPages(bytes)

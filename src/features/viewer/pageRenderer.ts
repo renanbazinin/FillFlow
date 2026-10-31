@@ -1,6 +1,6 @@
 import type { PDFDocumentProxy } from '../../lib/pdf/pdfjs'
 import type { PageInfo } from '../../model/types'
-import { bitmapTarget, cleanupPage, regionTarget, releaseCanvas, renderPageBitmap, type BitmapTarget } from './pageRender'
+import { bitmapTarget, regionTarget, releaseCanvas, renderPageBitmap, retainPage, type BitmapTarget } from './pageRender'
 import { renderQueue } from './renderQueue'
 import { containsFraction, expandFraction, frameSize, visibleFraction, type ClientRect, type FrameFraction } from './viewMath'
 
@@ -69,6 +69,8 @@ export class PageRenderer {
   private detail: (Bitmap & Coverage) | null = null
   private detailJob: (Job & Coverage) | null = null
   private input: PageRenderInput | null = null
+  /** Keeps the page's pdf.js resources while it is near (see `retainPage`). */
+  private retained: { pdf: PDFDocumentProxy; release: () => void } | null = null
   private destroyed = false
 
   constructor(root: HTMLElement, host: HTMLElement, viewer: RenderHost) {
@@ -85,6 +87,10 @@ export class PageRenderer {
     if (!input.near) {
       this.release()
       return
+    }
+    if (this.retained?.pdf !== input.pdf) {
+      this.retained?.release()
+      this.retained = { pdf: input.pdf, release: retainPage(input.pdf, input.info.index) }
     }
     const css = frameSize(input.info, input.scale)
     const target = bitmapTarget(css.width, css.height, input.dpr)
@@ -222,8 +228,9 @@ export class PageRenderer {
     if (this.base) {
       releaseCanvas(this.base.canvas)
       this.base = null
-      if (this.input) cleanupPage(this.input.pdf, this.input.info.index)
     }
+    this.retained?.release()
+    this.retained = null
     this.setState('empty')
   }
 

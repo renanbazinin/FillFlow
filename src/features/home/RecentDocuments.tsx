@@ -1,10 +1,17 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Check, Ellipsis, FolderOpen, Trash } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '../../components/ui/button'
 import { confirm } from '../../components/ui/confirm'
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../../components/ui/menu'
-import { forgetDocument, listRecentDocuments, loadDocumentBytes, type RecentDocument } from '../../lib/storage/db'
+import {
+  forgetDocument,
+  forgetUnlistedSessions,
+  listRecentDocuments,
+  loadDocumentBytes,
+  removeRecentDocument,
+  type RecentDocument,
+} from '../../lib/storage/db'
 import { cn } from '../../lib/utils/misc'
 import { useEditor } from '../../store/editor'
 import { usePointerAwareClose } from '../editor/usePointerAwareClose'
@@ -41,9 +48,33 @@ export function RecentDocuments({ className }: { className?: string }) {
     }
   }, [])
 
+  const listRef = useRef<HTMLUListElement>(null)
+  /** Which card gets keyboard focus once a removal has re-rendered the list. */
+  const focusAfterRemoval = useRef<number | null>(null)
+
+  // A removal takes the focused control (the card's menu button, Clear all) away with it: move
+  // focus to the card now in its place, or to the dropzone once the list is gone.
+  useEffect(() => {
+    const index = focusAfterRemoval.current
+    if (index === null || docs === null) return
+    focusAfterRemoval.current = null
+    // After the confirm dialog's own focus handling.
+    requestAnimationFrame(() => {
+      if (document.activeElement && document.activeElement !== document.body) return
+      const cards = listRef.current?.querySelectorAll<HTMLElement>('[data-recent-open]')
+      const target =
+        cards?.[Math.min(index, cards.length - 1)] ?? document.querySelector<HTMLElement>('button[aria-describedby="ff-dropzone-hint"]')
+      target?.focus()
+    })
+  }, [docs])
+
   const remove = async (doc: RecentDocument) => {
     const ok = await confirm({
-      title: `Remove “${displayName(doc.name)}”?`,
+      title: (
+        <>
+          Remove “<bdi>{displayName(doc.name)}</bdi>”?
+        </>
+      ),
       description: 'The file and the work you’ve done on it will be deleted from this device. This can’t be undone.',
       confirmLabel: 'Remove',
       danger: true,
@@ -51,6 +82,7 @@ export function RecentDocuments({ className }: { className?: string }) {
     if (!ok) return
     try {
       await forgetDocument(doc.id)
+      focusAfterRemoval.current = Math.max(0, docs?.findIndex((d) => d.id === doc.id) ?? 0)
       setDocs((list) => list?.filter((d) => d.id !== doc.id) ?? null)
       toast.success('Removed from this device')
     } catch {
@@ -69,6 +101,9 @@ export function RecentDocuments({ className }: { className?: string }) {
     if (!ok) return
     const results = await Promise.allSettled(docs.map((d) => forgetDocument(d.id)))
     const kept = docs.filter((_, i) => results[i].status === 'rejected')
+    // Work kept from documents that dropped off the list to make room goes too.
+    await forgetUnlistedSessions().catch((err) => console.warn('[recents] could not delete saved work', err))
+    focusAfterRemoval.current = 0
     setDocs(kept)
     if (kept.length) toast.error('Some documents couldn’t be removed')
     else toast.success('Recent documents cleared')
@@ -92,7 +127,7 @@ export function RecentDocuments({ className }: { className?: string }) {
           </Button>
         )}
       </div>
-      <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4">
+      <ul ref={listRef} className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4">
         {docs
           ? docs.map((doc, i) => (
               <RecentCard
@@ -101,7 +136,8 @@ export function RecentDocuments({ className }: { className?: string }) {
                 index={i}
                 onRemove={() => void remove(doc)}
                 onMissing={() => {
-                  void forgetDocument(doc.id).catch(() => {})
+                  // The saved work stays: opening the same file from disk restores it.
+                  void removeRecentDocument(doc.id).catch(() => {})
                   setDocs((list) => list?.filter((d) => d.id !== doc.id) ?? null)
                 }}
               />
@@ -128,7 +164,8 @@ function RecentCard({
   const closeHandlers = usePointerAwareClose()
   const open = async () => {
     const ok = await useEditor.getState().openRecent(doc.id, doc.name)
-    if (!ok && !(await loadDocumentBytes(doc.id).catch(() => null))) onMissing()
+    // Only a file that is really gone: one that can't be read right now keeps its card.
+    if (!ok && (await loadDocumentBytes(doc.id).catch(() => undefined)) === null) onMissing()
   }
   const filled = doc.filledCount ?? 0
   return (
@@ -155,12 +192,13 @@ function RecentCard({
         <div className="truncate text-left text-[13.5px] font-medium text-fg" title={doc.name} dir="auto">
           {name}
         </div>
-        <div className="mt-0.5 truncate text-[12px] text-fg-subtle">{recentMetaLine(doc.pageCount, doc.openedAt)}</div>
+        <div className="mt-0.5 truncate text-[12px] text-fg-subtle">{recentMetaLine(doc.pageCount, doc)}</div>
       </div>
 
       {/* Stretched button: the whole card opens the document. */}
       <button
         type="button"
+        data-recent-open
         onClick={() => void open()}
         aria-label={`Open ${name}`}
         title={doc.name}

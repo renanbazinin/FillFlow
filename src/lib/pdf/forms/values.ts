@@ -25,9 +25,14 @@ export function coerceValue(field: Pick<FormField, 'type'>, value: FormValue | u
   }
 }
 
+/** The stored value of a field, if any (own properties only: a field may be called "__proto__"). */
+export function storedValue(values: FormValues, name: string): FormValue | undefined {
+  return Object.hasOwn(values, name) ? values[name] : undefined
+}
+
 /** The effective value of a field: stored value (coerced) or the value the PDF came with. */
 export function fieldValue(field: FormField, values: FormValues): FormValue {
-  const v = values[field.name]
+  const v = storedValue(values, field.name)
   return v === undefined ? field.defaultValue : coerceValue(field, v)
 }
 

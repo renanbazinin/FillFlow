@@ -1,5 +1,6 @@
 import bidiFactory from 'bidi-js'
 import type { Font as FkFont, Glyph, GlyphPosition, GlyphRun, TypeFeatures } from '@pdf-lib/fontkit'
+import { graphemes, isIgnorable } from '../text/layout'
 
 /**
  * Text shaping for the exporter: Unicode bidi (bidi-js) splits a line into directional runs
@@ -29,32 +30,6 @@ export const SHAPING_FEATURES: TypeFeatures = {
 
 /** fontkit's runtime `layout` takes script/language/direction too (missing from its typings). */
 type LayoutFn = (text: string, features: TypeFeatures, script?: string, language?: string, direction?: 'ltr' | 'rtl') => GlyphRun
-
-/** Default-ignorable code points (bidi controls, ZWJ/ZWNJ, variation selectors…): invisible, zero width. */
-const IGNORABLE: [number, number][] = [
-  [0x00ad, 0x00ad],
-  [0x034f, 0x034f],
-  [0x061c, 0x061c],
-  [0x115f, 0x1160],
-  [0x17b4, 0x17b5],
-  [0x180b, 0x180f],
-  [0x200b, 0x200f],
-  [0x202a, 0x202e],
-  [0x2060, 0x206f],
-  [0x3164, 0x3164],
-  [0xfe00, 0xfe0f],
-  [0xfeff, 0xfeff],
-  [0xffa0, 0xffa0],
-  [0xfff0, 0xfff8],
-  [0x1bca0, 0x1bca3],
-  [0x1d173, 0x1d17a],
-  [0xe0000, 0xe0fff],
-]
-
-export function isIgnorable(codePoint: number): boolean {
-  for (const [a, b] of IGNORABLE) if (codePoint >= a && codePoint <= b) return true
-  return false
-}
 
 /** Text as it is actually painted: ignorables removed; tab, form feed and CR become spaces (as in canvas). */
 export function paintableText(text: string): string {
@@ -121,22 +96,67 @@ export function visualRuns(line: string, base?: Direction): VisualRun[] {
   })
 }
 
-export interface ShapedRun extends VisualRun {
+export interface ShapedText {
   /** Glyphs in visual order. */
   glyphs: Glyph[]
   positions: GlyphPosition[]
+  /** Grapheme cluster (index in logical order) of each glyph: letter spacing goes after a whole cluster. */
+  clusters: number[]
   /** Total advance in font units. */
   advance: number
 }
 
+export interface ShapedRun extends VisualRun, ShapedText {}
+
+/** Hebrew points that compose with their letter into a precomposed glyph: dagesh/mapiq, shin dot, sin dot. */
+const COMPOSING_POINTS = '\u05BC\u05C1\u05C2'
+const HEBREW_POINTED = /[\u05D0-\u05EA][\u0591-\u05BD\u05BF\u05C1\u05C2\u05C4\u05C5\u05C7]{2,}/g
+
+/**
+ * Moves dagesh, shin dot and sin dot right after their letter. Canonical order puts vowels first
+ * (שָׁ is shin, qamats, shin dot), but the fonts only compose letter + dagesh/dot into their
+ * precomposed glyph when the two are adjacent, and otherwise leave the dot unpositioned, beside
+ * the letter. Browsers (HarfBuzz) compose them in either order.
+ */
+function composingPointsFirst(text: string): string {
+  return text.replace(HEBREW_POINTED, (cluster) => {
+    const [letter, ...points] = cluster
+    const first = points.filter((p) => COMPOSING_POINTS.includes(p)).sort()
+    return letter + first.join('') + points.filter((p) => !COMPOSING_POINTS.includes(p)).join('')
+  })
+}
+
+/**
+ * The grapheme cluster each glyph belongs to. fontkit records the code points behind every glyph,
+ * and in logical order the glyphs consume the text's code points in turn.
+ */
+function glyphClusters(text: string, glyphs: Glyph[], direction: Direction): number[] {
+  const clusterOf: number[] = []
+  graphemes(text).forEach((cluster, i) => {
+    for (const _ of cluster) clusterOf.push(i)
+  })
+  const out = new Array<number>(glyphs.length)
+  let consumed = 0
+  let cluster = 0
+  for (let n = 0; n < glyphs.length; n++) {
+    const i = direction === 'rtl' ? glyphs.length - 1 - n : n
+    const count = glyphs[i].codePoints.length
+    // A glyph without code points (an extra glyph a character was split into) joins the previous one.
+    if (count) cluster = clusterOf[Math.min(consumed, clusterOf.length - 1)]
+    consumed += count
+    out[i] = cluster
+  }
+  return out
+}
+
 /** Shapes one run of text (logical order) with an explicit direction; glyphs come back in visual order. */
-export function shapeText(font: FkFont, text: string, direction: Direction): { glyphs: Glyph[]; positions: GlyphPosition[]; advance: number } {
-  const clean = paintableText(text)
-  if (!clean) return { glyphs: [], positions: [], advance: 0 }
+export function shapeText(font: FkFont, text: string, direction: Direction): ShapedText {
+  const clean = composingPointsFirst(paintableText(text))
+  if (!clean) return { glyphs: [], positions: [], clusters: [], advance: 0 }
   const run = (font.layout as unknown as LayoutFn).call(font, clean, SHAPING_FEATURES, undefined, undefined, direction)
   let advance = 0
   for (const p of run.positions) advance += p.xAdvance
-  return { glyphs: run.glyphs, positions: run.positions, advance }
+  return { glyphs: run.glyphs, positions: run.positions, clusters: glyphClusters(clean, run.glyphs, direction), advance }
 }
 
 /** Bidi-reorders and shapes a line. */

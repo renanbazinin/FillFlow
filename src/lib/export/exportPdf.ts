@@ -6,7 +6,7 @@ import { convertImage, loadFontBytes, pdfjsRewriter, rasterizeText } from './bro
 import { renderPdf } from './engine'
 import { ExportError } from './errors'
 import type { PdfjsDocument } from './pdfjsRewrite'
-import type { ExportDeps, ExportInput, ExportOptions, ExportProgress } from './types'
+import type { ExportDeps, ExportInput, ExportOptions } from './types'
 
 export type { ExportDeps, ExportInput, ExportOptions, ExportPhase, ExportProgress } from './types'
 export { ExportError, type ExportErrorCode } from './errors'
@@ -26,10 +26,7 @@ export async function exportPdf(input: ExportInput, deps: Partial<ExportDeps> = 
   })
 }
 
-export interface ExportHooks {
-  onProgress?: (progress: ExportProgress) => void
-  signal?: AbortSignal
-}
+export type ExportHooks = Pick<ExportDeps, 'onProgress' | 'onUnwrittenFields' | 'signal'>
 
 /** Exports the document currently open in the editor. */
 export async function exportCurrentDocument(options: ExportOptions, hooks: ExportHooks = {}): Promise<Uint8Array> {

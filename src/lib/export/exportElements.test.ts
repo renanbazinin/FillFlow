@@ -124,6 +124,27 @@ describe('exportPdf: shapes', () => {
     await pdf.loadingTask.destroy()
   })
 
+  it('draws a shape narrower than its border as a solid shape inside its box', async () => {
+    const { raster, pdf } = await exportAndRender([
+      shape('r', { x: 50, y: 50, width: 4, height: 80, strokeColor: '#ff0000', strokeWidth: 8 }),
+      shape('e', { shape: 'ellipse', x: 150, y: 50, width: 4, height: 80, strokeColor: '#ff0000', strokeWidth: 8 }),
+      shape('w', { x: 50, y: 300, width: 200, height: 4, strokeColor: '#ff0000', fillColor: '#0000ff', strokeWidth: 8 }),
+    ])
+    const red = [255, 0, 0]
+    const isRed = (r: number, g: number, b: number) => r > 200 && g < 80 && b < 80
+    expect(near(raster.at(52, 90), red)).toBe(true)
+    expect(near(raster.at(152, 90), red)).toBe(true)
+    expect(near(raster.at(150, 302), red)).toBe(true)
+    // Nothing spills out of the boxes (the stroke used to be centred on a zero-width path).
+    const box = raster.bbox(isRed)!
+    expect(box.x).toBeGreaterThan(49.5)
+    expect(box.x + box.width).toBeLessThan(250.5)
+    expect(near(raster.at(56, 90), [255, 255, 255])).toBe(true)
+    expect(near(raster.at(156, 90), [255, 255, 255])).toBe(true)
+    expect(near(raster.at(150, 306), [255, 255, 255])).toBe(true)
+    await pdf.loadingTask.destroy()
+  })
+
   it('draws lines corner to corner (and flipped) with round caps', async () => {
     const { raster, pdf } = await exportAndRender([
       shape('a', { shape: 'line', x: 40, y: 40, width: 100, height: 100, strokeColor: '#000000', strokeWidth: 4 }),

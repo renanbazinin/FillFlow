@@ -106,8 +106,8 @@ export interface Raster {
   bbox(pred: (r: number, g: number, b: number, a: number) => boolean): { x: number; y: number; width: number; height: number } | null
 }
 
-/** Renders a page (white background) and gives pixel access in view-space coordinates. */
-export async function renderPage(pdf: PdfjsProxy, pageNumber: number, scale = 4): Promise<Raster> {
+/** Renders a page (white background), on screen or as printed, and gives pixel access in view-space coordinates. */
+export async function renderPage(pdf: PdfjsProxy, pageNumber: number, scale = 4, intent: 'display' | 'print' = 'display'): Promise<Raster> {
   const page = await pdf.getPage(pageNumber)
   const viewport = page.getViewport({ scale })
   const factory = (pdf as unknown as { canvasFactory: { create(w: number, h: number): { canvas: unknown; context: CanvasRenderingContext2D } } })
@@ -115,7 +115,7 @@ export async function renderPage(pdf: PdfjsProxy, pageNumber: number, scale = 4)
   const { canvas, context } = factory.create(Math.ceil(viewport.width), Math.ceil(viewport.height))
   context.fillStyle = '#ffffff'
   context.fillRect(0, 0, Math.ceil(viewport.width), Math.ceil(viewport.height))
-  await page.render({ canvas: canvas as HTMLCanvasElement, canvasContext: context, viewport, background: 'rgba(255,255,255,1)' }).promise
+  await page.render({ canvas: canvas as HTMLCanvasElement, canvasContext: context, viewport, intent, background: 'rgba(255,255,255,1)' }).promise
   const width = Math.ceil(viewport.width)
   const height = Math.ceil(viewport.height)
   const { data } = context.getImageData(0, 0, width, height)

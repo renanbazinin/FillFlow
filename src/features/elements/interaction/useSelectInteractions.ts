@@ -283,15 +283,11 @@ export function useSelectInteractions(page: PageInfo, rootRef: RefObject<HTMLDiv
       const t = e.target as HTMLElement
       if (handledPresses.has(e) || !t.isConnected || root!.contains(t)) return
       const additive = e.shiftKey || e.ctrlKey || e.metaKey
-      if (t.closest('[data-form-field]')) {
-        // Filling a form field: drop the item selection so its toolbar gets out of the way.
-        if (!additive) s.clearSelection()
-        return
-      }
-      if (t.closest('a[href], button, input, select, textarea, [contenteditable="true"]')) return
-      finishActiveTextEdit()
+      const onField = !!t.closest('[data-form-field]')
+      if (!onField && t.closest('a[href], button, input, select, textarea, [contenteditable="true"]')) return
       if (e.pointerType === 'touch') {
-        // One finger on the page scrolls natively; a tap (no scroll) clears the selection.
+        // One finger on the page scrolls natively, keeping the edit (and the keyboard) open; a
+        // tap (no scroll) ends the edit and clears the selection.
         if (additive) return
         dispose?.()
         dispose = trackPointer(
@@ -299,7 +295,9 @@ export function useSelectInteractions(page: PageInfo, rootRef: RefObject<HTMLDiv
           {
             up(p) {
               dispose = null
-              if (Math.hypot(p.clientX - e.clientX, p.clientY - e.clientY) < 10) useEditor.getState().clearSelection()
+              if (Math.hypot(p.clientX - e.clientX, p.clientY - e.clientY) >= 10) return
+              finishActiveTextEdit()
+              useEditor.getState().clearSelection()
             },
             cancel() {
               dispose = null
@@ -309,6 +307,12 @@ export function useSelectInteractions(page: PageInfo, rootRef: RefObject<HTMLDiv
         )
         return
       }
+      if (onField) {
+        // Filling a form field: drop the item selection so its toolbar gets out of the way.
+        if (!additive) s.clearSelection()
+        return
+      }
+      finishActiveTextEdit()
       if (!additive) useEditor.getState().clearSelection()
       const base = additive ? useEditor.getState().selection : []
       const start = toLocal(e.clientX, e.clientY)

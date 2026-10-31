@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import fontkit from '@pdf-lib/fontkit'
-import { PDFDocument, PDFHexString, PDFName, degrees, type PDFFont } from 'pdf-lib'
+import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNull, PDFRef, PDFStream, degrees, type PDFFont } from 'pdf-lib'
 import type { FormValues } from '../../../model/types'
 import { applyFormValues } from '../../export/forms'
 import { defaultFormValues, extractFormFields, getWidgetRotation, visualTextRotation } from '../formFields'
+import { radioOptions } from './labels'
 import { appearanceContent, arimoBytes, buildSampleForm, openWithPdfjs, pageText, shownHexStrings, widgetAnnotations } from './testing'
+import { fieldValue } from './values'
 
 interface ExportOptions {
   flatten?: boolean
@@ -324,5 +326,287 @@ describe('applyFormValues', () => {
     plain.addPage()
     await applyFormValues(plain, [], {}, { flatten: true, getUnicodeFont: () => Promise.reject(new Error('unused')), pages: [], rewritten: false })
     expect(plain.catalog.has(PDFName.of('AcroForm'))).toBe(false)
+  })
+})
+
+/** Extracts with pdf.js, fills the original bytes with pdf-lib and saves, like exportPdf. */
+async function roundTrip(bytes: Uint8Array, values: FormValues, flatten: boolean) {
+  const { pdf, raw, pages } = await openWithPdfjs(bytes)
+  const fields = await extractFormFields(pdf, pages)
+  await raw.loadingTask.destroy()
+  const doc = await PDFDocument.load(bytes)
+  const { unwritten } = await applyFormValues(doc, fields, { ...defaultFormValues(fields), ...values }, {
+    flatten,
+    getUnicodeFont: () => Promise.reject(new Error('unused')),
+    pages,
+    rewritten: false,
+  })
+  return { out: await doc.save(), fields, unwritten }
+}
+
+async function newForm(pageCount = 1) {
+  const doc = await PDFDocument.create()
+  const pages = Array.from({ length: pageCount }, () => doc.addPage([612, 792]))
+  return { doc, pages, form: doc.getForm() }
+}
+
+const box = (y: number, x = 50) => ({ x, y, width: 200, height: 20 })
+
+describe('applyFormValues: damaged and unusual forms', () => {
+  it('ignores invalid entries of the field list instead of dropping every value', async () => {
+    const { doc, pages, form } = await newForm()
+    form.createTextField('first').addToPage(pages[0], box(700))
+    form.createTextField('last').addToPage(pages[0], box(650))
+    form.updateFieldAppearances()
+    const list = form.acroForm.dict.lookup(PDFName.of('Fields'), PDFArray)
+    list.push(PDFRef.of(9999))
+    list.push(PDFNull)
+    const bytes = await doc.save({ updateFieldAppearances: false })
+
+    const live = await roundTrip(bytes, { first: 'Ada', last: 'Lovelace' }, false)
+    expect(live.unwritten).toEqual([])
+    const { byName, raw } = await reopen(live.out)
+    expect([byName('first')[0].fieldValue, byName('last')[0].fieldValue]).toEqual(['Ada', 'Lovelace'])
+    await raw.loadingTask.destroy()
+
+    const flat = await roundTrip(bytes, { first: 'Ada', last: 'Lovelace' }, true)
+    const reopened = await reopen(flat.out)
+    expect(reopened.annots).toEqual([])
+    expect(await pageText(reopened.raw, 1)).toMatch(/Ada.*Lovelace/)
+    await reopened.raw.loadingTask.destroy()
+  })
+
+  it.each([
+    ['missing from the field list', false],
+    ['in a file without an AcroForm', true],
+  ])('fills and flattens widgets %s', async (_, dropAcroForm) => {
+    const { doc, pages, form } = await newForm()
+    form.createTextField('listed').addToPage(pages[0], box(700))
+    const orphan = form.createTextField('orphan')
+    orphan.addToPage(pages[0], box(650))
+    form.updateFieldAppearances()
+    const list = form.acroForm.dict.lookup(PDFName.of('Fields'), PDFArray)
+    list.remove(list.indexOf(orphan.ref)!)
+    if (dropAcroForm) doc.catalog.delete(PDFName.of('AcroForm'))
+    const bytes = await doc.save({ updateFieldAppearances: false })
+    const values = { listed: 'Listed value', orphan: 'Orphan value' }
+
+    const live = await roundTrip(bytes, values, false)
+    expect(live.fields.map((f) => f.name)).toEqual(['listed', 'orphan'])
+    expect(live.unwritten).toEqual([])
+    const { byName, raw } = await reopen(live.out)
+    expect(byName('orphan')[0].fieldValue).toBe('Orphan value')
+    expect(byName('listed')[0].fieldValue).toBe('Listed value')
+    await raw.loadingTask.destroy()
+
+    const flat = await roundTrip(bytes, values, true)
+    const reopened = await reopen(flat.out)
+    expect(reopened.annots).toEqual([])
+    expect(await pageText(reopened.raw, 1)).toMatch(/Listed value.*Orphan value/)
+    await reopened.raw.loadingTask.destroy()
+  })
+
+  it('gives the value to every field that has the name, as the screen shows it', async () => {
+    const { doc, pages, form } = await newForm(2)
+    form.createTextField('name').addToPage(pages[0], box(700))
+    const copy = form.createTextField('tmp')
+    copy.addToPage(pages[1], box(700))
+    form.updateFieldAppearances()
+    copy.acroField.setPartialName('name')
+    const bytes = await doc.save({ updateFieldAppearances: false })
+
+    const live = await roundTrip(bytes, { name: 'Shared name' }, false)
+    expect(live.fields).toHaveLength(1)
+    const { byName, raw } = await reopen(live.out)
+    expect(byName('name').map((a) => a.fieldValue)).toEqual(['Shared name', 'Shared name'])
+    await raw.loadingTask.destroy()
+
+    const flat = await reopen((await roundTrip(bytes, { name: 'Shared name' }, true)).out)
+    expect(await pageText(flat.raw, 1)).toContain('Shared name')
+    expect(await pageText(flat.raw, 2)).toContain('Shared name')
+    await flat.raw.loadingTask.destroy()
+  })
+
+  it("keeps a check box's own on-appearance when the PDF has no off-appearance", async () => {
+    const { doc, pages, form } = await newForm()
+    for (const [name, y] of [
+      ['cross', 700],
+      ['untouched', 650],
+    ] as const) {
+      const check = form.createCheckBox(name)
+      check.addToPage(pages[0], { x: 50, y, width: 14, height: 14 })
+      const on = doc.context.formXObject([], { BBox: [0, 0, 14, 14], Marker: 'CustomCross' })
+      const widget = check.acroField.getWidgets()[0]
+      widget.dict.set(PDFName.of('AP'), doc.context.obj({ N: { On: doc.context.register(on) } }))
+      widget.setAppearanceState(PDFName.of('Off'))
+      check.acroField.dict.set(PDFName.of('V'), PDFName.of('Off'))
+    }
+    const bytes = await doc.save({ updateFieldAppearances: false })
+
+    // Default save options, as the exporter: pdf-lib must not redraw the boxes either.
+    const saved = await PDFDocument.load((await roundTrip(bytes, { cross: true }, false)).out)
+    for (const name of ['cross', 'untouched']) {
+      const widget = saved.getForm().getCheckBox(name).acroField.getWidgets()[0]
+      const normal = widget.getAppearances()?.normal as PDFDict
+      expect(saved.context.lookup(normal.get(PDFName.of('On')), PDFStream).dict.get(PDFName.of('Marker'))).toBe(PDFName.of('CustomCross'))
+    }
+    expect(saved.getForm().getCheckBox('cross').isChecked()).toBe(true)
+    expect(saved.getForm().getCheckBox('untouched').isChecked()).toBe(false)
+  })
+
+  it('clears fields that have a default value (/DV) for good', async () => {
+    const { doc, pages, form } = await newForm()
+    const country = form.createTextField('country')
+    country.setText('Israel')
+    country.addToPage(pages[0], box(700))
+    country.acroField.dict.set(PDFName.of('DV'), PDFHexString.fromText('Israel'))
+    const size = form.createDropdown('size')
+    size.addOptions(['S', 'M', 'L'])
+    size.select('M')
+    size.addToPage(pages[0], box(650))
+    size.acroField.dict.set(PDFName.of('DV'), PDFHexString.fromText('M'))
+    const sizes = form.createOptionList('sizes')
+    sizes.addOptions(['S', 'M', 'L'])
+    sizes.select('L')
+    sizes.addToPage(pages[0], { x: 50, y: 520, width: 200, height: 70 })
+    sizes.acroField.dict.set(PDFName.of('DV'), PDFHexString.fromText('L'))
+    // Only a default, which the original appearance shows too.
+    const dvOnly = form.createTextField('dv_only')
+    dvOnly.setText('Default')
+    dvOnly.addToPage(pages[0], box(450))
+    form.updateFieldAppearances()
+    dvOnly.acroField.dict.set(PDFName.of('DV'), PDFHexString.fromText('Default'))
+    dvOnly.acroField.dict.delete(PDFName.of('V'))
+    const bytes = await doc.save({ updateFieldAppearances: false })
+    const cleared = { country: '', size: '', sizes: [], dv_only: '' }
+
+    const live = await roundTrip(bytes, cleared, false)
+    expect(live.fields.map((f) => f.defaultValue)).toEqual(['Israel', 'M', ['L'], 'Default'])
+    const { pdf, raw, pages: views } = await openWithPdfjs(live.out)
+    expect(defaultFormValues(await extractFormFields(pdf, views))).toEqual(cleared)
+    await raw.loadingTask.destroy()
+
+    const flat = await reopen((await roundTrip(bytes, cleared, true)).out)
+    expect(await pageText(flat.raw, 1)).not.toMatch(/Israel|Default/)
+    await flat.raw.loadingTask.destroy()
+  })
+
+  it('flattens what both shows and prints: screen-only widgets go, print-only fields stay', async () => {
+    const { doc, pages, form } = await newForm()
+    const both = form.createTextField('both')
+    both.setText('ON SCREEN AND PAPER')
+    both.addToPage(pages[0], box(700))
+    const screen = form.createTextField('screen')
+    screen.setText('ON SCREEN ONLY')
+    screen.addToPage(pages[0], box(650))
+    const clear = form.createButton('clear')
+    clear.addToPage('Clear form', pages[0], box(600))
+    const print = form.createTextField('print')
+    print.setText('PRINT ONLY')
+    print.addToPage(pages[0], box(550))
+    const typed = form.createTextField('typed')
+    typed.addToPage(pages[0], box(500))
+    form.updateFieldAppearances()
+    for (const field of [screen, clear, typed]) field.acroField.getWidgets()[0].setFlags(0)
+    print.acroField.getWidgets()[0].setFlags(4 | 32)
+    const bytes = await doc.save({ updateFieldAppearances: false })
+
+    const { out } = await roundTrip(bytes, { typed: 'Typed by the user' }, true)
+    const { raw } = await reopen(out)
+    const text = await pageText(raw, 1)
+    await raw.loadingTask.destroy()
+    expect(text).toContain('ON SCREEN AND PAPER')
+    expect(text).not.toMatch(/ON SCREEN ONLY|Clear form/)
+    // What the user typed is kept, screen-only or not.
+    expect(text).toContain('Typed by the user')
+    const saved = (await PDFDocument.load(out)).getForm()
+    expect(saved.getFields().map((f) => f.getName())).toEqual(['print'])
+    expect(saved.getTextField('print').getText()).toBe('PRINT ONLY')
+    expect(saved.acroForm.dict.has(PDFName.of('NeedAppearances'))).toBe(false)
+  })
+
+  it('flattens the fields of a file that sets the Print flag on no widget (PDFBox, for one)', async () => {
+    const { doc, pages, form } = await newForm()
+    const name = form.createTextField('name')
+    name.addToPage(pages[0], box(700))
+    const prefilled = form.createTextField('prefilled')
+    prefilled.setText('From the file')
+    prefilled.addToPage(pages[0], box(650))
+    form.createCheckBox('agree').addToPage(pages[0], { x: 50, y: 600, width: 14, height: 14 })
+    form.createButton('reset').addToPage('Reset', pages[0], box(550))
+    form.updateFieldAppearances()
+    for (const field of form.getFields()) for (const widget of field.acroField.getWidgets()) widget.dict.delete(PDFName.of('F'))
+    const bytes = await doc.save({ updateFieldAppearances: false })
+
+    const { out, unwritten } = await roundTrip(bytes, { name: 'Typed value', agree: true }, true)
+    expect(unwritten).toEqual([])
+    const { annots, raw } = await reopen(out)
+    const text = await pageText(raw, 1)
+    await raw.loadingTask.destroy()
+    expect(annots).toEqual([])
+    expect(text).toContain('Typed value')
+    expect(text).toContain('From the file')
+    expect(text).not.toContain('Reset') // a button does nothing once flattened
+    const saved = await PDFDocument.load(out)
+    expect(saved.getForm().getFields()).toHaveLength(0)
+    const xobjects = saved.getPage(0).node.Resources()?.lookup(PDFName.of('XObject'), PDFDict)
+    expect(xobjects?.keys().filter((k) => k.decodeText().startsWith('FlatWidget'))).toHaveLength(3) // name, prefilled, agree
+  })
+
+  it('tells apart radio buttons that share an export value', async () => {
+    const { doc, pages, form } = await newForm()
+    const q = form.createRadioGroup('q')
+    for (const [option, x] of [
+      ['Yes', 50],
+      ['No', 100],
+      ['Yes', 150],
+    ] as const) {
+      q.addOptionToPage(option, pages[0], { x, y: 700, width: 14, height: 14 })
+    }
+    // The file has the second "Yes" on.
+    q.acroField.dict.set(PDFName.of('V'), PDFName.of('2'))
+    q.acroField.getWidgets().forEach((w, i) => w.setAppearanceState(PDFName.of(i === 2 ? '2' : 'Off')))
+    const bytes = await doc.save()
+    const states = async (out: Uint8Array) => {
+      const group = (await PDFDocument.load(out)).getForm().getRadioGroup('q')
+      return [String(group.acroField.dict.get(PDFName.of('V'))), ...group.acroField.getWidgets().map((w) => String(w.getAppearanceState()))]
+    }
+
+    const untouched = await roundTrip(bytes, {}, false)
+    const [field] = untouched.fields
+    expect(field.widgets.map((w) => [w.exportValue, w.label])).toEqual([
+      ['Yes', undefined],
+      ['No', undefined],
+      ['Yes#2', 'Yes'],
+    ])
+    expect(radioOptions(field).map((o) => o.label)).toEqual(['Yes', 'No', 'Yes (2)'])
+    // pdf.js can't say which "Yes" is on: an untouched choice stays as the file has it.
+    expect(await states(untouched.out)).toEqual(['/2', '/Off', '/Off', '/2'])
+    expect(await states((await roundTrip(bytes, { q: 'Yes' }, false)).out)).toEqual(['/2', '/Off', '/Off', '/2'])
+    expect(await states((await roundTrip(bytes, { q: 'No' }, false)).out)).toEqual(['/1', '/Off', '/1', '/Off'])
+    const picked = await roundTrip((await roundTrip(bytes, { q: 'No' }, false)).out, { q: 'Yes#2' }, false)
+    expect(await states(picked.out)).toEqual(['/2', '/Off', '/Off', '/2'])
+  })
+
+  it('keeps the value of a field named "__proto__"', async () => {
+    const { doc, pages, form } = await newForm()
+    const proto = form.createTextField('__proto__')
+    proto.setText('hello')
+    proto.addToPage(pages[0], box(700))
+    form.createTextField('normal').addToPage(pages[0], box(650))
+    const bytes = await doc.save()
+    const { pdf, raw, pages: views } = await openWithPdfjs(bytes)
+    const fields = await extractFormFields(pdf, views)
+    await raw.loadingTask.destroy()
+    const values = defaultFormValues(fields)
+    expect(Object.keys(values)).toEqual(['__proto__', 'normal'])
+    expect(fieldValue(fields[0], { ...values })).toBe('hello')
+    expect(fieldValue(fields[0], {})).toBe('hello') // nothing stored: the PDF's value, not Object.prototype
+
+    const { out, unwritten } = await roundTrip(bytes, { normal: 'world' }, false)
+    expect(unwritten).toEqual([])
+    const saved = (await PDFDocument.load(out)).getForm()
+    expect(saved.getTextField('__proto__').getText()).toBe('hello')
+    expect(saved.getTextField('normal').getText()).toBe('world')
   })
 })

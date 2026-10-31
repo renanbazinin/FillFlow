@@ -1,7 +1,7 @@
-import { clear, createStore, del, entries, get, promisifyRequest, set, type UseStore } from 'idb-keyval'
+import { clear, createStore, del, delMany, entries, get, keys, promisifyRequest, set, type UseStore } from 'idb-keyval'
 import type { Asset, DocumentSession } from '../../model/types'
 import { importLegacySignature } from './legacy'
-import { parseSession } from './session'
+import { parseSession, storedVersion } from './session'
 
 /**
  * Local persistence (IndexedDB). Nothing ever leaves the device.
@@ -24,6 +24,8 @@ export interface RecentDocument {
   pageCount: number
   addedAt: number
   openedAt: number
+  /** When work on it was last saved (unset until then). */
+  editedAt?: number
   /** Small JPEG data URL of page 1, if generated. */
   thumbnail?: string
   /** Number of placed elements + filled form fields at last save (for "progress" badges). */
@@ -87,12 +89,30 @@ function ownBytes(bytes: Uint8Array): Uint8Array {
   return bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength ? bytes : bytes.slice()
 }
 
-function isRecent(v: unknown): v is RecentDocument {
-  return typeof v === 'object' && v !== null && typeof (v as RecentDocument).id === 'string'
-}
-
 function withoutUndefined<T extends object>(obj: T): Partial<T> {
   return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as Partial<T>
+}
+
+/**
+ * A stored recents entry, validated (another build may have written it): null without an id
+ * and a name; unusable numbers become 0 and unusable optional fields are left out.
+ */
+function parseRecent(v: unknown): RecentDocument | null {
+  if (typeof v !== 'object' || v === null) return null
+  const r = v as Record<string, unknown>
+  if (typeof r.id !== 'string' || typeof r.name !== 'string') return null
+  const num = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) ? x : undefined)
+  return withoutUndefined({
+    id: r.id,
+    name: r.name,
+    size: num(r.size) ?? 0,
+    pageCount: num(r.pageCount) ?? 0,
+    addedAt: num(r.addedAt) ?? 0,
+    openedAt: num(r.openedAt) ?? 0,
+    editedAt: num(r.editedAt),
+    thumbnail: typeof r.thumbnail === 'string' ? r.thumbnail : undefined,
+    filledCount: num(r.filledCount),
+  }) as RecentDocument
 }
 
 // --- Documents --------------------------------------------------------------
@@ -106,12 +126,15 @@ export async function rememberDocument(
   // The id is the SHA-256 of the bytes: an existing file under this key is the same file.
   if (!(await has(files, meta.id))) await set(meta.id, ownBytes(bytes), files)
   const now = Date.now()
-  await modify<RecentDocument>(recents, meta.id, (existing) => ({
-    ...existing,
-    ...(withoutUndefined(meta) as typeof meta),
-    addedAt: existing?.addedAt ?? meta.addedAt ?? now,
-    openedAt: now,
-  }))
+  await modify<RecentDocument>(recents, meta.id, (existing) => {
+    const current = parseRecent(existing)
+    return {
+      ...current,
+      ...(withoutUndefined(meta) as typeof meta),
+      addedAt: current?.addedAt || meta.addedAt || now,
+      openedAt: now,
+    }
+  })
   await pruneRecentDocuments()
 }
 
@@ -122,24 +145,24 @@ export async function updateRecentDocument(id: string, patch: Partial<RecentDocu
 
 /** Like `updateRecentDocument`, but resolves with whether the entry existed (and was updated). */
 export async function patchRecentDocument(id: string, patch: Partial<RecentDocument>): Promise<boolean> {
-  const written = await modify<RecentDocument>(db().recents, id, (existing) =>
-    isRecent(existing) ? { ...existing, ...patch, id } : undefined,
-  )
+  const written = await modify<RecentDocument>(db().recents, id, (existing) => {
+    const current = parseRecent(existing)
+    return current ? { ...current, ...patch, id } : undefined
+  })
   return written !== undefined
 }
 
 export async function getRecentDocument(id: string): Promise<RecentDocument | null> {
-  const v = await get<unknown>(id, db().recents)
-  return isRecent(v) ? v : null
+  return parseRecent(await get<unknown>(id, db().recents))
 }
 
 /** Most recently opened first. */
 export async function listRecentDocuments(): Promise<RecentDocument[]> {
   const all = await entries<string, unknown>(db().recents)
   return all
-    .map(([, v]) => v)
-    .filter(isRecent)
-    .sort((a, b) => (b.openedAt ?? 0) - (a.openedAt ?? 0) || (b.addedAt ?? 0) - (a.addedAt ?? 0))
+    .map(([, v]) => parseRecent(v))
+    .filter((d) => d !== null)
+    .sort((a, b) => b.openedAt - a.openedAt || b.addedAt - a.addedAt)
 }
 
 export async function loadDocumentBytes(id: string): Promise<Uint8Array | null> {
@@ -154,22 +177,116 @@ export async function forgetDocument(id: string): Promise<void> {
   await Promise.all([del(id, files), del(id, recents), del(id, sessions)])
 }
 
+/**
+ * Takes a document off the recents list and drops its stored file, but keeps its saved work:
+ * opening the same file again (from disk) brings the work back.
+ */
+export async function removeRecentDocument(id: string): Promise<void> {
+  const { files, recents } = db()
+  await Promise.all([del(id, files), del(id, recents)])
+}
+
+/** Keeps the list, and the stored files that make up most of the data, short. Work is kept. */
 async function pruneRecentDocuments(): Promise<void> {
   const list = await listRecentDocuments()
-  await Promise.all(list.slice(MAX_RECENT_DOCUMENTS).map((d) => forgetDocument(d.id)))
+  await Promise.all(list.slice(MAX_RECENT_DOCUMENTS).map((d) => removeRecentDocument(d.id)))
+}
+
+/** Deletes the saved work on documents that are no longer in the recents list. */
+export async function forgetUnlistedSessions(): Promise<void> {
+  const { recents, sessions } = db()
+  const [listed, saved] = await Promise.all([keys(recents), keys(sessions)])
+  const keep = new Set(listed)
+  const unlisted = saved.filter((key) => !keep.has(key))
+  if (unlisted.length) await delMany(unlisted, sessions)
 }
 
 // --- Sessions ---------------------------------------------------------------
 
+/**
+ * What a tab knows about a document's stored session, for compare-and-swap writes: the
+ * `updatedAt` it last loaded or wrote (0 = nothing was stored), or null when it couldn't tell.
+ */
+export interface SessionVersion {
+  updatedAt: number | null
+}
+
+/** `saveSession` found a different session stored than expected: another tab saved newer work. */
+export class SessionConflictError extends Error {
+  constructor() {
+    super('The document was changed in another tab.')
+    this.name = 'SessionConflictError'
+  }
+}
+
+/** What the last `loadSession` of each document found (see `loadedSessionVersion`). */
+const loadedVersions = new Map<string, number>()
+
 /** The saved work for a document, validated; null when there is none (or it is unusable). */
 export async function loadSession(docId: string): Promise<DocumentSession | null> {
+  loadedVersions.delete(docId)
   const raw = await get<unknown>(docId, db().sessions)
+  loadedVersions.set(docId, storedVersion(raw))
   const session = parseSession(raw)
   return session && session.docId === docId ? session : null
 }
 
-export async function saveSession(session: DocumentSession): Promise<void> {
-  await set(session.docId, session, db().sessions)
+/**
+ * The version of a document's stored session as the last `loadSession` read it (0 = none), or
+ * null when that read failed or never happened. Autosave's writes start from it, so they never
+ * replace work that another tab saved after this one loaded the document.
+ */
+export function loadedSessionVersion(docId: string): number | null {
+  return loadedVersions.get(docId) ?? null
+}
+
+/**
+ * Stores the user's work on a document; resolves once it is committed. The commit is requested
+ * along with the write, so a write started as the page is being unloaded still lands.
+ *
+ * With `version`, it's a compare-and-swap: the stored session is only replaced while it is the
+ * one `version` names (or when there is none, or it is unreadable); otherwise nothing is written
+ * and it rejects with SessionConflictError. `version` advances when the write commits. A `blind`
+ * write skips the check, whose read would hold the write back past a page unload: for the last
+ * write before the page goes away.
+ */
+export function saveSession(session: DocumentSession, version?: SessionVersion, { blind = false } = {}): Promise<void> {
+  return db().sessions('readwrite', (os) => {
+    const tx = os.transaction
+    let failure: unknown = null
+    const committed = new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => {
+        if (version) version.updatedAt = session.updatedAt
+        resolve()
+      }
+      tx.onabort = () => reject(failure ?? tx.error)
+    })
+    const write = () => {
+      try {
+        os.put(session, session.docId)
+        tx.commit?.()
+      } catch (err) {
+        failure = err
+        tx.abort()
+      }
+    }
+    if (!version || blind) {
+      write()
+      return committed
+    }
+    const read = os.get(session.docId)
+    read.onsuccess = () => {
+      if (read.result === undefined || storedVersion(read.result) === version.updatedAt) return write()
+      failure = new SessionConflictError()
+      tx.abort()
+    }
+    // A record that can't be read back (its data is lost) is no work worth keeping: replace it.
+    read.onerror = (e) => {
+      e.preventDefault()
+      write()
+    }
+    return committed
+  })
 }
 
 export async function deleteSession(docId: string): Promise<void> {

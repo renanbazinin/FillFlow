@@ -3,7 +3,7 @@ import type { TextElement } from '../../../model/types'
 import { useEditor } from '../../../store/editor'
 import { shortcutLetter } from '../lib/keys'
 import { textCss, useBaselineShift } from '../render/textStyle'
-import { applyCaret, finishTextEdit, registerTextarea, takePendingCaret } from '../state/textEdit'
+import { applyCaret, finishTextEdit, hasTextarea, registerTextarea, takePendingCaret } from '../state/textEdit'
 import { isIOS } from './platform'
 
 /** Caret color when the text itself is too light to see on white paper. */
@@ -34,10 +34,11 @@ export function TextEditor({ el, scale }: { el: TextElement; scale: number }) {
     if (caret !== null) applyCaret(node, caret)
     return () => {
       registerTextarea(id, null)
-      // Unmounted because editing moved on (undo, tool change, another item…): commit. A
-      // StrictMode re-mount keeps editingId, so it doesn't end the session.
+      // Unmounted because editing moved on (undo, tool change, another item…) or because its
+      // page layer went away (large documents only mount layers near the viewport): commit.
+      // A StrictMode re-mount registers again right away, so it doesn't end the session.
       queueMicrotask(() => {
-        if (useEditor.getState().editingId !== id) finishTextEdit(id)
+        if (useEditor.getState().editingId !== id || !hasTextarea(id)) finishTextEdit(id)
       })
     }
   }, [id])

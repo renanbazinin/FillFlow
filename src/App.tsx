@@ -27,7 +27,9 @@ export default function App() {
         mobileOffset={hasDoc ? { bottom: 112 } : { bottom: 16 }}
         gap={10}
         toastOptions={{
-          className: '!rounded-xl !border-line !bg-surface !text-fg !shadow-float !font-sans',
+          // Toasts float above modals, which turn off pointer events on the rest of the page:
+          // keep them pressable instead of letting taps fall through to what's underneath.
+          className: '!rounded-xl !border-line !bg-surface !text-fg !shadow-float !font-sans pointer-events-auto',
           classNames: {
             title: '!text-[13.5px] !font-medium',
             description: '!text-[12.5px] !text-fg-muted',

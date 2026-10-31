@@ -104,20 +104,85 @@ export interface WrappedLine {
   end: number
 }
 
+/** Spaces a line can break after (not the no-break ones: U+00A0, U+2007, U+202F, U+FEFF). */
+const BREAKING_SPACE = /[ \t\u1680\u2000-\u2006\u2008-\u200b\u205f\u3000]/
+const LETTER = /\p{L}/u
+const DIGIT = /\p{Nd}/u
+const HEBREW = /\p{Script=Hebrew}/u
+const MARK = /\p{M}/u
+const OPENING = /[([{"]/u
+/** Hyphens and dashes a line can break after (UAX #14 class BA), unlike U+2011 or U+2212. */
+const BREAK_AFTER_DASH = /[\u2010\u2012\u2013\u05be\u058a]/
+
+/** The code point starting at `i`. */
+function charAt(text: string, i: number): string {
+  return String.fromCodePoint(text.codePointAt(i) ?? 0)
+}
+
+/** Index of the last character before `i` that isn't a combining mark (-1 if none). */
+function baseBefore(text: string, i: number): number {
+  let j = i - 1
+  while (j >= 0 && MARK.test(text[j])) j--
+  return j
+}
+
 /**
- * Greedy word wrap (like a <textarea>): breaks after spaces, keeps trailing spaces on the line
- * (they don't count toward its width), and breaks words that are longer than a whole line.
+ * Whether a line may break between text[i - 1] and text[i] inside a word: after hyphens and
+ * dashes, around em dashes, after "?" and "…". These are the browser's (UAX #14) line-break
+ * opportunities that form values meet, as Chrome applies them to a <textarea>.
+ */
+function breaksBefore(text: string, i: number): boolean {
+  const next = charAt(text, i)
+  if (MARK.test(next)) return false
+  const at = baseBefore(text, i)
+  const c = text[at] ?? ''
+  const prev = text[baseBefore(text, at)] ?? ''
+  if (next === '\u2014') return c !== '\u2014'
+  const word = LETTER.test(next) || OPENING.test(next)
+  switch (c) {
+    case '-':
+      // "ab-12" and "2026-10" break, but not a sign ("-5", "$-5") or "ב-2020".
+      if (DIGIT.test(next)) return (LETTER.test(prev) && !HEBREW.test(prev)) || DIGIT.test(prev)
+      return word || next === '-'
+    case '\u2014':
+      return next !== '-' && (word || DIGIT.test(next))
+    case '?':
+    case '\u2026':
+      return word || DIGIT.test(next) || next === '-'
+    default:
+      if (!BREAK_AFTER_DASH.test(c) || (HEBREW.test(prev) && !HEBREW.test(next))) return false
+      return word || DIGIT.test(next)
+  }
+}
+
+/** Segments a line can end after: [start, end of the visible part, end including spaces]. */
+function segments(text: string): [number, number, number][] {
+  const out: [number, number, number][] = []
+  let start = 0
+  while (start < text.length) {
+    let end = start
+    while (end < text.length && !BREAKING_SPACE.test(text[end])) {
+      end += charAt(text, end).length
+      if (end < text.length && !BREAKING_SPACE.test(text[end]) && breaksBefore(text, end)) break
+    }
+    let spaces = end
+    while (spaces < text.length && BREAKING_SPACE.test(text[spaces])) spaces++
+    out.push([start, end, spaces])
+    start = spaces
+  }
+  return out
+}
+
+/**
+ * Greedy word wrap like a <textarea> (white-space: pre-wrap; overflow-wrap: break-word): breaks
+ * after spaces and at the other break opportunities the browser uses (see breaksBefore), keeps
+ * trailing spaces on the line (they don't count toward its width), and breaks words that are
+ * longer than a whole line.
  */
 export function wrapParagraph(text: string, maxWidth: number, fontSize: number, measure: Measure): [number, number][] {
   if (!text) return [[0, 0]]
   const out: [number, number][] = []
-  // Tokens: a run of non-spaces followed by its spaces.
-  const tokens: [number, number, number][] = [] // [start, endOfWord, endWithSpaces]
-  const re = /(\S*)(\s*)/g
-  let m: RegExpExecArray | null
-  while ((m = re.exec(text)) && m[0]) {
-    tokens.push([m.index, m.index + m[1].length, m.index + m[0].length])
-  }
+  const tokens = segments(text) // [start, endOfWord, endWithSpaces]
   let lineStart = 0
   let lineEnd = 0
   let width = 0

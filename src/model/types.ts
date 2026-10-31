@@ -175,6 +175,12 @@ export interface FormWidget {
   rect: Rect
   /** Checkbox / radio: the export value that this widget represents when "on". */
   exportValue?: string
+  /**
+   * Radio buttons that repeat another button's export value but are a separate choice: the
+   * PDF's export value, shown to the user. `exportValue` then holds a key that is unique in the
+   * group ("Yes#2"), so the form value says which button is on.
+   */
+  label?: string
 }
 
 export interface FormFieldOption {

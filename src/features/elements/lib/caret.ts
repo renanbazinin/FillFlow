@@ -1,4 +1,4 @@
-import { layoutTextBlock, measureTextCanvas, type TextMeasurer, type TextStyle } from '../../../lib/text/layout'
+import { charCount, graphemes, layoutTextBlock, measureTextCanvas, type TextMeasurer, type TextStyle } from '../../../lib/text/layout'
 import type { Point, TextAlign } from '../../../model/types'
 
 const RTL = /[֐-ࣿיִ-﷿ﹰ-ﻼ]/
@@ -27,8 +27,9 @@ export function caretIndexAt(
   let prevWidth = 0
   let consumed = 0
   let chars = 0
-  for (const ch of line) {
-    chars++
+  // By grapheme cluster: the caret never lands between a letter and its marks.
+  for (const ch of graphemes(line)) {
+    chars += charCount(ch)
     const next = consumed + ch.length
     const width = measure(line.slice(0, next), style.fontId, style.bold, style.fontSize) + style.letterSpacing * chars
     if (x < (prevWidth + width) / 2) return offset + consumed

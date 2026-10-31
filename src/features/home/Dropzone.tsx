@@ -35,7 +35,8 @@ export function Dropzone({ className }: { className?: string }) {
       <button
         type="button"
         onClick={() => void chooseAndOpenPdf()}
-        aria-label="Choose a PDF to open"
+        // Named by its visible words, so "Choose PDF" or "Drop a PDF here" works for voice control.
+        aria-labelledby="ff-dropzone-title ff-dropzone-action"
         aria-describedby="ff-dropzone-hint"
         className={cn(
           'group relative flex w-full flex-col items-center overflow-hidden rounded-[19px] border-[1.5px] border-dashed px-5 pb-8 pt-9 text-center transition-colors duration-200 focus-visible:outline-offset-4 sm:pb-9 sm:pt-10',
@@ -45,7 +46,7 @@ export function Dropzone({ className }: { className?: string }) {
         )}
       >
         <DropIllustration active={ready} />
-        <span className="mt-5 text-[19px] font-semibold tracking-[-0.015em] text-fg sm:text-[21px]">
+        <span id="ff-dropzone-title" className="mt-5 text-[19px] font-semibold tracking-[-0.015em] text-fg sm:text-[21px]">
           {ready ? (
             'Drop to open your PDF'
           ) : (
@@ -59,6 +60,7 @@ export function Dropzone({ className }: { className?: string }) {
           Forms, contracts, applications&nbsp;— any PDF works.
         </span>
         <span
+          id="ff-dropzone-action"
           className={cn(
             'mt-6 inline-flex h-10 items-center gap-2 rounded-xl px-[18px] text-[14px] font-medium shadow-xs transition-[background-color,opacity] duration-200',
             'bg-accent text-accent-fg group-hover:bg-accent-hover',

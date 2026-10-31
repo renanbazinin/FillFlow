@@ -108,7 +108,8 @@ function PasswordDialog({
       title={<IconTitle icon={<LockKeyhole />}>This PDF is password&#8209;protected</IconTitle>}
       description={
         <>
-          Enter the password to open <span className="font-medium text-fg" dir="auto">{displayName(fileName)}</span>.
+          {/* <bdi>: a right-to-left name keeps its own order inside the English sentence. */}
+          Enter the password to open <bdi className="font-medium text-fg">{displayName(fileName)}</bdi>.
         </>
       }
       onOpenAutoFocus={(e) => {

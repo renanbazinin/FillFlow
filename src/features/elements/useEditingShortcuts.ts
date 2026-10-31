@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { toast } from 'sonner'
 import { toolForShortcut } from '../../model/tools'
 import { getSelectedElements, useEditor } from '../../store/editor'
 import { isEditableTarget } from '../../lib/utils/misc'
@@ -9,10 +10,12 @@ import {
   clipboardMarker,
   copySelection,
   hasClipboardItems,
+  isClipboardMarker,
   pasteImageBlob,
   pastePlainText,
   pasteItems,
   systemClipboardIsNewer,
+  writeClipboardMarker,
 } from './state/clipboard'
 import { deleteSelection, duplicateSelection, nudgeSelection, reorderSelection, selectAllOnPage, toggleLockSelection } from './state/commands'
 import { editText, finishActiveTextEdit } from './state/textEdit'
@@ -70,12 +73,13 @@ export function useEditingShortcuts(): void {
     }
 
     function onKeyDown(e: KeyboardEvent) {
-      if (e.defaultPrevented || shouldIgnore()) return
+      // Keys that drive an IME composition (Escape cancels the conversion) belong to the IME.
+      if (e.defaultPrevented || e.isComposing || e.keyCode === 229 || shouldIgnore()) return
       if (e.key === 'Escape') {
         onEscape(e)
         return
       }
-      if (isEditableTarget(e.target) || e.isComposing) return
+      if (isEditableTarget(e.target)) return
       const s = useEditor.getState()
       const letter = shortcutLetter(e)
 
@@ -121,7 +125,7 @@ export function useEditingShortcuts(): void {
             if (s.selection.length && !hasTextSelection()) {
               copyPending = { cut: letter === 'x' }
               setTimeout(() => {
-                if (copyPending) copySelection(copyPending.cut)
+                if (copyPending && copySelection(copyPending.cut)) writeClipboardMarker()
                 copyPending = null
               }, 0)
             }
@@ -209,6 +213,12 @@ export function useEditingShortcuts(): void {
       if (image) {
         e.preventDefault()
         void pasteImageBlob(image).catch((err) => console.warn('[paste] image failed', err))
+        return
+      }
+      if (isClipboardMarker(text)) {
+        // Items copied in another tab (or before a reload): they only live in that tab's memory.
+        e.preventDefault()
+        toast('Copy the items again to paste them here', { description: 'Copied items can only be pasted in the same tab, before it’s reloaded.' })
         return
       }
       if (text.trim()) {

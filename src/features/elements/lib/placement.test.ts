@@ -16,6 +16,20 @@ describe('placement', () => {
     expect(sig).toEqual({ x: 225, y: 375, width: 150, height: 50 })
   })
 
+  it('caps the default height of tall or narrow signatures, initials and images', () => {
+    const a4 = { width: 595.28, height: 841.89 }
+    // Typed initials "J" (tall glyph) and a short signature ("Jo").
+    expect(imageRect({ x: 300, y: 400 }, 'initials', 0.5, a4)).toMatchObject({ width: 20, height: 40 })
+    expect(imageRect({ x: 300, y: 400 }, 'signature', 1.2, a4)).toMatchObject({ width: 72, height: 60 })
+    expect(imageRect({ x: 300, y: 400 }, 'image', 0.5, a4)).toMatchObject({ width: 120, height: 240 })
+    // Wide content keeps the default width.
+    expect(imageRect({ x: 300, y: 400 }, 'initials', 2, a4)).toMatchObject({ width: 60, height: 30 })
+    // A single vertical stroke stays grabbable.
+    const stroke = imageRect({ x: 300, y: 400 }, 'initials', 0.05, a4)
+    expect(stroke.width).toBe(4)
+    expect(stroke.height).toBeCloseTo(80)
+  })
+
   it('shrinks images that would not fit a small page', () => {
     const r = imageRect({ x: 50, y: 50 }, 'image', 1, { width: 100, height: 100 })
     expect(r.width).toBeCloseTo(90)

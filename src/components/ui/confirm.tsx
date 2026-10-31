@@ -1,6 +1,7 @@
 import { useSyncExternalStore, type ReactNode } from 'react'
 import { AlertDialog } from 'radix-ui'
 import { Button } from './button'
+import { onModalClose, onModalOpen } from './modal'
 
 interface ConfirmOptions {
   title: ReactNode
@@ -48,7 +49,11 @@ export function ConfirmHost() {
     <AlertDialog.Root open={!!current} onOpenChange={(open) => !open && close(false)}>
       <AlertDialog.Portal>
         <AlertDialog.Overlay className="fixed inset-0 z-[95] bg-overlay data-[state=open]:animate-fade-in" />
-        <AlertDialog.Content className="fixed left-1/2 top-1/2 z-[96] w-[min(92vw,420px)] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-line bg-surface p-6 text-fg shadow-overlay outline-none data-[state=open]:animate-scale-in">
+        <AlertDialog.Content
+          onOpenAutoFocus={onModalOpen}
+          onCloseAutoFocus={onModalClose}
+          className="fixed left-1/2 top-1/2 z-[96] w-[min(92vw,420px)] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-line bg-surface p-6 text-fg shadow-overlay outline-none data-[state=open]:animate-scale-in"
+        >
           <AlertDialog.Title className="text-[17px] font-semibold tracking-[-0.01em]">{current?.title}</AlertDialog.Title>
           <AlertDialog.Description className="mt-2 text-sm text-fg-muted">{current?.description ?? ''}</AlertDialog.Description>
           <div className="mt-6 flex justify-end gap-2">

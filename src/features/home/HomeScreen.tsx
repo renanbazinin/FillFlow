@@ -1,6 +1,7 @@
 import '@fontsource/instrument-serif/latin-400-italic.css'
 import { ArrowUpRight } from 'lucide-react'
 import { GITHUB_URL, GitHubIcon } from '../../components/brand/GitHubIcon'
+import { ErrorBoundary } from '../../components/ErrorBoundary'
 import { Dropzone } from './Dropzone'
 import { FeatureTiles } from './FeatureTiles'
 import { HomeHeader } from './HomeHeader'
@@ -20,7 +21,10 @@ export function HomeScreen() {
         <main className="flex-1 pb-16">
           <Hero />
           <Dropzone className="mx-auto mt-9 max-w-2xl animate-slide-up [animation-delay:160ms] [animation-fill-mode:both] sm:mt-10" />
-          <RecentDocuments className="mx-auto mt-16 max-w-5xl sm:mt-20" />
+          {/* Stored data from another build could break the list: never let it take the page down. */}
+          <ErrorBoundary>
+            <RecentDocuments className="mx-auto mt-16 max-w-5xl sm:mt-20" />
+          </ErrorBoundary>
           <FeatureTiles className="mx-auto mt-16 max-w-5xl sm:mt-20" />
         </main>
         <Footer />

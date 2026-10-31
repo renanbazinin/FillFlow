@@ -1,4 +1,4 @@
-import { isValueFilled, valuesEqual, coerceValue } from '../../lib/pdf/forms/values'
+import { isValueFilled, valuesEqual, coerceValue, storedValue } from '../../lib/pdf/forms/values'
 import type { Element, FormField, FormValues } from '../../model/types'
 import { fieldSigned } from './signed'
 
@@ -11,7 +11,7 @@ export function fillableFields(fields: readonly FormField[]): FormField[] {
 
 export function isFieldFilled(field: FormField, values: FormValues, elements: readonly Element[]): boolean {
   if (field.type === 'signature') return fieldSigned(elements, field)
-  const v = values[field.name]
+  const v = storedValue(values, field.name)
   return isValueFilled(field, v === undefined ? field.defaultValue : v)
 }
 
@@ -74,7 +74,7 @@ export function nextEmptyField(
 /** Whether any field differs from the value the PDF came with. */
 export function formIsDirty(fields: readonly FormField[], values: FormValues): boolean {
   return fields.some((f) => {
-    const v = values[f.name]
+    const v = storedValue(values, f.name)
     return v !== undefined && !valuesEqual(coerceValue(f, v), f.defaultValue)
   })
 }

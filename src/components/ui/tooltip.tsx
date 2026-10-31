@@ -1,6 +1,14 @@
-import type { ReactNode } from 'react'
+import type { FocusEvent, ReactNode } from 'react'
 import { Tooltip as RTooltip } from 'radix-ui'
 import { Kbd } from './controls'
+
+/**
+ * Radix opens a tooltip whenever its trigger gains focus without a press. Focus handed back by
+ * script after a click or tap (a dialog or menu closing) isn't :focus-visible: no tooltip then.
+ */
+function keyboardFocusOnly(e: FocusEvent<HTMLElement>) {
+  if (!e.currentTarget.matches(':focus-visible')) e.preventDefault()
+}
 
 export function TooltipProvider({ children }: { children: ReactNode }) {
   return (
@@ -25,7 +33,9 @@ export function Tooltip({ content, shortcut, side = 'bottom', align = 'center', 
   if (disabled || !content) return <>{children}</>
   return (
     <RTooltip.Root>
-      <RTooltip.Trigger asChild>{children}</RTooltip.Trigger>
+      <RTooltip.Trigger asChild onFocus={keyboardFocusOnly}>
+        {children}
+      </RTooltip.Trigger>
       <RTooltip.Portal>
         <RTooltip.Content
           side={side}

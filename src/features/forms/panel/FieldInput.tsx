@@ -3,13 +3,13 @@ import { Checkbox, RadioGroup } from 'radix-ui'
 import { Check, ChevronDown, CircleCheck, Lock, Signature } from 'lucide-react'
 import { Button } from '../../../components/ui/button'
 import { Input } from '../../../components/ui/controls'
-import { fieldLabel, optionLabel } from '../../../lib/pdf/forms/labels'
+import { fieldLabel, radioOptions } from '../../../lib/pdf/forms/labels'
 import { cn } from '../../../lib/utils/misc'
 import type { FormField } from '../../../model/types'
 import { useEditor } from '../../../store/editor'
 import { primaryWidget, revealField } from '../navigation'
 import { requestSignatureFor } from '../signatureTarget'
-import { setFieldValue, useFieldSigned, useFieldValue } from '../useField'
+import { setFieldValue, useComboText, useFieldSigned, useFieldValue } from '../useField'
 
 const FIELD =
   'w-full rounded-lg border border-line bg-surface text-sm text-fg shadow-xs outline-none transition-[border-color,box-shadow] placeholder:text-fg-subtle hover:border-line-strong focus:border-accent focus:ring-3 focus:ring-accent/20 disabled:opacity-60 read-only:bg-surface-2 read-only:text-fg-muted read-only:hover:border-line read-only:focus:border-line read-only:focus:ring-0'
@@ -113,7 +113,7 @@ const CHIP =
 
 function RadioInput({ field }: { field: FormField }) {
   const value = String(useFieldValue(field))
-  const options = [...new Set(field.widgets.map((w) => w.exportValue ?? ''))]
+  const options = radioOptions(field)
   return (
     <>
       <Label field={field} />
@@ -126,12 +126,12 @@ function RadioInput({ field }: { field: FormField }) {
         className="flex flex-wrap gap-1.5"
       >
         {options.map((o) => (
-          <RadioGroup.Item key={o} value={o} className={cn(CHIP, 'group')}>
+          <RadioGroup.Item key={o.value} value={o.value} className={cn(CHIP, 'group')}>
             <span className="flex size-3.5 shrink-0 items-center justify-center rounded-full border border-line-strong bg-surface group-data-[state=checked]:border-accent">
               <RadioGroup.Indicator className="size-1.5 rounded-full bg-accent" />
             </span>
             <span className="truncate" dir="auto">
-              {optionLabel(o)}
+              {o.label}
             </span>
           </RadioGroup.Item>
         ))}
@@ -144,10 +144,10 @@ function DropdownInput({ field }: { field: FormField }) {
   const id = useId()
   const listId = useId()
   const value = String(useFieldValue(field))
+  const combo = useComboText(field, value)
   const options = field.options ?? []
   const custom = value !== '' && !options.some((o) => o.value === value)
   if (field.editable) {
-    const label = options.find((o) => o.value === value)?.label ?? value
     return (
       <>
         <Label htmlFor={id} field={field} />
@@ -155,11 +155,12 @@ function DropdownInput({ field }: { field: FormField }) {
           id={id}
           list={listId}
           dir="auto"
-          value={label}
+          value={combo.text}
           readOnly={field.readOnly}
           placeholder="Choose or type…"
           autoComplete="off"
-          onChange={(e) => setFieldValue(field.name, options.find((o) => o.label === e.target.value)?.value ?? e.target.value)}
+          onChange={(e) => combo.change(e.target.value)}
+          onBlur={combo.endEdit}
         />
         <datalist id={listId}>
           {options.map((o, i) => (

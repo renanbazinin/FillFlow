@@ -37,6 +37,15 @@ describe('scanContentStream', () => {
     const first = scan('q 2 0 0 2 0 0 cm BT')
     expect(scanContentStream(new TextEncoder().encode('ET Q q'), first)).toEqual({ depth: 1, inText: false, underflow: false })
   })
+
+  it('reports where unmatched Qs are', () => {
+    const stray: number[] = []
+    scanContentStream(new TextEncoder().encode('Q q (Q) Tj Q Q'), undefined, stray)
+    expect(stray).toEqual([0, 13])
+    const more: number[] = []
+    scanContentStream(new TextEncoder().encode('Q'), { depth: 1, inText: false, underflow: false }, more)
+    expect(more).toEqual([])
+  })
 })
 
 describe('protectOriginalContent', () => {
@@ -70,5 +79,20 @@ describe('protectOriginalContent', () => {
     const { doc, page } = await pageWith('q 2 0 0 2 0 0 cm Q 0 0 m 5 5 l S')
     protectOriginalContent(doc, page)
     expect(contentOf(doc, page.node.Contents() as PDFArray)).toHaveLength(3)
+  })
+
+  it('removes Qs that would pop the wrapper, in a copy of shared streams', async () => {
+    const doc = await PDFDocument.create()
+    const shared = doc.context.register(doc.context.flateStream('Q 0.5 0 0 0.5 0 0 cm 0 1 0 rg 0 0 10 10 re f'))
+    for (let i = 0; i < 2; i++) doc.addPage([200, 200]).node.set(PDFName.of('Contents'), shared)
+    const loaded = await PDFDocument.load(await doc.save())
+    const [first, second] = loaded.getPages()
+    expect(protectOriginalContent(loaded, first)).toMatchObject({ underflow: true, depth: 0 })
+    const parts = contentOf(loaded, first.node.Contents() as PDFArray)
+    expect(parts).toHaveLength(3)
+    expect(parts[1]).toBe('0.5 0 0 0.5 0 0 cm 0 1 0 rg 0 0 10 10 re f')
+    // The other page still uses the original stream, unchanged.
+    const other = second.node.get(PDFName.of('Contents'))!
+    expect(contentOf(loaded, loaded.context.obj([other]))[0]).toMatch(/^Q 0\.5/)
   })
 })

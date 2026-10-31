@@ -1,5 +1,5 @@
 import { memo } from 'react'
-import { fieldLabel, optionLabel } from '../../../lib/pdf/forms/labels'
+import { fieldLabel, radioOptions } from '../../../lib/pdf/forms/labels'
 import { cn } from '../../../lib/utils/misc'
 import { MARK_PATHS, MARK_VIEWBOX } from '../../../model/elements'
 import { fieldBoxClass, rectStyle } from '../fieldStyles'
@@ -81,7 +81,7 @@ export const RadioControl = memo(function RadioControl({ field, widget, scale, i
       type="button"
       role="radio"
       aria-checked={selected}
-      aria-label={`${fieldLabel(field)}: ${optionLabel(widget.exportValue ?? '')}`}
+      aria-label={`${fieldLabel(field)}: ${radioOptions(field).find((o) => o.value === (widget.exportValue ?? ''))?.label}`}
       aria-readonly={readOnly || undefined}
       {...{ [CONTROL_ATTR]: '' }}
       data-form-field={field.name}

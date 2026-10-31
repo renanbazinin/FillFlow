@@ -1,4 +1,5 @@
 import { flushSync } from 'react-dom'
+import { toast } from 'sonner'
 import type { TextElement } from '../../../model/types'
 import { useEditor } from '../../../store/editor'
 
@@ -7,12 +8,15 @@ import { useEditor } from '../../../store/editor'
  *
  * A *new* text block (text tool click) is created inside a gesture, so creating it and typing
  * into it is a single undo step, and committing it empty leaves no trace in the history.
- * Editing an *existing* block records typing with `coalesce: 'text:<id>'`.
+ * Editing an *existing* block records typing with `coalesce: 'text:<id>'`; committing it empty
+ * removes it as part of the typing's undo step (a locked block gets its text back instead).
  */
 
 interface Session {
   id: string
   isNew: boolean
+  /** The text when editing began. */
+  before: string
 }
 
 export type CaretRequest = number | 'end' | 'all'
@@ -25,6 +29,11 @@ let textarea: { id: string; node: HTMLTextAreaElement } | null = null
 export function registerTextarea(id: string, node: HTMLTextAreaElement | null): void {
   if (node) textarea = { id, node }
   else if (textarea?.id === id) textarea = null
+}
+
+/** Whether an editor for `id` is mounted. */
+export function hasTextarea(id: string): boolean {
+  return textarea?.id === id
 }
 
 export function takePendingCaret(id: string): CaretRequest | null {
@@ -50,15 +59,23 @@ function focusTextarea(id: string, caret: CaretRequest | null) {
   if (caret !== null) applyCaret(t.node, caret)
 }
 
+/**
+ * Focuses the editor for `id` with the pending caret. When its page layer isn't mounted yet
+ * (large documents), the caret stays pending for the editor to apply when it mounts.
+ */
+function focusWithPendingCaret(id: string) {
+  if (hasTextarea(id)) focusTextarea(id, takePendingCaret(id))
+}
+
 /** Adds a new, empty text block and starts typing into it. */
 export function startNewText(el: TextElement): void {
   finishActiveTextEdit()
   const s = useEditor.getState()
   s.beginGesture()
-  session = { id: el.id, isNew: true }
+  session = { id: el.id, isNew: true, before: el.text }
   pendingCaret = { id: el.id, caret: 'end' }
   flushSync(() => s.addElement(el, { edit: true }))
-  focusTextarea(el.id, takePendingCaret(el.id))
+  focusWithPendingCaret(el.id)
 }
 
 /** Starts (or continues) editing an existing text block. */
@@ -71,10 +88,10 @@ export function editText(id: string, caret: CaretRequest = 'end'): void {
     return
   }
   finishActiveTextEdit()
-  session = { id, isNew: false }
+  session = { id, isNew: false, before: el.text }
   pendingCaret = { id, caret }
   flushSync(() => useEditor.getState().setEditing(id))
-  focusTextarea(id, takePendingCaret(id))
+  focusWithPendingCaret(id)
 }
 
 /**
@@ -82,26 +99,37 @@ export function editText(id: string, caret: CaretRequest = 'end'): void {
  * once and after the store already moved on (undo, tool change…).
  */
 export function finishTextEdit(id: string): void {
-  const isNew = session?.id === id && session.isNew
-  if (session?.id === id) session = null
+  const own = session?.id === id ? session : null
+  if (own) session = null
   if (pendingCaret?.id === id) pendingCaret = null
+  const isNew = !!own?.isNew
   const s = useEditor.getState()
   if (s.editingId === id) s.setEditing(null)
   const el = s.elements.find((e) => e.id === id)
-  if (!el || el.kind !== 'text') {
+  if (!el || el.kind !== 'text' || el.text.trim()) {
     if (isNew) s.endGesture()
     return
   }
-  if (!el.text.trim()) {
-    if (isNew) {
-      s.cancelGesture()
-      useEditor.setState((st) => ({ selection: st.selection.filter((x) => x !== id) }))
-    }
-    // Still there (not new, or the gesture was already closed): remove it as a normal step.
-    if (useEditor.getState().elements.some((e) => e.id === id)) useEditor.getState().removeElements([id])
+  if (isNew) {
+    // Drop just the block, so nothing else changed meanwhile is lost (normally nothing was, and
+    // the gesture records no step). A block that was never committed can't stay locked.
+    if (el.locked) s.updateElement(id, { locked: false })
+    useEditor.getState().removeElements([id])
+    useEditor.getState().endGesture()
     return
   }
-  if (isNew) s.endGesture()
+  if (el.locked) {
+    // Locked items can't be deleted: the text comes back.
+    if (!own?.before.trim()) return
+    s.updateElement(id, { text: own.before }, { history: false })
+    toast('This item is locked', { description: 'Unlock it to delete it.' })
+    return
+  }
+  // Emptied by typing: removing it is part of the undo step that still shows its text, so one
+  // undo brings the text back. (Already empty before: a step of its own.)
+  const { past } = useEditor.getState()
+  const shown = past[past.length - 1]?.elements.some((e) => e.id === id && e.kind === 'text' && !!e.text.trim())
+  useEditor.getState().removeElements([id], shown ? { history: false } : undefined)
 }
 
 /** Commits whatever text block is being edited, if any. */

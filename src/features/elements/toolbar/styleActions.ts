@@ -1,33 +1,45 @@
 import { DEFAULT_STYLES, HIGHLIGHT_COLOR, WHITEOUT_COLOR } from '../../../model/elements'
 import type { Element, ElementKind, ElementPatch, MarkShape, ShapeElement, TextElement } from '../../../model/types'
-import { getSelectedElements, useEditor, type UpdateOptions } from '../../../store/editor'
+import { getSelectedElements, useEditor } from '../../../store/editor'
 import { restyleInkWidth } from '../lib/ink'
 import { markRect } from '../lib/placement'
 import { pageSize } from '../state/commands'
 
 /**
  * Style edits from the context toolbar. They apply to every selected element of the kind (one
- * undo step; repeated slider/stepper changes coalesce) and update the style defaults so the
- * next new item matches.
+ * undo step; repeated slider/stepper changes on the same items coalesce) and update the style
+ * defaults so the next new item matches. Locked items keep their size: mark size, font size
+ * and pen width skip them.
  */
 
 type OfKind<K extends ElementKind> = Extract<Element, { kind: K }>
 
-function patchSelection<K extends ElementKind>(kind: K, make: (el: OfKind<K>) => ElementPatch | null, opts?: UpdateOptions): void {
+interface PatchOptions {
+  /** Merges repeated changes (to the same items) into one undo step. */
+  coalesce?: string
+  /** Leave locked elements alone (the change would move or resize them). */
+  skipLocked?: boolean
+}
+
+function patchSelection<K extends ElementKind>(kind: K, make: (el: OfKind<K>) => ElementPatch | null, opts?: PatchOptions): void {
   const s = useEditor.getState()
   const patches: Record<string, ElementPatch> = {}
   for (const el of getSelectedElements(s)) {
-    if (el.kind !== kind) continue
+    if (el.kind !== kind || (opts?.skipLocked && el.locked)) continue
     const p = make(el as OfKind<K>)
     if (p) patches[el.id] = p
   }
-  if (Object.keys(patches).length) s.updateElements(patches, opts)
+  const ids = Object.keys(patches)
+  if (!ids.length) return
+  // Only changes to the same items merge into one undo step.
+  const coalesce = opts?.coalesce && `${opts.coalesce}:${ids.sort().join(',')}`
+  s.updateElements(patches, coalesce ? { coalesce } : undefined)
 }
 
 export type TextStylePatch = Partial<Pick<TextElement, 'fontId' | 'fontSize' | 'bold' | 'color' | 'align' | 'letterSpacing' | 'lineHeight'>>
 
 export function setTextStyle(patch: TextStylePatch, coalesce?: string): void {
-  patchSelection('text', () => patch, coalesce ? { coalesce } : undefined)
+  patchSelection('text', () => patch, { coalesce, skipLocked: patch.fontSize !== undefined })
   const defaults: Partial<typeof DEFAULT_STYLES.text> = {}
   if (patch.fontId !== undefined) defaults.fontId = patch.fontId
   if (patch.fontSize !== undefined) defaults.fontSize = patch.fontSize
@@ -62,7 +74,7 @@ export function setMarkSize(size: number): void {
       const r = markRect({ x: el.x + el.width / 2, y: el.y + el.height / 2 }, size, page)
       return { x: r.x, y: r.y, width: r.width, height: r.height }
     },
-    { coalesce: 'style:mark-size' },
+    { coalesce: 'style:mark-size', skipLocked: true },
   )
   useEditor.getState().setStyle('mark', { size })
 }
@@ -117,7 +129,7 @@ export function setInkColor(color: string): void {
 }
 
 export function setInkWidth(strokeWidth: number): void {
-  patchSelection('ink', (el) => restyleInkWidth(el, strokeWidth), { coalesce: 'style:ink-width' })
+  patchSelection('ink', (el) => restyleInkWidth(el, strokeWidth), { coalesce: 'style:ink-width', skipLocked: true })
   useEditor.getState().setStyle('ink', { strokeWidth })
 }
 

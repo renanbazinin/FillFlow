@@ -6,9 +6,12 @@ import {
   defaultBaseName,
   finalFileName,
   formatFileSize,
+  isOpenShortcut,
   isSaveShortcut,
   plural,
   progressLabel,
+  quotedList,
+  unwrittenFieldLabels,
 } from './exportFile'
 
 const field = (name: string, type: FormField['type'], defaultValue: FormField['defaultValue'] = ''): FormField => ({
@@ -105,6 +108,32 @@ describe('isSaveShortcut', () => {
     expect(isSaveShortcut(key({ ctrlKey: true, shiftKey: true }), false)).toBe(false)
     expect(isSaveShortcut(key({ ctrlKey: true, altKey: true }), false)).toBe(false)
     expect(isSaveShortcut(key({ ctrlKey: true, key: 'd', code: 'KeyD' }), false)).toBe(false)
+  })
+
+  it('also recognizes ⌘O / Ctrl+O, on any layout', () => {
+    expect(isOpenShortcut(key({ ctrlKey: true, key: 'o', code: 'KeyO' }), false)).toBe(true)
+    expect(isOpenShortcut(key({ metaKey: true, key: 'o', code: 'KeyO' }), true)).toBe(true)
+    expect(isOpenShortcut(key({ ctrlKey: true, key: 'ם', code: 'KeyO' }), false)).toBe(true)
+    expect(isOpenShortcut(key({ ctrlKey: true }), false)).toBe(false)
+    expect(isOpenShortcut(key({ key: 'o', code: 'KeyO' }), false)).toBe(false)
+  })
+})
+
+describe('fields the export could not write', () => {
+  const fields = [{ ...field('applicant.last_name', 'text'), label: 'Last name' }, field('address.city', 'text'), field('zip', 'text', '123')]
+
+  it('lists the ones the user changed, by label', () => {
+    const values = { 'applicant.last_name': 'Lovelace', 'address.city': 'London', zip: '123' }
+    expect(unwrittenFieldLabels(fields, values, ['applicant.last_name', 'address.city', 'zip'])).toEqual(['Last name', 'City'])
+    expect(unwrittenFieldLabels(fields, values, [])).toEqual([])
+    expect(unwrittenFieldLabels(fields, { 'address.city': '' }, ['address.city'])).toEqual([])
+  })
+
+  it('quotes names in a short list', () => {
+    expect(quotedList(['Name'])).toBe('“Name”')
+    expect(quotedList(['Name', 'City'])).toBe('“Name” and “City”')
+    expect(quotedList(['A', 'B', 'C'])).toBe('“A”, “B” and “C”')
+    expect(quotedList(['A', 'B', 'C', 'D', 'E'])).toBe('“A”, “B”, “C” and 2 more')
   })
 })
 

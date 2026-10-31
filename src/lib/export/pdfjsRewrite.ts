@@ -1,11 +1,28 @@
 import { PDFDocument } from 'pdf-lib'
-import type { RecoveredInfo, RewrittenDocument } from './types'
+import type { RecoveredCatalog, RecoveredInfo, RecoveredLayer, RecoveredLayerOrder, RewrittenDocument } from './types'
+
+interface PdfjsLayer {
+  name: string | null
+  intent: string[] | null
+  usage: { view?: { viewState?: string } | null; print?: { printState?: string } | null }
+  visible: boolean
+  /** Radio-button sets of group ids (pdf.js 6 hands them over as `Set`s). */
+  rbGroups?: Iterable<Iterable<string>>
+}
 
 /** The part of pdf.js' PDFDocumentProxy this module needs (same in the modern and legacy builds). */
 export interface PdfjsDocument {
   numPages: number
   extractPages(pageInfos: Array<{ document?: Uint8Array | null }>): Promise<Uint8Array>
   getMetadata(): Promise<{ info: object }>
+  getOptionalContentConfig(params: { intent: 'any' }): Promise<
+    Iterable<[string, PdfjsLayer]> & { name: string | null; creator: string | null; getOrder(): RecoveredLayerOrder | null }
+  >
+  getPageLabels(): Promise<string[] | null>
+  getPageMode(): Promise<string>
+  getPageLayout(): Promise<string>
+  getViewerPreferences(): Promise<Map<string, unknown> | Record<string, unknown> | null>
+  getMarkInfo(): Promise<Map<string, boolean> | Record<string, boolean> | null>
 }
 
 let blank: Promise<Uint8Array> | null = null
@@ -26,6 +43,9 @@ function blankPdf(): Promise<Uint8Array> {
  * With `dropEncryption`, a helper page from a second document is appended: pdf.js only keeps
  * the original /Encrypt when all pages come from a single file, so the result is written
  * unencrypted. The caller removes the helper page (`extraPageIndex`) after loading.
+ *
+ * The new catalog lacks the layer configuration and other entries; `catalog` carries them
+ * (decrypted) for the caller to put back.
  */
 export async function rewriteWithPdfjs(pdf: PdfjsDocument, opts: { dropEncryption: boolean }): Promise<RewrittenDocument> {
   const pageInfos: Array<{ document: Uint8Array | null }> = [{ document: null }]
@@ -37,7 +57,57 @@ export async function rewriteWithPdfjs(pdf: PdfjsDocument, opts: { dropEncryptio
     extraPageIndex: opts.dropEncryption ? pdf.numPages : undefined,
     // Multi-document output drops the Info dictionary; carry it over.
     info: opts.dropEncryption ? await readInfo(pdf).catch(() => undefined) : undefined,
+    catalog: await readCatalog(pdf),
   }
+}
+
+const usageState = (s: string | undefined) => (s === 'ON' || s === 'OFF' ? s : null)
+
+/** Catalog entries the rewrite drops, as pdf.js reads them. Whatever can't be read is left out. */
+async function readCatalog(pdf: PdfjsDocument): Promise<RecoveredCatalog> {
+  const read = <T>(get: () => Promise<T>) => Promise.resolve().then(get).catch(() => null)
+  const [config, pageLabels, pageMode, pageLayout, viewerPreferences, markInfo, metadata] = await Promise.all([
+    read(() => pdf.getOptionalContentConfig({ intent: 'any' })),
+    read(() => pdf.getPageLabels()),
+    read(() => pdf.getPageMode()),
+    read(() => pdf.getPageLayout()),
+    read(() => pdf.getViewerPreferences()),
+    read(() => pdf.getMarkInfo()),
+    read(() => pdf.getMetadata()),
+  ])
+  const catalog: RecoveredCatalog = {}
+  try {
+    const groups: RecoveredLayer[] = []
+    for (const [id, g] of config ?? []) {
+      groups.push({
+        id,
+        name: g.name ?? null,
+        intent: g.intent ?? null,
+        view: usageState(g.usage?.view?.viewState),
+        print: usageState(g.usage?.print?.printState),
+        // With the "any" intent, `visible` is the default configuration's state.
+        on: g.visible,
+        rbGroups: Array.from(g.rbGroups ?? [], (set) => [...set]),
+      })
+    }
+    if (config && groups.length) catalog.layers = { name: config.name ?? null, creator: config.creator ?? null, groups, order: config.getOrder() }
+  } catch (err) {
+    console.warn('[export] could not read the layers of the document', err)
+  }
+  if (pageLabels?.length) catalog.pageLabels = pageLabels
+  if (pageMode) catalog.pageMode = pageMode
+  if (pageLayout) catalog.pageLayout = pageLayout
+  // pdf.js hands some of these over as Maps.
+  const prefs = viewerPreferences instanceof Map ? Object.fromEntries(viewerPreferences) : viewerPreferences
+  if (prefs && Object.keys(prefs).length) catalog.viewerPreferences = prefs
+  if (markInfo) {
+    const entries = markInfo instanceof Map ? [...markInfo] : Object.entries(markInfo)
+    const set = entries.filter(([, on]) => on === true).map(([key]) => key)
+    if (set.length) catalog.markInfo = set
+  }
+  const lang = (metadata?.info as { Language?: unknown } | undefined)?.Language
+  if (typeof lang === 'string' && lang) catalog.lang = lang
+  return catalog
 }
 
 async function readInfo(pdf: PdfjsDocument): Promise<RecoveredInfo> {

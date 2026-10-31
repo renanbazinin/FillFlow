@@ -109,6 +109,7 @@ export function SizeField({
   min,
   max,
   step = 1,
+  locked = false,
   className,
 }: {
   label: string
@@ -117,6 +118,8 @@ export function SizeField({
   min: number
   max: number
   step?: number
+  /** Every item it applies to is locked (they keep their size): shown disabled. */
+  locked?: boolean
   className?: string
 }) {
   const [draft, setDraft] = useState<string | null>(null)
@@ -145,12 +148,17 @@ export function SizeField({
     }
   }
   return (
-    <div className={cn('inline-flex h-8 shrink-0 items-center rounded-lg border border-line bg-surface', className)} role="group" aria-label={label}>
+    <div
+      className={cn('inline-flex h-8 shrink-0 items-center rounded-lg border border-line bg-surface', className)}
+      role="group"
+      aria-label={label}
+      title={locked ? `Unlock to change the ${label.toLowerCase()}` : undefined}
+    >
       <button
         type="button"
         aria-label={`Decrease ${label.toLowerCase()}`}
         onClick={() => set(value - step)}
-        disabled={value <= min}
+        disabled={locked || value <= min}
         className="inline-flex h-full w-7 items-center justify-center rounded-l-lg text-fg-muted hover:bg-surface-3 hover:text-fg disabled:opacity-40"
       >
         <Minus className="size-3.5" />
@@ -163,13 +171,14 @@ export function SizeField({
         onFocus={(e) => e.currentTarget.select()}
         onBlur={commit}
         onKeyDown={onKeyDown}
-        className="h-full w-9 bg-transparent text-center text-[13px] font-medium tabular-nums text-fg outline-none"
+        disabled={locked}
+        className="h-full w-9 bg-transparent text-center text-[13px] font-medium tabular-nums text-fg outline-none disabled:opacity-40"
       />
       <button
         type="button"
         aria-label={`Increase ${label.toLowerCase()}`}
         onClick={() => set(value + step)}
-        disabled={value >= max}
+        disabled={locked || value >= max}
         className="inline-flex h-full w-7 items-center justify-center rounded-r-lg text-fg-muted hover:bg-surface-3 hover:text-fg disabled:opacity-40"
       >
         <Plus className="size-3.5" />

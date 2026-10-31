@@ -10,7 +10,7 @@ import { ItemsEmptyState } from './items/ItemsEmptyState'
 import { ItemThumb } from './items/ItemThumb'
 import { groupByPage, rangeIds } from './items/groups'
 import { closePanelOnSmallScreens } from './items/panel'
-import { revealElement, setLocked } from './state/commands'
+import { deleteElements, revealElement, setLocked } from './state/commands'
 import { editText, finishActiveTextEdit } from './state/textEdit'
 import { clearHovered, setHovered } from './state/ui'
 
@@ -51,6 +51,10 @@ export function ItemsPanel() {
   if (!elements.length) return <ItemsEmptyState />
 
   const onListKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      deleteFocusedItem(e)
+      return
+    }
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Home' && e.key !== 'End') return
     const rows = [...e.currentTarget.querySelectorAll<HTMLButtonElement>('[data-item-row]')]
     const i = rows.indexOf(document.activeElement as HTMLButtonElement)
@@ -110,6 +114,28 @@ export function ItemsPanel() {
   )
 }
 
+/**
+ * Delete / Backspace on a row deletes that row's item (the whole selection when the row is part
+ * of it), not whatever is selected elsewhere; the keyboard stays in the list.
+ */
+function deleteFocusedItem(e: KeyboardEvent<HTMLDivElement>) {
+  if (e.altKey || e.ctrlKey || e.metaKey) return
+  const item = (e.target as HTMLElement).closest<HTMLElement>('[data-item-id]')
+  const id = item?.dataset.itemId
+  if (!item || !id) return
+  e.preventDefault()
+  e.stopPropagation()
+  const rows = [...e.currentTarget.querySelectorAll<HTMLElement>('[data-item-id]')]
+  const { selection } = useEditor.getState()
+  deleteElements(selection.includes(id) ? selection : [id])
+  const left = new Set(useEditor.getState().elements.map((el) => el.id))
+  if (left.has(id)) return
+  // Rows of the remaining items stay in the DOM, so the next one (else the previous) can take focus now.
+  const i = rows.indexOf(item)
+  const next = rows.slice(i + 1).find((r) => left.has(r.dataset.itemId!)) ?? rows.slice(0, i).reverse().find((r) => left.has(r.dataset.itemId!))
+  next?.querySelector<HTMLElement>('[data-item-row]')?.focus()
+}
+
 const ItemRow = memo(function ItemRow({
   el,
   selected,
@@ -124,6 +150,7 @@ const ItemRow = memo(function ItemRow({
   const label = elementLabel(el)
   return (
     <li
+      data-item-id={el.id}
       className={cn(
         'group relative flex h-10 items-center rounded-lg transition-colors',
         selected ? 'bg-accent-soft' : 'hover:bg-surface-3',

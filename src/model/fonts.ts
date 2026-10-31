@@ -66,14 +66,23 @@ export const FONTS: Record<FontId, FontDef> = {
 
 export const FONT_IDS = Object.keys(FONTS) as FontId[]
 
+/**
+ * The definition of an element font. An id this build doesn't know (data saved by another
+ * build) gets the default font rather than breaking whatever is drawing or opening it.
+ */
+export function fontDef(fontId: FontId): FontDef {
+  return FONTS[fontId] ?? FONTS.sans
+}
+
 /** CSS `font-family` value for an element font. */
 export function cssFontFamily(fontId: FontId): string {
-  const f = FONTS[fontId]
+  const f = fontDef(fontId)
   return `"${f.cssFamily}", ${f.cssFallback}`
 }
 
 export function fontFileUrl(fontId: FontId, bold: boolean): string {
-  return bold ? FONTS[fontId].files.bold : FONTS[fontId].files.regular
+  const { files } = fontDef(fontId)
+  return bold ? files.bold : files.regular
 }
 
 const faceLoads = new Map<string, Promise<void>>()
@@ -83,11 +92,11 @@ const faceLoads = new Map<string, Promise<void>>()
  * usable for layout/measurement. Never rejects (falls back to system fonts on failure).
  */
 export function loadFont(fontId: FontId, bold: boolean): Promise<void> {
-  const key = `${fontId}:${bold ? 700 : 400}`
+  const def = fontDef(fontId)
+  const key = `${def.id}:${bold ? 700 : 400}`
   let p = faceLoads.get(key)
   if (!p) {
-    const def = FONTS[fontId]
-    const face = new FontFace(def.cssFamily, `url(${fontFileUrl(fontId, bold)}) format("truetype")`, {
+    const face = new FontFace(def.cssFamily, `url(${fontFileUrl(def.id, bold)}) format("truetype")`, {
       weight: bold ? '700' : '400',
       style: 'normal',
       display: 'block',
@@ -108,7 +117,7 @@ export function loadFont(fontId: FontId, bold: boolean): Promise<void> {
 
 export function isFontLoaded(fontId: FontId, bold: boolean): boolean {
   if (typeof document === 'undefined') return false
-  return document.fonts.check(`${bold ? 700 : 400} 12px "${FONTS[fontId].cssFamily}"`)
+  return document.fonts.check(`${bold ? 700 : 400} 12px "${fontDef(fontId).cssFamily}"`)
 }
 
 /** Loads every element font (used before export / when restoring a session). */

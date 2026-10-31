@@ -1,6 +1,16 @@
-import { PDFHexString, PDFName, PDFNumber, type PDFAcroButton, type PDFAcroChoice, type PDFAcroText, type PDFWidgetAnnotation } from 'pdf-lib'
-import type { FormWidget } from '../../../model/types'
-import { PDF_OFF, refKey, widgetEntries } from './pdfIndex'
+import {
+  PDFAcroListBox,
+  PDFHexString,
+  PDFName,
+  PDFNumber,
+  PDFString,
+  type PDFAcroButton,
+  type PDFAcroChoice,
+  type PDFAcroText,
+  type PDFDict,
+  type PDFWidgetAnnotation,
+} from 'pdf-lib'
+import { PDF_OFF, widgetEntries } from './pdfIndex'
 
 const V = PDFName.of('V')
 const RV = PDFName.of('RV')
@@ -9,13 +19,15 @@ const TI = PDFName.of('TI')
 /** Text field flag: rich text (the /RV value would win over /V in Acrobat). */
 const RICH_TEXT = 1 << 25
 
-/** Writes a text value (truncated to /MaxLen); line breaks are stored as CR like Acrobat does. */
+/**
+ * Writes a text value (truncated to /MaxLen); line breaks are stored as CR like Acrobat does.
+ * An empty value is written as an empty string: without /V, viewers fall back to /DV.
+ */
 export function writeTextValue(acro: PDFAcroText, value: string): string {
   const max = acro.getMaxLength()
   let v = value.replace(/\r\n?/g, '\n')
   if (max !== undefined && v.length > max) v = v.slice(0, max)
-  if (v) acro.setValue(PDFHexString.fromText(v.replace(/\n/g, '\r')))
-  else acro.removeValue()
+  acro.setValue(v ? PDFHexString.fromText(v.replace(/\n/g, '\r')) : PDFString.of(''))
   acro.dict.delete(RV)
   if (acro.hasFlag(RICH_TEXT)) acro.setFlagTo(RICH_TEXT, false)
   return v
@@ -47,16 +59,16 @@ export function onStateOf(widget: PDFWidgetAnnotation, fallback: string): PDFNam
 }
 
 /**
- * Resolves the on-state for a selected export value. pdf.js reports export values (mapped
- * through /Opt), which can differ from the appearance state names, so we map through the
- * widget references we extracted, then fall back to comparing state names.
+ * Resolves the on-state of the chosen radio button. pdf.js reports export values (mapped
+ * through /Opt), which can differ from the appearance state names, so we go through `chosen`
+ * — the widget dictionaries of the button(s) the user picked, as found in this document — and
+ * fall back to comparing state names and /Opt with the export value.
  */
-export function onStateForValue(acro: PDFAcroButton, value: string, widgets: readonly FormWidget[]): PDFName | null {
+export function onStateForValue(acro: PDFAcroButton, value: string, chosen: ReadonlySet<PDFDict>): PDFName | null {
   if (!value) return null
   const entries = widgetEntries(acro)
-  const ids = new Set(widgets.filter((w) => w.exportValue === value).map((w) => w.id))
   for (const e of entries) {
-    if (e.ref && ids.has(refKey(e.ref))) return onStateOf(e.widget, value)
+    if (chosen.has(e.widget.dict)) return onStateOf(e.widget, value)
   }
   for (const e of entries) {
     const on = e.widget.getOnValue()
@@ -71,10 +83,20 @@ export function onStateForValue(acro: PDFAcroButton, value: string, widgets: rea
   return null
 }
 
-/** Writes choice values (export values) and keeps /I (selected indices) consistent. */
+/** The export value of the button whose on-state is `state` (its /Opt entry), else the state name. */
+export function exportValueOfState(acro: PDFAcroButton, state: PDFName): string {
+  const i = widgetEntries(acro).findIndex((e) => e.widget.getOnValue() === state)
+  const opt = i >= 0 ? acro.getExportValues()?.[i] : undefined
+  return opt ? opt.decodeText() : state.decodeText()
+}
+
+/**
+ * Writes choice values (export values) and keeps /I (selected indices) consistent. No selection
+ * is written as an empty value (list boxes: an empty array): without /V, viewers fall back to /DV.
+ */
 export function writeChoiceValues(acro: PDFAcroChoice, values: string[], optionValues: string[], multi: boolean): void {
   const clean = values.filter((v) => typeof v === 'string')
-  if (!clean.length) acro.dict.delete(V)
+  if (!clean.length) acro.dict.set(V, acro instanceof PDFAcroListBox ? acro.dict.context.obj([]) : PDFString.of(''))
   else if (clean.length === 1) acro.dict.set(V, PDFHexString.fromText(clean[0]))
   else acro.dict.set(V, acro.dict.context.obj(clean.map((v) => PDFHexString.fromText(v))))
   const indices = clean

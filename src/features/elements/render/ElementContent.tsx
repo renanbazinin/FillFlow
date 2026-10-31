@@ -72,7 +72,9 @@ function ImageContent({ el }: { el: ImageElement }) {
 function ShapeContent({ el, scale }: { el: ShapeElement; scale: number }) {
   const w = el.width * scale
   const h = el.height * scale
-  const sw = el.strokeWidth * scale
+  // A rect/ellipse border wider than half the box is drawn at half its smaller side, so the
+  // shape shows solid instead of vanishing (SVG skips a zero-size rect); the exporter does the same.
+  const sw = (el.shape === 'line' ? el.strokeWidth : Math.min(el.strokeWidth, el.width / 2, el.height / 2)) * scale
   const stroke = el.strokeColor ?? 'none'
   const strokeWidth = el.strokeColor ? sw : 0
   let shape

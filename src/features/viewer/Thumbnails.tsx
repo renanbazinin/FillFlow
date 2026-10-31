@@ -6,7 +6,7 @@ import type { PDFDocumentProxy } from '../../lib/pdf/pdfjs'
 import type { PageInfo } from '../../model/types'
 import { clamp, cn } from '../../lib/utils/misc'
 import { viewer } from './viewerApi'
-import { bitmapTarget, releaseCanvas, renderPageBitmap, type BitmapTarget } from './pageRender'
+import { bitmapTarget, releaseCanvas, renderPageBitmap, retainPage, type BitmapTarget } from './pageRender'
 import { renderQueue } from './renderQueue'
 import { cacheThumbnail, getCachedThumbnail, pageBadgeCounts, thumbnailPixelRatio, thumbnailSize } from './thumbnailModel'
 import { revealDelta } from './viewMath'
@@ -31,15 +31,20 @@ function canvasToJpeg(canvas: HTMLCanvasElement): Promise<Blob | null> {
   })
 }
 
-/** Renders a page thumbnail and returns it as a JPEG object URL (null when aborted). */
+/**
+ * Renders a page thumbnail and returns it as a JPEG object URL (null when aborted). Afterwards
+ * pdf.js frees the page's resources again, unless the document view is using them.
+ */
 async function renderThumbnail(pdf: PDFDocumentProxy, info: PageInfo, target: BitmapTarget, signal: AbortSignal): Promise<string | null> {
-  const canvas = await renderPageBitmap(pdf, info, target, signal)
-  if (!canvas) return null
+  const releasePage = retainPage(pdf, info.index)
+  let canvas: HTMLCanvasElement | null = null
   try {
-    const blob = await canvasToJpeg(canvas)
+    canvas = await renderPageBitmap(pdf, info, target, signal)
+    const blob = canvas && (await canvasToJpeg(canvas))
     return blob ? URL.createObjectURL(blob) : null
   } finally {
     releaseCanvas(canvas)
+    releasePage()
   }
 }
 
@@ -68,13 +73,13 @@ export interface ThumbnailsProps {
  * click / Enter scrolls the document there, arrow keys move between pages, and a badge counts the
  * page's placed items + changed form fields. The parent provides the width (~200px) and scrolling.
  */
-export function Thumbnails({ onNavigate }: ThumbnailsProps = {}) {
+export function Thumbnails({ onNavigate, active = true }: ThumbnailsProps = {}) {
   const doc = useEditor((s) => s.doc)
   if (!doc) return null
-  return <ThumbnailList key={doc.id} doc={doc} onNavigate={onNavigate} />
+  return <ThumbnailList key={doc.id} doc={doc} onNavigate={onNavigate} active={active} />
 }
 
-function ThumbnailList({ doc, onNavigate }: { doc: LoadedDocument; onNavigate?: (pageIndex: number) => void }) {
+function ThumbnailList({ doc, onNavigate, active }: { doc: LoadedDocument; onNavigate?: (pageIndex: number) => void; active: boolean }) {
   const current = useEditor((s) => s.currentPage)
   const counts = useEditor(useShallow(pageBadgeCounts))
   const listRef = useRef<HTMLOListElement>(null)
@@ -90,11 +95,15 @@ function ThumbnailList({ doc, onNavigate }: { doc: LoadedDocument; onNavigate?: 
 
   // Keep the current page's thumbnail in view (centered when the panel opens).
   useEffect(() => {
+    if (!active) {
+      revealed.current = false
+      return
+    }
     const el = buttons.current.get(current)
     if (!el) return
     revealInScrollArea(el, !revealed.current)
     revealed.current = true
-  }, [current])
+  }, [current, active])
 
   const setButton = useCallback((index: number, el: HTMLButtonElement | null) => {
     if (el) buttons.current.set(index, el)
@@ -141,6 +150,7 @@ function ThumbnailList({ doc, onNavigate }: { doc: LoadedDocument; onNavigate?: 
           pageCount={pageCount}
           current={info.index === current}
           count={counts[info.index] ?? 0}
+          active={active}
           registry={registry}
           setButton={setButton}
           onSelect={navigate}
@@ -157,6 +167,7 @@ interface ThumbnailItemProps {
   pageCount: number
   current: boolean
   count: number
+  active: boolean
   registry: VisibilityRegistry
   setButton: (index: number, el: HTMLButtonElement | null) => void
   onSelect: (index: number, opts?: { focusDocument?: boolean }) => void
@@ -169,6 +180,7 @@ const ThumbnailItem = memo(function ThumbnailItem({
   pageCount,
   current,
   count,
+  active,
   registry,
   setButton,
   onSelect,
@@ -186,8 +198,9 @@ const ThumbnailItem = memo(function ThumbnailItem({
     return registry.observe(el, setNear)
   }, [registry])
 
+  // Hiding the list (or scrolling past) cancels a queued or running render.
   useEffect(() => {
-    if (url || failed || !near) return
+    if (url || failed || !near || !active) return
     let cancel: (() => void) | null = null
     const dwell = setTimeout(() => {
       const target = bitmapTarget(width, height, thumbnailPixelRatio(window.devicePixelRatio))
@@ -212,7 +225,7 @@ const ThumbnailItem = memo(function ThumbnailItem({
       clearTimeout(dwell)
       cancel?.()
     }
-  }, [url, failed, near, pdf, info, docId, index, width, height])
+  }, [url, failed, near, active, pdf, info, docId, index, width, height])
 
   const buttonRef = useCallback((el: HTMLButtonElement | null) => setButton(index, el), [setButton, index])
   const label = `Page ${index + 1} of ${pageCount}${count ? `, ${count} ${count === 1 ? 'edit' : 'edits'}` : ''}`
@@ -247,7 +260,7 @@ const ThumbnailItem = memo(function ThumbnailItem({
                 <ImageOff className="size-5" aria-hidden />
               </div>
             ) : (
-              near && (
+              near && active && (
                 <div className="absolute inset-0 animate-shimmer bg-[linear-gradient(100deg,transparent_35%,rgb(15_23_42/0.06)_50%,transparent_65%)] bg-[length:200%_100%]" />
               )
             )}

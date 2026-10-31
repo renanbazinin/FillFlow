@@ -1,6 +1,7 @@
 import { GITHUB_URL, GitHubIcon } from '../../components/brand/GitHubIcon'
 import { Logo } from '../../components/brand/Logo'
 import { Button } from '../../components/ui/button'
+import { scrollBehavior } from '../../lib/utils/motion'
 import { ThemeToggle } from './ThemeToggle'
 
 export function HomeHeader() {
@@ -11,7 +12,7 @@ export function HomeHeader() {
         onClick={(e) => {
           // Already home: glide back to the top instead of reloading.
           e.preventDefault()
-          e.currentTarget.closest('[data-home-scroll]')?.scrollTo({ top: 0, behavior: 'smooth' })
+          e.currentTarget.closest('[data-home-scroll]')?.scrollTo({ top: 0, behavior: scrollBehavior() })
         }}
         className="-m-1.5 rounded-lg p-1.5"
         aria-label="FillFlow home"

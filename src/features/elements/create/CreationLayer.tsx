@@ -151,15 +151,22 @@ export const CreationLayer = memo(function CreationLayer({ page, scale, tool }: 
       )
     }
 
-    function onPointerDown(e: PointerEvent) {
-      if (!e.isPrimary || e.button !== 0 || isPanning()) return
+    /** Ends any text edit and leaves any form field: the press is about to add something. */
+    function leaveEditing() {
       finishActiveTextEdit()
       blurFocusedField()
+    }
+
+    function onPointerDown(e: PointerEvent) {
+      if (!e.isPrimary || e.button !== 0 || isPanning()) return
       if (placement === 'click') {
-        // Placed on click, so a one-finger scroll on touch never drops anything.
+        // Placed on click, so a one-finger scroll on touch never drops anything (nor ends an
+        // edit and closes the keyboard).
         down = { x: e.clientX, y: e.clientY }
+        if (e.pointerType !== 'touch') leaveEditing()
         return
       }
+      leaveEditing()
       e.preventDefault()
       dispose?.()
       if (placement === 'drag') startDrag(e)
@@ -171,6 +178,7 @@ export const CreationLayer = memo(function CreationLayer({ page, scale, tool }: 
       const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y)
       down = null
       if (moved > 10) return
+      leaveEditing()
       placeClick(toLocal(e.clientX, e.clientY))
     }
 

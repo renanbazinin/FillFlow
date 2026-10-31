@@ -43,6 +43,13 @@ export interface WidgetAnnotationData {
 const WIDGET = 20
 /** Choice field flag: combo box that accepts typed text. */
 const FLAG_EDIT = 1 << 18
+/** Radio field flag: buttons with the same on-state turn on and off together. */
+const FLAG_RADIOS_IN_UNISON = 1 << 25
+
+/** Whether a field name is the placeholder we give fields the PDF left unnamed ("(unnamed 12R)"). */
+export function isUnnamedField(name: string): boolean {
+  return name.startsWith('(unnamed ') && name.endsWith(')')
+}
 
 /** Screen-only details of a field that the shared FormField type has no room for. */
 export interface FieldExtras {
@@ -88,6 +95,8 @@ interface Accumulator {
   checked: Set<string>
   /** Radio: the field value pdf.js reported (selected export value or "Off"). */
   selected: string | null
+  /** Radio buttons that are separate choices even when they repeat an export value. */
+  separate: Set<FormWidget>
   extras: FieldExtras
 }
 
@@ -179,6 +188,7 @@ function startField(name: string, type: FormFieldType, a: WidgetAnnotationData):
     field,
     checked: new Set(),
     selected: null,
+    separate: new Set(),
     extras: {
       textColor: cssColor(a.defaultAppearanceData?.fontColor),
       borderWidth: a.borderColor && a.borderColor.length ? Math.max(0, a.borderStyle?.width ?? 1) : 0,
@@ -187,8 +197,48 @@ function startField(name: string, type: FormFieldType, a: WidgetAnnotationData):
 }
 
 export interface BuildOptions {
-  /** Annotation ids of signature fields that already carry a digital signature. */
+  /** Annotation ids of signature widgets that already carry a digital signature. */
   signedIds?: ReadonlySet<string>
+  /** Annotation id → id of the field it belongs to (pdf.js field objects' kidIds), when known. */
+  parentOf?: ReadonlyMap<string, string>
+}
+
+/**
+ * Radio buttons are told apart by their export value, but a group can make several separate
+ * buttons share one (states /0 /1 /2 with /Opt [Yes No Yes]). Repeats get a value key unique in
+ * the group ("Yes#2") and keep the PDF's export value as their label. Same-named groups (a form
+ * merged twice) number their buttons alike, so they stay in step like other same-named fields.
+ */
+function distinguishRepeatedValues(acc: Accumulator, parentOf: ReadonlyMap<string, string> | undefined) {
+  const values = new Set(acc.field.widgets.map((w) => w.exportValue ?? ''))
+  const count = new Map<string, number>()
+  for (const w of acc.field.widgets) {
+    if (!acc.separate.has(w)) continue
+    const value = w.exportValue ?? ''
+    const group = `${parentOf?.get(w.id) ?? ''}\u0000${value}`
+    const n = (count.get(group) ?? 0) + 1
+    count.set(group, n)
+    if (n === 1) continue
+    let key = `${value}#${n}`
+    while (values.has(key)) key += '#'
+    w.label = value
+    w.exportValue = key
+  }
+}
+
+/** Whether some radio group repeats an export value (telling its buttons apart needs the field tree). */
+export function repeatsRadioValue(annotationsByPage: readonly (readonly unknown[])[]): boolean {
+  const seen = new Set<string>()
+  for (const annotations of annotationsByPage) {
+    for (const raw of Array.isArray(annotations) ? annotations : []) {
+      const a = raw as WidgetAnnotationData | null
+      if (!a?.radioButton || typeof a.buttonValue !== 'string') continue
+      const key = `${a.fieldName}\u0000${a.buttonValue}`
+      if (seen.has(key)) return true
+      seen.add(key)
+    }
+  }
+  return false
 }
 
 /**
@@ -236,6 +286,7 @@ export function buildFormFields(
         if (v !== null && v !== 'Off' && v === widget.exportValue) acc.checked.add(widget.id)
       } else if (type === 'radio') {
         widget.exportValue = asString(a.buttonValue) ?? ''
+        if (((a.fieldFlags ?? 0) & FLAG_RADIOS_IN_UNISON) === 0) acc.separate.add(widget)
         const v = asString(a.fieldValue)
         if (v !== null && v !== 'Off' && acc.selected === null) acc.selected = v
       }
@@ -260,6 +311,8 @@ export function buildFormFields(
         field.defaultValue = acc.checked.size > 0
       }
     } else if (field.type === 'radio') {
+      distinguishRepeatedValues(acc, opts.parentOf)
+      // pdf.js reports the export value only: with repeats, the first such button is shown on.
       const sel = acc.selected
       field.defaultValue = sel !== null && field.widgets.some((w) => w.exportValue === sel) ? sel : ''
     }

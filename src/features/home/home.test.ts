@@ -73,7 +73,11 @@ describe('recent documents meta', () => {
   })
 
   it('builds the card meta line', () => {
-    expect(recentMetaLine(3, now - 2 * 3_600_000, now)).toBe('3 pages · edited 2h ago')
-    expect(recentMetaLine(1, now, now)).toBe('1 page · edited just now')
+    const hours = (h: number) => now - h * 3_600_000
+    // Opened at 09:00 and edited until 11:30: when it was last edited, not opened.
+    expect(recentMetaLine(3, { openedAt: hours(3), editedAt: hours(0.5) }, now)).toBe('3 pages · edited 30m ago')
+    // Never edited, or opened again since: when it was opened.
+    expect(recentMetaLine(1, { openedAt: now }, now)).toBe('1 page · opened just now')
+    expect(recentMetaLine(2, { openedAt: hours(1), editedAt: hours(48) }, now)).toBe('2 pages · opened 1h ago')
   })
 })

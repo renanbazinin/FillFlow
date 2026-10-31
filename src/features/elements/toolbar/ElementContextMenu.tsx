@@ -4,12 +4,17 @@ import { BringToFront, ClipboardCopy, ClipboardPaste, Copy, Lock, LockOpen, Penc
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../../../components/ui/menu'
 import { getSelectedElements, useEditor } from '../../../store/editor'
 import { modKeyLabel } from '../../../lib/utils/misc'
-import { copySelection, hasClipboardItems, pasteItems } from '../state/clipboard'
+import { copySelection, hasClipboardItems, pasteItems, writeClipboardMarker } from '../state/clipboard'
 import { deleteSelection, duplicateSelection, reorderSelection, toggleLockSelection } from '../state/commands'
 import { editText } from '../state/textEdit'
 import { setContextMenu, type ContextMenuAt } from '../state/ui'
 
 const close = () => setContextMenu(null)
+
+/** No copy event here, so the marker goes to the system clipboard separately (see clipboard.ts). */
+function copy(cut: boolean) {
+  if (copySelection(cut)) writeClipboardMarker()
+}
 
 /** Right-click menu for the selection, anchored at the pointer. */
 export function ElementContextMenu({ at }: { at: ContextMenuAt }) {
@@ -34,10 +39,10 @@ export function ElementContextMenu({ at }: { at: ContextMenuAt }) {
             <MenuSeparator />
           </>
         )}
-        <MenuItem icon={<Scissors />} shortcut={`${modKeyLabel}+X`} disabled={allLocked} onSelect={() => copySelection(true)}>
+        <MenuItem icon={<Scissors />} shortcut={`${modKeyLabel}+X`} disabled={allLocked} onSelect={() => copy(true)}>
           Cut
         </MenuItem>
-        <MenuItem icon={<ClipboardCopy />} shortcut={`${modKeyLabel}+C`} onSelect={() => copySelection()}>
+        <MenuItem icon={<ClipboardCopy />} shortcut={`${modKeyLabel}+C`} onSelect={() => copy(false)}>
           Copy
         </MenuItem>
         <MenuItem icon={<ClipboardPaste />} shortcut={`${modKeyLabel}+V`} disabled={!hasClipboardItems()} onSelect={() => pasteItems()}>

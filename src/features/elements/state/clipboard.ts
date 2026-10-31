@@ -59,18 +59,44 @@ export function clipboardMarker(): string | null {
   return `${CLIPBOARD_MARKER}${entry.id}`
 }
 
+/**
+ * Writes the current entry's marker to the system clipboard outside a copy event (the context
+ * menu, the shortcut fallback). It only counts once the browser accepted it.
+ */
+export function writeClipboardMarker(): void {
+  const current = entry
+  const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : undefined
+  if (!current || !clipboard?.writeText) return
+  clipboard.writeText(`${CLIPBOARD_MARKER}${current.id}`).then(
+    () => {
+      current.markerWritten = true
+    },
+    () => {
+      /* not allowed here: pasting keeps preferring the items copied here */
+    },
+  )
+}
+
 /** Whether a system-clipboard text payload refers to our current entry. */
 export function isOwnMarker(text: string): boolean {
   return !!entry && text.trim() === `${CLIPBOARD_MARKER}${entry.id}`
+}
+
+/** Whether a text payload is the marker of items copied in FillFlow (in any tab, before any reload). */
+export function isClipboardMarker(text: string): boolean {
+  const t = text.trim()
+  return t.length > CLIPBOARD_MARKER.length && t.startsWith(CLIPBOARD_MARKER) && !/\s/.test(t)
 }
 
 /** True when the system clipboard content should win over our items. */
 export function systemClipboardIsNewer(text: string, hasFiles: boolean): boolean {
   if (!entry) return true
   if (isOwnMarker(text)) return false
+  // Copying items never puts files on the clipboard, so files were copied somewhere else.
+  if (hasFiles) return true
   // We never managed to write our marker, so we can't tell; prefer the items copied here.
   if (!entry.markerWritten) return false
-  return hasFiles || text.trim().length > 0
+  return text.trim().length > 0
 }
 
 function targetPage(): number {

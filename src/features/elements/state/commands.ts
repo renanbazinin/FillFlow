@@ -20,19 +20,24 @@ export function elementRect(el: Element): Rect {
   return { x: el.x, y: el.y, width: el.width, height: el.height }
 }
 
-export function deleteSelection(): void {
-  const s = useEditor.getState()
-  const sel = getSelectedElements(s)
-  if (!sel.length) return
-  const deletable = sel.filter((e) => !e.locked)
+/** Deletes the given items; locked ones stay (with a hint when that leaves nothing to delete). */
+export function deleteElements(ids: string[]): void {
+  const pick = new Set(ids)
+  const els = useEditor.getState().elements.filter((e) => pick.has(e.id))
+  if (!els.length) return
+  const deletable = els.filter((e) => !e.locked)
   if (!deletable.length) {
-    toast(sel.length === 1 ? 'This item is locked' : 'These items are locked', {
-      description: sel.length === 1 ? 'Unlock it to delete it.' : 'Unlock them to delete them.',
+    toast(els.length === 1 ? 'This item is locked' : 'These items are locked', {
+      description: els.length === 1 ? 'Unlock it to delete it.' : 'Unlock them to delete them.',
     })
     return
   }
   finishActiveTextEdit()
   useEditor.getState().removeElements(deletable.map((e) => e.id))
+}
+
+export function deleteSelection(): void {
+  deleteElements(useEditor.getState().selection)
 }
 
 export function duplicateSelection(): void {
@@ -63,7 +68,7 @@ export function reorderSelection(where: 'front' | 'back'): void {
   if (s.selection.length) s.reorderElements(s.selection, where)
 }
 
-/** Arrow-key nudge; a burst of presses is one undo step. Locked items stay put. */
+/** Arrow-key nudge; a burst of presses on the same items is one undo step. Locked items stay put. */
 export function nudgeSelection(dx: number, dy: number): void {
   const s = useEditor.getState()
   const movable = getSelectedElements(s).filter((e) => !e.locked)
@@ -76,7 +81,7 @@ export function nudgeSelection(dx: number, dy: number): void {
   if (d.x === 0 && d.y === 0) return
   const patches: Record<string, ElementPatch> = {}
   for (const e of movable) patches[e.id] = { x: e.x + d.x, y: e.y + d.y }
-  s.updateElements(patches, { coalesce: 'nudge' })
+  s.updateElements(patches, { coalesce: `nudge:${movable.map((e) => e.id).join(',')}` })
 }
 
 export function selectAllOnPage(page: number): void {

@@ -1,7 +1,8 @@
-import type { ReactNode } from 'react'
+import { useRef, type ReactNode } from 'react'
 import { Dialog as RDialog } from 'radix-ui'
 import { X } from 'lucide-react'
 import { cn } from '../../lib/utils/misc'
+import { isToastTarget, onModalClose, onModalOpen } from './modal'
 
 export interface DialogProps {
   open: boolean
@@ -44,9 +45,15 @@ export function Dialog({
       <RDialog.Portal>
         <RDialog.Overlay className="fixed inset-0 z-[80] bg-overlay backdrop-blur-[2px] data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out" />
         <RDialog.Content
-          onOpenAutoFocus={onOpenAutoFocus}
-          onCloseAutoFocus={onCloseAutoFocus}
-          onPointerDownOutside={(e) => !dismissible && e.preventDefault()}
+          onOpenAutoFocus={(e) => {
+            onModalOpen(e)
+            onOpenAutoFocus?.(e)
+          }}
+          onCloseAutoFocus={(e) => {
+            onCloseAutoFocus?.(e)
+            onModalClose(e)
+          }}
+          onPointerDownOutside={(e) => (!dismissible || isToastTarget(e)) && e.preventDefault()}
           onEscapeKeyDown={(e) => !dismissible && e.preventDefault()}
           className={cn(
             'fixed z-[81] flex max-h-[min(92dvh,900px)] w-full flex-col overflow-hidden border border-line bg-surface text-fg shadow-overlay outline-none',
@@ -96,11 +103,22 @@ export interface SheetProps {
 
 /** Slide-over panel (used for side panels on small screens). */
 export function Sheet({ open, onOpenChange, side = 'right', title, children, className }: SheetProps) {
+  const contentRef = useRef<HTMLDivElement>(null)
   return (
     <RDialog.Root open={open} onOpenChange={onOpenChange}>
       <RDialog.Portal>
         <RDialog.Overlay className="fixed inset-0 z-[70] bg-overlay data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out" />
         <RDialog.Content
+          ref={contentRef}
+          // The sheet itself takes focus on open (no ring or tooltip on its first control);
+          // Tab moves on into it.
+          onOpenAutoFocus={(e) => {
+            onModalOpen(e)
+            e.preventDefault()
+            contentRef.current?.focus()
+          }}
+          onCloseAutoFocus={onModalClose}
+          onPointerDownOutside={(e) => isToastTarget(e) && e.preventDefault()}
           className={cn(
             'fixed z-[71] flex flex-col bg-surface text-fg shadow-overlay outline-none',
             side === 'right' && 'inset-y-0 right-0 w-[min(88vw,360px)] border-l border-line data-[state=open]:animate-slide-in-right',

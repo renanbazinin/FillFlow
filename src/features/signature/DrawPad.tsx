@@ -8,7 +8,7 @@ import type { SignatureRole } from './library'
 import { InkSwatches, PenWidthPicker } from './parts'
 import { paintStrokes } from './render'
 import { PAD_UNITS, PEN_SIZES, strokeOutline, type Stroke } from './strokes'
-import { PAD_FRAME } from './styles'
+import { PAD_FRAME, SOFT_DISABLED } from './styles'
 
 interface Live {
   pointerId: number
@@ -140,6 +140,7 @@ export function DrawPad({ role }: { role: SignatureRole }) {
   }
 
   const empty = strokes.length === 0 && !inking
+  const canUndo = strokes.length > 0
   const noun = role === 'signature' ? 'signature' : 'initials'
 
   return (
@@ -179,14 +180,29 @@ export function DrawPad({ role }: { role: SignatureRole }) {
         <InkSwatches value={color} onChange={setColor} />
         <span aria-hidden className="h-5 w-px bg-line" />
         <PenWidthPicker value={pen} onChange={setPen} />
+        {/* aria-disabled: emptying the pad must not take focus away from the button just used. */}
         <div className="ml-auto flex items-center gap-0.5">
           <Tooltip content="Undo last stroke" shortcut={`${modKeyLabel}+Z`} side="top">
-            <Button variant="ghost" size="sm" onClick={() => undo(role)} disabled={!strokes.length} aria-label="Undo last stroke">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => canUndo && undo(role)}
+              aria-disabled={!canUndo || undefined}
+              aria-label="Undo last stroke"
+              className={SOFT_DISABLED}
+            >
               <Undo2 />
               <span className="max-sm:hidden">Undo</span>
             </Button>
           </Tooltip>
-          <Button variant="ghost" size="sm" onClick={() => clear(role)} disabled={!strokes.length} aria-label="Clear drawing">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => canUndo && clear(role)}
+            aria-disabled={!canUndo || undefined}
+            aria-label="Clear drawing"
+            className={SOFT_DISABLED}
+          >
             <Eraser />
             <span className="max-sm:hidden">Clear</span>
           </Button>

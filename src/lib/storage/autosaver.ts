@@ -2,8 +2,10 @@
  * Debounced "persist the latest snapshot" controller. Framework-agnostic (no store, no DOM) so
  * the timing rules can be unit tested; `autosave.ts` wires it to the editor.
  *
- *  - `schedule()` replaces the queued snapshot and restarts the debounce timer.
- *  - `flush()` saves the queued snapshot immediately (page hide, document switch).
+ *  - `schedule()` replaces the queued snapshot and restarts the debounce timer (but a burst of
+ *    changes is still written every `maxWait` ms).
+ *  - `flush()` saves the queued snapshot immediately (page hide, document switch) and resolves
+ *    once the latest save has settled, so its outcome is known.
  *  - Saves are started in order and never awaited by each other, so the last one started is the
  *    one that ends up stored (IndexedDB runs overlapping readwrite transactions in order). Only
  *    the result of the most recent save is reported.
@@ -13,6 +15,8 @@
 export interface AutosaverOptions<T> {
   /** Debounce delay in ms. */
   delay: number
+  /** Longest a change waits while newer ones keep restarting the debounce (default: no limit). */
+  maxWait?: number
   /** Persists one snapshot. Should start its write synchronously (pagehide flushes). */
   save: (snapshot: T) => Promise<void>
   /** Delays (ms) of the automatic retries after a failure; then wait for the next change. */
@@ -26,6 +30,7 @@ export interface AutosaverOptions<T> {
 
 export interface Autosaver<T> {
   schedule(snapshot: T): void
+  /** Saves now; with nothing queued, waits for the save in flight. Never rejects. */
   flush(): Promise<void>
   cancel(): void
   /** A snapshot is waiting to be saved. */
@@ -42,10 +47,14 @@ export function createAutosaver<T>(opts: AutosaverOptions<T>): Autosaver<T> {
   const retryDelays = opts.retryDelays ?? DEFAULT_RETRY_DELAYS
   let queued: { snapshot: T } | null = null
   let timer: ReturnType<typeof setTimeout> | undefined
+  /** When the oldest change still waiting for a save was made. */
+  let waitingSince: number | null = null
   let latest = 0
   let inFlight = 0
   let failures = 0
   let disposed = false
+  /** The most recently started save, settled (never rejects). */
+  let running: Promise<void> = Promise.resolve()
 
   function stopTimer() {
     if (timer !== undefined) clearTimeout(timer)
@@ -62,9 +71,10 @@ export function createAutosaver<T>(opts: AutosaverOptions<T>): Autosaver<T> {
 
   function start(): Promise<void> {
     stopTimer()
-    if (!queued || disposed) return Promise.resolve()
+    if (!queued || disposed) return running
     const { snapshot } = queued
     queued = null
+    waitingSince = null
     const id = ++latest
     inFlight++
     opts.onStart?.(snapshot)
@@ -74,7 +84,7 @@ export function createAutosaver<T>(opts: AutosaverOptions<T>): Autosaver<T> {
     } catch (err) {
       pending = Promise.reject(err)
     }
-    return pending.then(
+    running = pending.then(
       () => {
         inFlight--
         if (id !== latest) return
@@ -94,18 +104,22 @@ export function createAutosaver<T>(opts: AutosaverOptions<T>): Autosaver<T> {
         opts.onError?.(snapshot, err)
       },
     )
+    return running
   }
 
   return {
     schedule(snapshot) {
       if (disposed) return
       queued = { snapshot }
-      arm(opts.delay)
+      const now = Date.now()
+      waitingSince ??= now
+      arm(opts.maxWait === undefined ? opts.delay : Math.min(opts.delay, Math.max(0, waitingSince + opts.maxWait - now)))
     },
     flush: start,
     cancel() {
       stopTimer()
       queued = null
+      waitingSince = null
     },
     get queued() {
       return queued !== null
@@ -117,6 +131,7 @@ export function createAutosaver<T>(opts: AutosaverOptions<T>): Autosaver<T> {
       disposed = true
       stopTimer()
       queued = null
+      waitingSince = null
     },
   }
 }
