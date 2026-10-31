@@ -1,7 +1,9 @@
 import type { ExportProgress } from '../../lib/export/types'
 import { fieldLabel } from '../../lib/pdf/forms/labels'
+import { storedValue } from '../../lib/pdf/forms/values'
 import { suffixedFileName } from '../../lib/utils/misc'
 import type { FormField, FormValue, FormValues } from '../../model/types'
+import { shortcutLetter } from '../elements/lib/keys'
 
 /** Pure helpers behind the export dialog (file names, summary, progress copy). */
 
@@ -42,12 +44,12 @@ const FILLABLE = new Set<FormField['type']>(['text', 'checkbox', 'radio', 'dropd
 /** Form fields that will carry a value in the exported file. */
 export function countFilledFields(fields: FormField[], values: FormValues): number {
   let n = 0
-  for (const f of fields) if (FILLABLE.has(f.type) && isFilled(f, values[f.name])) n++
+  for (const f of fields) if (FILLABLE.has(f.type) && isFilled(f, storedValue(values, f.name))) n++
   return n
 }
 
 function isChanged(field: FormField, values: FormValues): boolean {
-  const v = values[field.name]
+  const v = storedValue(values, field.name)
   return v !== undefined && JSON.stringify(v) !== JSON.stringify(field.defaultValue)
 }
 
@@ -101,11 +103,15 @@ export function formatFileSize(bytes: number): string {
 
 type KeyLike = KeyboardEvent | { key: string; code?: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean }
 
-/** ⌘+letter on Apple platforms, Ctrl+letter elsewhere (by physical key, so it works on any layout). */
+/**
+ * ⌘+letter on Apple platforms, Ctrl+letter elsewhere. Like the browser's own shortcuts, this goes
+ * by the letter the layout types (Dvorak, Colemak…), or by physical key where it types no Latin
+ * letter (Hebrew…).
+ */
 function isModLetter(e: KeyLike, mac: boolean, letter: 's' | 'o'): boolean {
   if (e.altKey || e.shiftKey) return false
   if (mac ? !e.metaKey || e.ctrlKey : !e.ctrlKey || e.metaKey) return false
-  return e.code === `Key${letter.toUpperCase()}` || e.key.toLowerCase() === letter
+  return shortcutLetter({ key: e.key, code: e.code ?? '' }) === letter
 }
 
 /** ⌘S / Ctrl+S. */

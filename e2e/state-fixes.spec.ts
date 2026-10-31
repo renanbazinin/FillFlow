@@ -31,9 +31,19 @@ async function textInput(page: Page, field: string) {
   return root.locator('xpath=self::input | self::textarea | .//input | .//textarea').first()
 }
 
-/** Drops a PDF on the window (with whatever has focus keeping it). */
-async function dropPdf(page: Page, file: string) {
-  const data = (await readFile(file)).toString('base64')
+/** What the fields on the pages show, in page order. */
+function shownValues(page: Page) {
+  return page.locator('[data-page-index] [data-form-field]').evaluateAll((roots) =>
+    roots.map((root) => {
+      const control = root.matches('input, textarea, select') ? root : root.querySelector('input, textarea, select')
+      return [root.getAttribute('data-form-field'), (control as HTMLInputElement | null)?.value ?? null]
+    }),
+  )
+}
+
+/** Drops a PDF on the window (with whatever has focus keeping it); `contents` stands in for the file's. */
+async function dropPdf(page: Page, file: string, contents?: Buffer) {
+  const data = (contents ?? (await readFile(file))).toString('base64')
   const dataTransfer = await page.evaluateHandle(
     ({ data, name }) => {
       const dt = new DataTransfer()
@@ -43,6 +53,45 @@ async function dropPdf(page: Page, file: string) {
     { data, name: basename(file) },
   )
   for (const type of ['dragenter', 'dragover', 'drop']) await page.dispatchEvent('body', type, { dataTransfer })
+}
+
+/**
+ * Holds the next read of saved work (the load of a document being opened) until `release()`:
+ * the open stays in progress, for as long as the test needs, right after reading what is stored.
+ */
+async function holdNextSessionRead(page: Page) {
+  await page.evaluate(() => {
+    const w = window as unknown as { releaseSessionRead?: () => void }
+    const get = IDBObjectStore.prototype.get
+    IDBObjectStore.prototype.get = function (this: IDBObjectStore, ...args: Parameters<IDBObjectStore['get']>) {
+      const req = get.apply(this, args)
+      if (this.name !== 'sessions' || this.transaction.mode !== 'readonly') return req
+      IDBObjectStore.prototype.get = get
+      document.documentElement.dataset.sessionRead = ''
+      let onsuccess: IDBRequest['onsuccess'] = null
+      Object.defineProperty(req, 'onsuccess', { get: () => onsuccess, set: (fn: IDBRequest['onsuccess']) => (onsuccess = fn) })
+      let read: Event | null = null
+      let released = false
+      const deliver = () => read && released && onsuccess?.call(req, read)
+      req.addEventListener('success', (e) => {
+        read = e
+        deliver()
+      })
+      w.releaseSessionRead = () => {
+        released = true
+        deliver()
+      }
+      return req
+    }
+  })
+  return {
+    /** Waits until the held read has been made. */
+    reached: async () => {
+      await expect(page.locator('html[data-session-read]')).toBeAttached()
+      await page.evaluate(() => delete document.documentElement.dataset.sessionRead)
+    },
+    release: () => page.evaluate(() => (window as unknown as { releaseSessionRead?: () => void }).releaseSessionRead?.()),
+  }
 }
 
 /** Writes a record straight into one of the app's IndexedDB stores (as another build might). */
@@ -119,38 +168,199 @@ test('a tab with an out-of-date copy never overwrites newer work, and offers to 
   await expect(await textInput(page, 'Full name')).toHaveValue('From tab B')
 })
 
-test('typing on while the open file is opened again is never taken for another tab’s work', async ({ page }) => {
+test('typing on while the open file is opened again never reaches the copy it replaces, nor passes for another tab’s work', async ({ page }) => {
   await gotoHome(page)
   await openPdf(page, SAMPLE_PDF)
   const input = await textInput(page, 'Full name')
   await input.click()
   await input.pressSequentially('Ada')
   await expect.poll(async () => (await sampleSession(page))?.formValues['Full name']).toBe('Ada')
+  const stored = (await sampleSession(page))?.formValues
+  const shown = await shownValues(page)
 
-  // Hold the new copy's load for a second right after it has read the stored work (a slow
-  // device): keys typed meanwhile still reach, and are saved from, the copy it replaces.
-  await page.evaluate(() => {
-    const get = IDBObjectStore.prototype.get
-    IDBObjectStore.prototype.get = function (this: IDBObjectStore, ...args: Parameters<IDBObjectStore['get']>) {
-      const req = get.apply(this, args)
-      if (this.name !== 'sessions' || this.transaction.mode !== 'readonly') return req
-      document.documentElement.dataset.sessionRead = ''
-      let onsuccess: IDBRequest['onsuccess'] = null
-      Object.defineProperty(req, 'onsuccess', { get: () => onsuccess, set: (fn: IDBRequest['onsuccess']) => (onsuccess = fn) })
-      req.addEventListener('success', (e) => setTimeout(() => onsuccess?.call(req, e), 1000))
-      return req
-    }
-  })
+  // Hold the new copy's load right after it has read the stored work (a slow device).
+  const load = await holdNextSessionRead(page)
   await dropPdf(page, SAMPLE_PDF)
-  await expect(page.locator('html[data-session-read]')).toBeAttached()
-  await page.keyboard.type(' Lovelace')
-  await expect(input).toHaveValue('Ada')
-  await expect.poll(async () => (await sampleSession(page))?.formValues['Full name']).toBe('Ada Lovelace')
+  await load.reached()
+  // Keys typed meanwhile, Tab included, don't land in the copy on screen, which the new one
+  // replaces (it would never show them, and would save over them), nor switch its tool. (Letters
+  // only: Space or Enter would press Cancel once it is offered.)
+  await page.keyboard.press('Tab')
+  await page.keyboard.type('zzz')
+  await page.keyboard.press('Shift+Tab')
+  await page.keyboard.type('Lovelace')
+  expect(await shownValues(page)).toEqual(shown)
+  expect(await page.getByRole('dialog', { name: 'Opening…' }).evaluate((card) => card.contains(document.activeElement))).toBe(true)
+  await expect(page.getByRole('toolbar', { name: 'Tools' }).getByRole('button', { name: 'Select', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  // Past the autosave delay: a key that reached the copy on screen would be stored by now.
+  await page.waitForTimeout(1000)
+  expect((await sampleSession(page))?.formValues).toEqual(stored)
 
-  // The new copy keeps saving over that late write.
+  await load.release()
+  await expect(page.getByText('Opening…')).toHaveCount(0)
+  await expect(input).toHaveValue('Ada')
+  expect((await sampleSession(page))?.formValues).toEqual(stored)
+
+  // The new copy keeps saving: its own write isn't taken for another tab's work.
   await fillFormField(page, 'Email', 'ada@example.com')
   await expect.poll(async () => (await sampleSession(page))?.formValues).toMatchObject({ 'Full name': 'Ada', Email: 'ada@example.com' })
   await expect(page.getByText('This document was changed in another tab')).toHaveCount(0)
+})
+
+test('an open that takes long can be cancelled, leaving the open document as it was', async ({ page }) => {
+  await gotoHome(page)
+  await openPdf(page, SAMPLE_PDF)
+  const input = await textInput(page, 'Full name')
+  await input.click()
+  await input.pressSequentially('Ada')
+  await expect.poll(async () => (await sampleSession(page))?.formValues['Full name']).toBe('Ada')
+  await expect(page).toHaveTitle(/^sample-form/)
+
+  const load = await holdNextSessionRead(page)
+  await dropPdf(page, fixture('form-basic.pdf'))
+  await load.reached()
+  await expect(page.getByText('Opening…')).toBeVisible()
+  const cancel = page.getByRole('button', { name: 'Cancel' })
+  // Offered only once the open has taken a few seconds.
+  await expect(cancel).toHaveCount(0)
+  await cancel.click()
+  await expect(page.getByText('Opening…')).toHaveCount(0)
+  // Back where the user was.
+  await expect(input).toBeFocused()
+  await expect(input).toHaveValue('Ada')
+
+  // The open, finishing late, doesn't replace it.
+  await load.release()
+  await page.waitForTimeout(1000)
+  await expect(page).toHaveTitle(/^sample-form/)
+  await fillFormField(page, 'Email', 'ada@example.com')
+  await expect.poll(async () => (await sampleSession(page))?.formValues).toMatchObject({ 'Full name': 'Ada', Email: 'ada@example.com' })
+
+  // Tab reaches it, and Escape cancels too, once offered.
+  const again = await holdNextSessionRead(page)
+  await dropPdf(page, fixture('form-basic.pdf'))
+  await again.reached()
+  await expect(cancel).toBeVisible()
+  await page.keyboard.press('Tab')
+  await expect(cancel).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(cancel).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(page.getByText('Opening…')).toHaveCount(0)
+  await again.release()
+  await page.waitForTimeout(1000)
+  await expect(page).toHaveTitle(/^sample-form/)
+  await expect(page.getByText(/is saved/)).toHaveCount(0)
+})
+
+test('an open from the home screen that takes long can be cancelled, and tried again', async ({ page }) => {
+  await gotoHome(page)
+  const sample = page.getByRole('button', { name: /try a sample form/i })
+  const load = await holdNextSessionRead(page)
+  await sample.click()
+  await load.reached()
+  await page.getByRole('button', { name: 'Cancel' }).click()
+  await expect(page.getByText('Opening…')).toHaveCount(0)
+  // Nothing waits on the open any more, even though it hasn't ended.
+  await expect(sample).toBeEnabled()
+  await load.release()
+  await page.waitForTimeout(1000)
+  await expect(sample).toBeVisible()
+
+  await sample.click()
+  await showPage(page, 0)
+})
+
+test('keys pressed while the open file is opened again never delete the box that was being typed in', async ({ page }) => {
+  const sizes = await readViewSizes(SAMPLE_PDF)
+  await gotoHome(page)
+  await openPdf(page, SAMPLE_PDF)
+  await showPage(page, 0)
+  await selectTool(page, 'Text', 'T')
+  await clickPagePoint(page, 1, SAMPLE_SPOTS.emergencyName, sizes[1])
+  await expectEditing(page)
+  await page.keyboard.type('Hello')
+  await expect.poll(async () => (await sampleSession(page))?.elements.map((e) => e.text)).toEqual(['Hello'])
+
+  const load = await holdNextSessionRead(page)
+  await dropPdf(page, SAMPLE_PDF)
+  await load.reached()
+  // Typing ends as the open starts, which leaves the box selected.
+  await page.keyboard.press('Backspace')
+  await page.keyboard.press('Delete')
+  await expect(page.locator('[data-element-id]')).toHaveCount(1)
+  // Past the autosave delay: a removal would be stored by now.
+  await page.waitForTimeout(1000)
+  expect((await sampleSession(page))?.elements).toHaveLength(1)
+
+  await load.release()
+  await expect(page.getByText('Opening…')).toHaveCount(0)
+  await page.reload()
+  await (await recentDocument(page, /sample-form/i)).click()
+  await showPage(page, 1)
+  await expect(page.locator('[data-element-id]')).toHaveCount(1)
+})
+
+test('focus goes back where it was when a file dropped on the document doesn’t open', async ({ page }) => {
+  await gotoHome(page)
+  await openPdf(page, SAMPLE_PDF)
+  const input = await textInput(page, 'Full name')
+  await input.click()
+  await input.pressSequentially('Ada')
+
+  // The password prompt, cancelled.
+  await dropPdf(page, fixture('password.pdf'))
+  const prompt = page.getByRole('dialog', { name: /password/i })
+  await prompt.getByRole('button', { name: 'Cancel' }).click()
+  await expect(prompt).toHaveCount(0)
+  await expect(input).toBeFocused()
+
+  // A file that isn't a PDF after all: its error, closed.
+  await dropPdf(page, 'notes.pdf', Buffer.from('Not a PDF'))
+  const error = page.getByRole('dialog', { name: /couldn’t open this file/i })
+  await expect(error).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(error).toHaveCount(0)
+  await expect(input).toBeFocused()
+  await expect(input).toHaveValue('Ada')
+})
+
+test('saved work that can’t be read as the document opens is reported at once, and never saved over', async ({ page }) => {
+  await gotoHome(page)
+  await openPdf(page, SAMPLE_PDF)
+  await fillFormField(page, 'Full name', 'Ada Lovelace')
+  await expect.poll(async () => (await sampleSession(page))?.formValues['Full name']).toBe('Ada Lovelace')
+  /** The next read of saved work (opening the document again) fails. */
+  const failNextSessionRead = () =>
+    page.evaluate(() => {
+      const get = IDBObjectStore.prototype.get
+      IDBObjectStore.prototype.get = function (this: IDBObjectStore, ...args: Parameters<IDBObjectStore['get']>) {
+        if (this.name !== 'sessions' || this.transaction.mode !== 'readonly') return get.apply(this, args)
+        IDBObjectStore.prototype.get = get
+        throw new DOMException('Data lost due to missing file.', 'NotReadableError')
+      }
+    })
+  const notLoaded = page.getByText('Your saved work on this document didn’t load')
+
+  // Before any work goes in, and with a way to try again.
+  await failNextSessionRead()
+  await dropPdf(page, SAMPLE_PDF)
+  await expect(notLoaded).toBeVisible()
+  const input = await textInput(page, 'Full name')
+  await expect(input).toHaveValue('')
+  await page.getByRole('button', { name: 'Reload' }).click()
+  await expect(input).toHaveValue('Ada Lovelace')
+  await expect(notLoaded).toHaveCount(0)
+
+  // A change made just before the page goes away doesn't replace the work that didn't load.
+  await failNextSessionRead()
+  await dropPdf(page, SAMPLE_PDF)
+  await expect(notLoaded).toBeVisible()
+  await fillFormField(page, 'Email', 'ada@example.com')
+  // Well inside the autosave delay: only the write made on the way out could store it.
+  await page.waitForTimeout(100)
+  await page.reload()
+  expect((await sampleSession(page))?.formValues).toMatchObject({ 'Full name': 'Ada Lovelace', Email: '' })
 })
 
 test('a stored file that can’t be read keeps its card and its work', async ({ page }) => {
@@ -267,6 +477,38 @@ test('removing recent documents keeps keyboard focus in place', async ({ page })
   await expect(page.locator('[data-recent-open]')).toHaveCount(0)
   await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-describedby'))).toBe('ff-dropzone-hint')
   expect(await readIndexedDb(page, 'fillflow-sessions', 'sessions')).toEqual([])
+})
+
+test('work kept for documents that dropped off the list is let go of in time, and can be deleted once the list is empty', async ({ page }) => {
+  await gotoHome(page)
+  await openPdf(page, SAMPLE_PDF)
+  await fillFormField(page, 'Full name', 'Ada')
+  await expect.poll(async () => (await sampleSession(page))?.formValues['Full name']).toBe('Ada')
+  const sampleId = (await sampleSession(page))?.docId ?? ''
+  await page.getByRole('button', { name: 'Back to home' }).click()
+
+  // Work on two documents that are no longer listed: one saved lately, one long ago.
+  const day = 24 * 60 * 60 * 1000
+  const work = (docId: string, updatedAt: number) => ({ version: 1, docId, fileName: `${docId}.pdf`, elements: [], formValues: { Name: 'Ada' }, assets: {}, updatedAt })
+  await putRecord(page, 'fillflow-sessions', 'sessions', 'lately', work('lately', Date.now() - day))
+  await putRecord(page, 'fillflow-sessions', 'sessions', 'long-ago', work('long-ago', Date.now() - 100 * day))
+  await page.reload()
+  // The home screen lets go of the old one; the other stays (the same file opened again brings it back).
+  await expect.poll(async () => (await storedSessions(page)).map((s) => s.docId).sort()).toEqual(['lately', sampleId].sort())
+  const notice = page.getByText('Work from older documents is still saved on this device.')
+  await expect(page.locator('[data-recent-open]')).toHaveCount(1)
+  await expect(notice).toHaveCount(0)
+
+  // Removing the last listed document still leaves a way to delete the rest.
+  await page.getByRole('button', { name: /^more options for sample-form/i }).click()
+  await page.getByRole('menuitem', { name: /remove from this device/i }).click()
+  await page.getByRole('button', { name: 'Remove', exact: true }).click()
+  await expect(page.locator('[data-recent-open]')).toHaveCount(0)
+  await expect(notice).toBeVisible()
+  await page.getByRole('button', { name: 'Delete it' }).click()
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Delete', exact: true }).click()
+  await expect(notice).toHaveCount(0)
+  await expect.poll(() => storedSessions(page)).toEqual([])
 })
 
 test('a slow sample download never replaces a document opened meanwhile', async ({ page }) => {

@@ -5,6 +5,7 @@ import { useEditor, type LoadedDocument } from '../../store/editor'
 import type { PDFDocumentProxy } from '../../lib/pdf/pdfjs'
 import type { PageInfo } from '../../model/types'
 import { clamp, cn } from '../../lib/utils/misc'
+import { prefersReducedMotion } from '../../lib/utils/motion'
 import { viewer } from './viewerApi'
 import { bitmapTarget, releaseCanvas, renderPageBitmap, retainPage, type BitmapTarget } from './pageRender'
 import { renderQueue } from './renderQueue'
@@ -16,10 +17,6 @@ import { VisibilityRegistry, scrollParent } from './visibility'
 const THUMBNAIL_PRIORITY = 5000
 /** A thumbnail must stay near the panel's viewport this long before it renders (skips fly-bys). */
 const THUMBNAIL_DWELL_MS = 120
-
-function prefersReducedMotion(): boolean {
-  return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
-}
 
 function canvasToJpeg(canvas: HTMLCanvasElement): Promise<Blob | null> {
   return new Promise((resolve) => {

@@ -128,6 +128,69 @@ describe('exportPdf: documents rewritten by pdf.js', () => {
   })
 })
 
+/** A 12-page file whose page labels use the common schemes: front matter, prefixes, letters… */
+async function labelledPdf(): Promise<Uint8Array> {
+  const doc = await PDFDocument.create()
+  for (let i = 0; i < 12; i++) doc.addPage([100, 100])
+  const ranges = [0, { S: 'r' }, 2, { S: 'D' }, 4, { S: 'D', P: PDFString.of('A-') }, 6, { P: PDFString.of('Index') }, 8, { S: 'A' }, 10, { S: 'D', St: 5 }]
+  doc.catalog.set(PDFName.of('PageLabels'), doc.context.obj({ Nums: ranges }))
+  return doc.save({ useObjectStreams: false })
+}
+
+/** The labels pdf.js reads from `labelledPdf`. */
+const LABELS = ['i', 'ii', '1', '2', 'A-1', 'A-2', 'Index', 'Index', 'A', 'B', '5', '6']
+
+describe('exportPdf: page labels after a pdf.js rewrite', () => {
+  it('keeps every page’s label when decrypting', async () => {
+    const secured = await encryptPdf(await labelledPdf(), { owner: 'owner-only' })
+    const original = await openPdfjs(secured)
+    expect(await original.getPageLabels()).toEqual(LABELS)
+    await original.loadingTask.destroy()
+
+    const out = await renderPdf(makeInput(secured, await readPages(secured), [makeText(2, 20, 20, 'Signed')]), { ...testDeps, decrypt: pdfjsDecrypt() })
+    const pdf = await openPdfjs(out)
+    expect(await pdf.getPageLabels()).toEqual(LABELS)
+    await pdf.loadingTask.destroy()
+  })
+})
+
+describe('restoreRewritten: page labels', () => {
+  /** The labels pdf.js reads back once `labels` are restored into a document with as many pages. */
+  async function roundTrip(labels: string[]) {
+    const doc = await PDFDocument.create()
+    labels.forEach(() => doc.addPage([100, 100]))
+    restoreRewritten(doc, { pageLabels: labels })
+    const tree = doc.catalog.lookup(PDFName.of('PageLabels'), PDFDict).lookup(PDFName.of('Nums'), PDFArray)
+    const pdf = await openPdfjs(await doc.save())
+    const read = await pdf.getPageLabels()
+    await pdf.loadingTask.destroy()
+    return { read, ranges: tree.size() / 2 }
+  }
+
+  it('reproduces the labels exactly', async () => {
+    for (const labels of [
+      ['i', 'ii', '1', '2'],
+      ['1', '2', '3'],
+      ['3', '4', '1', '2'],
+      ['1', '1', '2'],
+      ['Cover', '1', '2', 'Cover'],
+      ['', '1'],
+      ['A-9', 'A-10', 'B-1', 'B-2'],
+      ['01', '02', '2'],
+      ['Annex 1', 'Annex 2', '3'],
+      ['עמוד 1', 'עמוד 2'],
+    ]) {
+      expect((await roundTrip(labels)).read, labels.join(' ')).toEqual(labels)
+    }
+  })
+
+  it('writes a run of page numbers, with or without a prefix, as one range', async () => {
+    expect((await roundTrip(['1', '2', '3', '4'])).ranges).toBe(1)
+    expect((await roundTrip(['A-1', 'A-2', 'A-3', 'B-1', 'B-2'])).ranges).toBe(2)
+    expect((await roundTrip(['i', 'ii', '1', '2', '3'])).ranges).toBe(3)
+  })
+})
+
 describe('restoreRewritten: catalog entries', () => {
   const catalog: RecoveredCatalog = { lang: 'he-IL', pageLabels: ['i'], viewerPreferences: { Direction: 'R2L' }, markInfo: ['Marked'] }
 
@@ -165,6 +228,30 @@ describe('restoreRewritten: catalog entries', () => {
     restoreRewritten(doc, { layers: { name: null, creator: null, groups: [group], order: null } })
     const config = doc.catalog.lookup(PDFName.of('OCProperties'), PDFDict).lookup(PDFName.of('D'), PDFDict)
     expect(config.lookup(PDFName.of('OFF'), PDFArray).asArray()).toEqual([layer])
+  })
+
+  it('has viewers turn a layer on for an event only when pdf.js shows it then', async () => {
+    const doc = await copy()
+    const ctx = doc.context
+    const layer = (name: string, usage: Record<string, Record<string, string>>) =>
+      ctx.register(ctx.obj({ Type: 'OCG', Name: PDFHexString.fromText(name), Usage: usage }))
+    // On by default, kept off the screen: printed only.
+    const stamp = layer('Stamp', { View: { ViewState: 'OFF' }, Print: { PrintState: 'ON' } })
+    // Off by default, so pdf.js never shows it, whatever its usage says.
+    layer('Draft', { View: { ViewState: 'ON' }, Print: { PrintState: 'ON' } })
+    const notes = layer('Notes', { Print: { PrintState: 'OFF' } })
+    const group = (id: string, name: string, on: boolean, view: 'ON' | 'OFF' | null, print: 'ON' | 'OFF' | null) => ({ id, name, intent: null, view, print, on, rbGroups: [] })
+    const groups = [group('1R', 'Stamp', true, 'OFF', 'ON'), group('2R', 'Draft', false, 'ON', 'ON'), group('3R', 'Notes', false, null, 'OFF')]
+    restoreRewritten(doc, { layers: { name: null, creator: null, groups, order: null } })
+    const config = doc.catalog.lookup(PDFName.of('OCProperties'), PDFDict).lookup(PDFName.of('D'), PDFDict)
+    const listed = config
+      .lookup(PDFName.of('AS'), PDFArray)
+      .asArray()
+      .map((entry) => {
+        const app = doc.context.lookup(entry, PDFDict)
+        return [String(app.get(PDFName.of('Event'))), app.lookup(PDFName.of('OCGs'), PDFArray).asArray()]
+      })
+    expect(Object.fromEntries(listed)).toEqual({ '/View': [stamp], '/Print': [stamp, notes] })
   })
 })
 

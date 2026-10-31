@@ -123,6 +123,8 @@ export function startAutosave(): () => void {
         void requestPersistentStorage()
         if (snap.target !== target || target.outdated) return
         target.warned = false
+        // Its work is what is stored now: reloading would only bring back what is on screen.
+        if (target.doc.sessionLoadFailed) toast.dismiss(OUTDATED_TOAST_ID)
         setSaveStatus({ state: 'saved', savedAt: Date.now() })
       },
       onError(snap, err) {
@@ -171,9 +173,23 @@ export function startAutosave(): () => void {
     })
   }
 
+  /**
+   * The copy opened without its saved work, which couldn't be read: say so before any work goes
+   * into it. Its first save then either finds that work, and stops (see `outdated`), or finds
+   * none it can read, and takes its place.
+   */
+  function showNotLoaded(t: Target) {
+    toast.error(NOT_LOADED, {
+      id: OUTDATED_TOAST_ID,
+      description: 'Reload it to try again before you make changes.',
+      duration: Infinity,
+      action: { label: 'Reload', onClick: () => reload(t.doc) },
+    })
+  }
+
   /** Newer work on `t` is stored: stop saving this copy over it, and offer to reload. */
   function outdated(t: Target, reason: string) {
-    if (t !== target) return reportLost(t, 'It was changed in another tab.')
+    if (t !== target) return reportLost(t, reason === NOT_LOADED ? 'Its saved work didn’t load.' : 'It was changed in another tab.')
     if (t.outdated) return
     t.outdated = reason
     const unsaved = saver !== null && (saver.queued || saver.busy)
@@ -198,7 +214,10 @@ export function startAutosave(): () => void {
     baseline = { elements: s.elements, formValues: s.formValues }
     saver = target ? createSaver() : null
     setSaveStatus(IDLE_STATUS)
-    if (target) requestThumbnail(target.doc)
+    if (target) {
+      requestThumbnail(target.doc)
+      if (target.doc.sessionLoadFailed) showNotLoaded(target)
+    }
   }
 
   function onChange(s: EditorState) {
@@ -247,7 +266,8 @@ export function startAutosave(): () => void {
 
   const flush = () => saver?.flush() ?? Promise.resolve()
   // Leaving the page (tab switch, app switch on mobile, closing the tab, reload): write now,
-  // without the version check, whose read would hold the write back past an unload.
+  // without the version check, whose read would hold the write back past an unload (unless
+  // the stored version is unknown, see `persist`).
   const flushLeaving = () => {
     leaving = true
     try {
@@ -305,7 +325,9 @@ function persist({ state, target }: Snapshot, blind: boolean): Promise<void> {
     },
     lastVersion,
   )
-  return saveSession(session, version, { blind }).then(() => {
+  // Never blind against an unknown base (the copy's saved work didn't load): the check then
+  // refuses the write rather than let a copy without that work replace it.
+  return saveSession(session, version, { blind: blind && version.updatedAt !== null }).then(() => {
     sessionsChannel()?.postMessage({ docId: doc.id, updatedAt: session.updatedAt })
     // Counted from what was stored (a blank text block still being typed into isn't).
     void patchRecentSoon(doc.id, {

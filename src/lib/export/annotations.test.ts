@@ -1,4 +1,4 @@
-import { PDFDict, PDFDocument, PDFName, PDFString, fill, rectangle, setFillingRgbColor, type PDFRef } from 'pdf-lib'
+import { PDFDict, PDFDocument, PDFName, PDFNumber, PDFString, fill, rectangle, setFillingRgbColor, type PDFRef } from 'pdf-lib'
 import { describe, expect, it } from 'vitest'
 import type { ShapeElement } from '../../model/types'
 import { renderPdf } from './engine'
@@ -107,6 +107,59 @@ describe('exportPdf: existing annotations under placed elements', () => {
       expect(near(shown.at(100, y), [0, 0, 0]), `shown at y ${y}`).toBe(true)
     }
     await pdf.loadingTask.destroy()
+  })
+
+  it('leaves alone what pdf.js does not draw: text markup without valid /QuadPoints', async () => {
+    const doc = await PDFDocument.create()
+    const ctx = doc.context
+    const page = doc.addPage([300, 300])
+    const bar = () => ctx.register(ctx.formXObject([setFillingRgbColor(0, 0, 0), rectangle(0, 0, 200, 40), fill()], { BBox: [0, 0, 200, 40] }))
+    const highlight = (y: number, quads?: (number | PDFRef)[]) =>
+      ctx.register(ctx.obj({ Type: 'Annot', Subtype: 'Highlight', F: 4, Rect: [50, y, 250, y + 40], AP: { N: bar() }, ...(quads && { QuadPoints: quads }) }))
+    // Black bars at view y 60–100 (no /QuadPoints), 160–200 (six numbers), 250–290 (valid) and
+    // 110–150 (valid, its numbers indirect objects, which pdf.js resolves).
+    const annots = [
+      highlight(200),
+      highlight(100, [50, 140, 250, 140, 50, 100]),
+      highlight(10, [50, 50, 250, 50, 50, 10, 250, 10]),
+      highlight(150, [50, 190, 250, 190, 50, 150, 250, 150].map((n) => ctx.register(PDFNumber.of(n)))),
+    ]
+    page.node.set(PDFName.of('Annots'), ctx.obj(annots))
+    const bytes = await doc.save({ useObjectStreams: false })
+    const pages = await readPages(bytes)
+
+    const out = await renderPdf(makeInput(bytes, pages, [box('whiteout', 40, 50, 100, 245, '#ffffff')]), testDeps)
+    const pdf = await openPdfjs(out)
+    const raster = await renderPage(pdf, 1, 2)
+    // As in the editor, the first two show nowhere; the valid ones show outside the whiteout only.
+    expect(near(raster.at(200, 80), [255, 255, 255]), 'no quad points').toBe(true)
+    expect(near(raster.at(200, 180), [255, 255, 255]), 'six quad points').toBe(true)
+    expect(near(raster.at(200, 270), [0, 0, 0]), 'valid quad points').toBe(true)
+    expect(near(raster.at(100, 270), [255, 255, 255]), 'under the whiteout').toBe(true)
+    expect(near(raster.at(200, 130), [0, 0, 0]), 'indirect quad points').toBe(true)
+    expect(near(raster.at(100, 130), [255, 255, 255]), 'indirect, under the whiteout').toBe(true)
+    await pdf.loadingTask.destroy()
+    expect((await PDFDocument.load(out)).getPage(0).node.Annots()!.asArray()).toEqual(annots.slice(0, 2))
+  })
+
+  it('reads the flags as pdf.js does', async () => {
+    const doc = await PDFDocument.create()
+    const ctx = doc.context
+    const page = doc.addPage([300, 300])
+    const square = () => ctx.register(ctx.formXObject([setFillingRgbColor(0, 0, 0), rectangle(0, 0, 40, 40), fill()], { BBox: [0, 0, 40, 40] }))
+    const annot = (Subtype: string, F: number, x: number) => ctx.register(ctx.obj({ Type: 'Annot', Subtype, F, Rect: [x, 130, x + 40, 170], AP: { N: square() } }))
+    // Invisible + Print: pdf.js ignores Invisible on the types it knows, not on others (Watermark).
+    const known = annot('Square', 1 | 4, 20)
+    const unknown = annot('Watermark', 1 | 4, 80)
+    // pdf.js reads flags that aren't a positive integer as none: shown, but not printed.
+    const fraction = annot('Square', 4.5, 140)
+    const negative = annot('Square', -4, 200)
+    page.node.set(PDFName.of('Annots'), ctx.obj([known, unknown, fraction, negative]))
+    const bytes = await doc.save({ useObjectStreams: false })
+    const pages = await readPages(bytes)
+
+    const out = await renderPdf(makeInput(bytes, pages, [box('sign', 10, 145, 280, 10, '#ff0000')]), testDeps)
+    expect((await PDFDocument.load(out)).getPage(0).node.Annots()!.asArray()).toEqual([unknown, fraction, negative])
   })
 
   it('leaves the annotations of pages without elements alone', async () => {

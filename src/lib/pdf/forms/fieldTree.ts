@@ -34,6 +34,7 @@ const T = PDFName.of('T')
 const TU = PDFName.of('TU')
 const FF = PDFName.of('Ff')
 const V = PDFName.of('V')
+const DV = PDFName.of('DV')
 const Q = PDFName.of('Q')
 const MAX_LEN = PDFName.of('MaxLen')
 const OPT = PDFName.of('Opt')
@@ -100,6 +101,30 @@ const FIELD_ENTRIES = ['FT', 'Parent', 'T', 'TU', 'TM', 'Ff', 'V', 'DV', 'DA', '
 /** The field's own trigger events in /AA (the others are its widget's). */
 const FIELD_EVENTS = ['K', 'F', 'V', 'C'].map((key) => PDFName.of(key))
 
+/** Moves the field's own trigger events from the /AA of a field merged with its widget to `field`, unless it has its own. */
+function moveFieldEvents(merged: PDFDict, field: PDFDict) {
+  const actions = merged.lookup(AA)
+  if (!(actions instanceof PDFDict)) return
+  const held = field.lookup(AA)
+  const own = held instanceof PDFDict ? held : merged.context.obj({})
+  for (const key of FIELD_EVENTS) {
+    const action = actions.get(key)
+    if (action === undefined) continue
+    if (!own.has(key)) own.set(key, action)
+    actions.delete(key)
+  }
+  if (own !== held && own.keys().length) field.set(AA, own)
+}
+
+/** Puts `field` in the place of `ref` in a list of fields (/Kids, /Fields, /CO) that doesn't hold it yet. */
+function replaceInList(list: PDFObject | undefined, ref: PDFRef, field: PDFRef) {
+  if (!(list instanceof PDFArray)) return
+  const i = list.indexOf(ref)
+  if (i === undefined) return
+  if (list.indexOf(field) === undefined) list.set(i, field)
+  else list.remove(i)
+}
+
 /**
  * Splits a field merged with its widget into a field with that widget as its kid, so that more
  * widgets can join it. The widget keeps its reference (pages and the structure tree point to
@@ -112,27 +137,15 @@ function splitMergedField(acroForm: PDFDict, ref: PDFRef, merged: PDFDict): PDFR
     const value = merged.get(key)
     if (value === undefined) continue
     field.set(key, value)
-    merged.delete(key)
+    // pdf.js reads the field's label (/TU) from the widget only.
+    if (key !== TU) merged.delete(key)
   }
-  const actions = merged.lookup(AA)
-  if (actions instanceof PDFDict) {
-    const own = context.obj({})
-    for (const key of FIELD_EVENTS) {
-      const action = actions.get(key)
-      if (action === undefined) continue
-      own.set(key, action)
-      actions.delete(key)
-    }
-    if (own.keys().length) field.set(AA, own)
-  }
+  moveFieldEvents(merged, field)
   const fieldRef = context.register(field)
   field.set(KIDS, context.obj([ref]))
   merged.set(PARENT, fieldRef)
   const parent = field.lookup(PARENT)
-  for (const list of [parent instanceof PDFDict ? parent.lookup(KIDS) : acroForm.lookup(FIELDS), acroForm.lookup(CO)]) {
-    const i = list instanceof PDFArray ? list.indexOf(ref) : undefined
-    if (i !== undefined) (list as PDFArray).set(i, fieldRef)
-  }
+  for (const list of [parent instanceof PDFDict ? parent.lookup(KIDS) : acroForm.lookup(FIELDS), acroForm.lookup(CO)]) replaceInList(list, ref, fieldRef)
   return fieldRef
 }
 
@@ -279,13 +292,18 @@ function hasFieldKids(node: PDFDict): boolean {
  * created) or at the top. Unnamed fields (no /T in the PDF) go to the top.
  */
 function placeInTree(acroForm: PDFDict, name: string): { kids: PDFArray; parent?: PDFRef; partial?: string } {
+  if (isUnnamedField(name)) return parentFields(acroForm, [])
+  const parts = name.split('.')
+  const partial = parts.pop() ?? ''
+  return { ...parentFields(acroForm, parts), partial }
+}
+
+/** The parent fields named `parts` (found by name, or created), or the top of the field tree. */
+function parentFields(acroForm: PDFDict, parts: readonly string[]): { kids: PDFArray; parent?: PDFRef } {
   const context = acroForm.context
   const top = acroForm.lookup(FIELDS)
   let kids = top instanceof PDFArray ? top : context.obj([])
   if (kids !== top) acroForm.set(FIELDS, kids)
-  if (isUnnamedField(name)) return { kids }
-  const parts = name.split('.')
-  const partial = parts.pop() ?? ''
   let parent: PDFRef | undefined
   for (let i = 0; i < parts.length; i++) {
     const prefix = parts.slice(0, i + 1).join('.')
@@ -304,7 +322,7 @@ function placeInTree(acroForm: PDFDict, name: string): { kids: PDFArray; parent?
     parent = next
     kids = context.lookup(next, PDFDict).lookup(KIDS, PDFArray)
   }
-  return { kids, parent, partial }
+  return { kids, parent }
 }
 
 interface FoundWidget extends BareWidget {
@@ -360,8 +378,9 @@ function rebuildField(acroForm: PDFDict, field: FormField, kids: FoundWidget[]):
 /**
  * pdf.js' rewrite (decrypt / repair) rebuilds the field tree from /Fields alone: a widget whose
  * field it can't reach that way comes out bare, without /Parent and so without a name, type or
- * value. Links each bare widget lying where the editor showed a widget of `fields` back into
- * that field: into the field holding its other widgets, or into one rebuilt from what the editor
+ * value (a field merged with its widget keeps its own entries, but not the ones it inherited).
+ * Links each bare widget lying where the editor showed a widget of `fields` back into that
+ * field: into the field holding its other widgets, or into one rebuilt from what the editor
  * read. Returns how many widgets were linked (`index` is out of date then).
  */
 export function relinkBareWidgets(
@@ -399,9 +418,57 @@ export function relinkBareWidgets(
       const kids = acroForm.context.lookup(parent, PDFDict).lookup(KIDS, PDFArray)
       for (const w of found) kids.push(w.ref)
     }
-    for (const w of found) w.dict.set(PARENT, parent)
+    for (const w of found) {
+      // What it kept of a field merged with it would make it a field of its own under this one
+      // (/T), or show over this field's value (pdf.js reads /V and /DV from the widget first).
+      for (const key of [T, V, DV]) w.dict.delete(key)
+      // That field's own trigger events and place in the calculation order are this field's now.
+      moveFieldEvents(w.dict, acroForm.context.lookup(parent, PDFDict))
+      replaceInList(acroForm.lookup(CO), w.ref, parent)
+      w.dict.set(PARENT, parent)
+    }
     linked += found.length
   }
   if (linked) ensureFieldDefaults(acroForm)
   return linked
+}
+
+/**
+ * The rewrite keeps a field's parents only as far as /Fields reaches them: a field merged with
+ * its widget that the editor showed as "p1.name", with p1 missing from /Fields, comes out on its
+ * own as "name" (and two such fields read as one). Puts the topmost field above each of
+ * `fields` whose name lost its first parts back under parent fields of those names (found by
+ * name, or created). Returns how many fields were moved (`index` is out of date then).
+ */
+export function relinkCutOffFields(form: PDFForm, fields: readonly FormField[], index: FieldIndex): number {
+  const acroForm = form.acroForm.dict
+  const context = acroForm.context
+  let moved = 0
+  for (const field of fields) {
+    for (const target of index.findAll(field)) {
+      const name = qualifiedName(target.acroField.dict)
+      if (!name || !field.name.endsWith(`.${name}`) || !holdsType(target, field.type)) continue
+      // The parents were lost above the topmost field.
+      let ref = target.ref
+      let top = target.acroField.dict
+      const seen = new Set([ref])
+      for (let up = top.get(PARENT); up instanceof PDFRef && !seen.has(up); up = top.get(PARENT)) {
+        const parent = context.lookup(up)
+        if (!(parent instanceof PDFDict)) break
+        seen.add(up)
+        ref = up
+        top = parent
+      }
+      const list = acroForm.lookup(FIELDS)
+      const at = list instanceof PDFArray ? list.indexOf(ref) : undefined
+      // Under a new parent, a field without /T would pass for a widget (pdf-lib tells them apart by /T).
+      if (at === undefined || !top.has(T)) continue
+      ;(list as PDFArray).remove(at)
+      const place = parentFields(acroForm, field.name.slice(0, -name.length - 1).split('.'))
+      place.kids.push(ref)
+      if (place.parent) top.set(PARENT, place.parent)
+      moved++
+    }
+  }
+  return moved
 }

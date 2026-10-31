@@ -111,7 +111,7 @@ async function paste(page: Page, data: { text?: string; image?: boolean }): Prom
 const placedKinds = (page: Page) => page.locator('[data-element-id]').evaluateAll((els) => els.map((el) => el.getAttribute('data-kind')))
 
 test.describe('a long document', () => {
-  test('scrolling a new text box out of reach ends its edit, without undoing later work', async ({ page }, testInfo) => {
+  test('scrolling a new text box out of reach keeps its edit; ending it later undoes no other work', async ({ page }, testInfo) => {
     const errors = trackPageErrors(page)
     await gotoHome(page)
     await openPdf(page, await longPdf(testInfo.outputPath('long.pdf')))
@@ -121,12 +121,14 @@ test.describe('a long document', () => {
     await clickPagePoint(page, 0, { x: 300, y: 300 }, LETTER)
     await expectEditing(page)
     await wheelToPage(page, 11)
-    await expect(firstPageLayer(page)).toHaveCount(0)
-    // The edit ended with its page: no editor left open, and the empty box is gone.
+    // The page being typed on keeps its layer, so the edit goes on.
+    await expect(textEditor(page)).toBeFocused()
+    // Filling a field there ends it: no editor left open, page 1 lets go of its layer, and the empty box is gone.
+    await fillFormField(page, 'far', 'Hello world')
     await expect(textEditor(page)).toHaveCount(0)
+    await expect(firstPageLayer(page)).toHaveCount(0)
     await expect((await itemsList(page)).locator('[data-item-row]')).toHaveCount(0)
 
-    await fillFormField(page, 'far', 'Hello world')
     await clickPagePoint(page, 11, { x: 400, y: 500 }, LETTER)
     await expectFormFieldValue(page, 'far', 'Hello world')
     await page.keyboard.press('ControlOrMeta+z')

@@ -101,8 +101,10 @@ export interface ImageElement extends ElementBase {
 
 /**
  * Rendering convention (screen and export MUST both follow it):
- *  - rect / ellipse: the stroke is centered on a path inset by strokeWidth/2 from the element
- *    box, so the whole stroke stays inside the box; fill covers that inset path.
+ *  - rect / ellipse: the stroke is centered on a path inset by half its width from the element
+ *    box, so the whole stroke stays inside the box; fill covers that inset path. A stroke wider
+ *    than half the box's smaller side is drawn at min(strokeWidth, width/2, height/2), so the
+ *    shape shows solid inside its box.
  *  - line: from (x, y) to (x + width, y + height), or from (x, y + height) to (x + width, y)
  *    when `flip`; not inset; round line caps. width/height may be 0 for straight lines.
  *  - A "highlight" (fillColor === HIGHLIGHT_COLOR and strokeColor === null) is painted with a

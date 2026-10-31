@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
-import { charCount, graphemes, layoutTextBlock, type TextMeasurer, type TextStyle } from './layout'
+import { describe, expect, it, vi } from 'vitest'
+import type { FontId } from '../../model/types'
+import { baselineOffset, charCount, graphemes, layoutTextBlock, measureTextCanvas, type TextMeasurer, type TextStyle } from './layout'
 
 // Every UTF-16 unit is half an em wide.
 const measure: TextMeasurer = (text, _f, _b, size) => text.length * size * 0.5
@@ -39,5 +40,32 @@ describe('layoutTextBlock', () => {
     // Right alignment uses the same widths.
     const right = layoutTextBlock('e\u0301te\nab', spaced, 'right', measure)
     expect(right.lines[1].x).toBeCloseTo(right.width - (10 + 2 * 2))
+  })
+})
+
+describe('a font id this build does not know (saved by another one)', () => {
+  const unknown = 'comic' as FontId
+
+  it('lays the text out in the default font', () => {
+    expect(baselineOffset(unknown, 10, 1.2)).toBe(baselineOffset('sans', 10, 1.2))
+    expect(layoutTextBlock('Hi\nthere', { ...style, fontId: unknown }, 'left', measure)).toEqual(layoutTextBlock('Hi\nthere', style, 'left', measure))
+  })
+
+  it('measures the text in the default font', () => {
+    const fonts: string[] = []
+    const context = {
+      set font(value: string) {
+        fonts.push(value)
+      },
+      fontKerning: 'auto',
+      measureText: (text: string) => ({ width: text.length * 60 }),
+    }
+    vi.stubGlobal('document', { createElement: () => ({ getContext: () => context }) })
+    try {
+      expect(measureTextCanvas('ab', unknown, false, 10)).toBeCloseTo(12)
+      expect(fonts).toEqual(['400 100px "FillFlow Sans"'])
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

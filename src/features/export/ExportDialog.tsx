@@ -142,14 +142,9 @@ export function ExportDialog() {
     [job.status, job.unwritten, doc, formValues],
   )
 
-  // Transient toasts sit above dialogs and would cover the sheet's buttons on phones.
-  useEffect(() => {
-    if (open) toast.dismiss()
-  }, [open])
-
   // ⌘O / ⌘S never open the browser's "Open file" / "Save page" dialogs, wherever focus is in
-  // here: the shell's handler never sees the keys stopped below, and goes by the typed letter,
-  // which other layouts (Hebrew…) don't produce. This one goes by physical key, like the browser.
+  // here: the shell's handler never sees the keys stopped below. Like the browser, this goes by
+  // the letter the layout types, or by physical key on layouts without Latin letters (Hebrew…).
   useEffect(() => {
     if (!open) return
     const onKeyDown = (e: KeyboardEvent) => {

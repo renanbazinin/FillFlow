@@ -115,9 +115,51 @@ describe('documents', () => {
     await remember('listed', 1000)
     await db.saveSession(session('listed'))
     await db.saveSession(session('unlisted'))
+    expect(await db.hasUnlistedSessions()).toBe(true)
     await db.forgetUnlistedSessions()
+    expect(await db.hasUnlistedSessions()).toBe(false)
     expect(await db.loadSession('listed')).not.toBeNull()
     expect(await db.loadSession('unlisted')).toBeNull()
+  })
+
+  it('tells whether work is kept for documents that are no longer listed', async () => {
+    expect(await db.hasUnlistedSessions()).toBe(false)
+    await remember('a', 1000)
+    await db.saveSession(session('a'))
+    expect(await db.hasUnlistedSessions()).toBe(false)
+    await db.removeRecentDocument('a')
+    expect(await db.hasUnlistedSessions()).toBe(true)
+  })
+
+  it('lets go of the work on unlisted documents not worked on for a long time, and only that', async () => {
+    const maxAge = db.UNLISTED_SESSION_MAX_AGE_MS
+    await remember('listed', 1_800_000_000_000)
+    await db.saveSession(session('listed', { updatedAt: now - 2 * maxAge }))
+    await db.saveSession(session('stale', { updatedAt: now - maxAge - 1 }))
+    await db.saveSession(session('recent', { updatedAt: now - maxAge + 1000 }))
+    await db.forgetStaleSessions()
+    expect(await db.loadSession('stale')).toBeNull()
+    // Still within the time it is kept: opening the same file again brings it back.
+    expect(await db.loadSession('recent')).toMatchObject({ updatedAt: now - maxAge + 1000 })
+    // A listed document's work is never let go of, however old.
+    expect(await db.loadSession('listed')).toMatchObject({ updatedAt: now - 2 * maxAge })
+  })
+
+  it('keeps unlisted work it can’t read when letting go of old work', async () => {
+    await db.saveSession(session('unreadable', { updatedAt: 1 }))
+    await db.saveSession(session('stale', { updatedAt: 1 }))
+    const get = IDBObjectStore.prototype.get
+    const read = vi.spyOn(IDBObjectStore.prototype, 'get').mockImplementation(function (this: IDBObjectStore, key: IDBValidKey | IDBKeyRange) {
+      if (key !== 'unreadable') return get.call(this, key)
+      // Its data is gone (e.g. a missing blob file): the read fails.
+      const failing = {} as IDBRequest
+      queueMicrotask(() => failing.onerror?.call(failing, new Event('error', { cancelable: true })))
+      return failing
+    })
+    await db.forgetStaleSessions()
+    read.mockRestore()
+    expect(await db.loadSession('stale')).toBeNull()
+    expect(await db.loadSession('unreadable')).not.toBeNull()
   })
 
   it('forgets a document completely', async () => {

@@ -192,13 +192,48 @@ async function pruneRecentDocuments(): Promise<void> {
   await Promise.all(list.slice(MAX_RECENT_DOCUMENTS).map((d) => removeRecentDocument(d.id)))
 }
 
-/** Deletes the saved work on documents that are no longer in the recents list. */
-export async function forgetUnlistedSessions(): Promise<void> {
+/** Work on a document that is no longer in the recents list is kept this long after its last save. */
+export const UNLISTED_SESSION_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000
+
+/** Keys of the saved work on documents that are no longer in the recents list. */
+async function unlistedSessionKeys(): Promise<IDBValidKey[]> {
   const { recents, sessions } = db()
   const [listed, saved] = await Promise.all([keys(recents), keys(sessions)])
   const keep = new Set(listed)
-  const unlisted = saved.filter((key) => !keep.has(key))
-  if (unlisted.length) await delMany(unlisted, sessions)
+  return saved.filter((key) => !keep.has(key))
+}
+
+/** Whether work is still saved for documents that are no longer in the recents list. */
+export async function hasUnlistedSessions(): Promise<boolean> {
+  return (await unlistedSessionKeys()).length > 0
+}
+
+/** Deletes the saved work on documents that are no longer in the recents list. */
+export async function forgetUnlistedSessions(): Promise<void> {
+  const unlisted = await unlistedSessionKeys()
+  if (unlisted.length) await delMany(unlisted, db().sessions)
+}
+
+/**
+ * Deletes the saved work on documents that are no longer in the recents list and haven't been
+ * worked on for `UNLISTED_SESSION_MAX_AGE_MS`. Until then, opening the same file again brings
+ * it back. Listed documents' work is never read or touched.
+ */
+export async function forgetStaleSessions(): Promise<void> {
+  const unlisted = await unlistedSessionKeys()
+  if (!unlisted.length) return
+  const cutoff = Date.now() - UNLISTED_SESSION_MAX_AGE_MS
+  await db().sessions('readwrite', (os) => {
+    for (const key of unlisted) {
+      const read = os.get(key)
+      read.onsuccess = () => {
+        if (read.result !== undefined && storedVersion(read.result) < cutoff) os.delete(key)
+      }
+      // Unreadable right now: leave it for another time.
+      read.onerror = (e) => e.preventDefault()
+    }
+    return promisifyRequest(os.transaction)
+  })
 }
 
 // --- Sessions ---------------------------------------------------------------

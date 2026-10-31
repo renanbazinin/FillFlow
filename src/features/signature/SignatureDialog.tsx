@@ -69,8 +69,6 @@ export function SignatureDialog() {
     if (!openRole) return
     useSignatureDraft.getState().prefill(openRole)
     void preloadSignatureFonts()
-    // Transient toasts sit above dialogs and would cover the sheet's controls on phones.
-    toast.dismiss()
   }, [openRole])
 
   // Pasting an image anywhere in the dialog uploads it (captured first, so the editor's own
@@ -106,9 +104,12 @@ export function SignatureDialog() {
       }
       const undoKey = (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && shortcutLetter(e) === 'z'
       if (!undoKey || isEditableTarget(e.target) || useSignatureDraft.getState().tab !== 'draw') return
-      // Not when it's meant for a confirmation on top of the dialog.
+      // Not when it's meant for a confirmation on top of the dialog, even once focus fell to <body>
+      // there (a press on its backdrop): the last modal opened is the one on top.
       const dialog = bodyRef.current?.closest('[role="dialog"]')
-      if (e.target !== document.body && !(e.target instanceof Node && dialog?.contains(e.target))) return
+      const modals = document.querySelectorAll('[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]')
+      if (!dialog || modals[modals.length - 1] !== dialog) return
+      if (e.target !== document.body && !(e.target instanceof Node && dialog.contains(e.target))) return
       e.preventDefault()
       useSignatureDraft.getState().undoStroke(openRole)
     }

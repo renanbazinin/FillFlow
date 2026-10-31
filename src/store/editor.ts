@@ -16,6 +16,7 @@ import type {
   ToolId,
 } from '../model/types'
 import { defaultFormValues, extractFormFields, getFormDocumentInfo } from '../lib/pdf/formFields'
+import { storedValue } from '../lib/pdf/forms/values'
 import { looksLikePdf, openPdf, PasswordRequiredError, readPageInfos, type PDFDocumentProxy } from '../lib/pdf/pdfjs'
 import { loadDocumentBytes, loadSession, rememberDocument } from '../lib/storage/db'
 import { clearMeasureCache } from '../lib/text/layout'
@@ -43,11 +44,18 @@ export interface LoadedDocument {
   pdf: PDFDocumentProxy
   pages: PageInfo[]
   formFields: FormField[]
+  /** Its saved work couldn't be read when it opened, so it opened without it. */
+  sessionLoadFailed?: boolean
 }
 
 export type LoadState =
   | { status: 'idle' }
-  | { status: 'loading'; fileName: string }
+  | {
+      status: 'loading'
+      fileName: string
+      /** Trying the password entered in the prompt, which stays up meanwhile. */
+      unlocking?: boolean
+    }
   | { status: 'password'; fileName: string; incorrect: boolean }
   | { status: 'error'; fileName: string; message: string }
 
@@ -119,6 +127,8 @@ export interface EditorActions {
   /** Re-try a password-protected open; `null` cancels. */
   submitPassword(password: string | null): Promise<void>
   openRecent(id: string, name: string): Promise<boolean>
+  /** Gives up on the open in progress (or the password prompt): the open document, if any, stays. */
+  cancelOpen(): void
   closeDocument(): void
   dismissLoadError(): void
 
@@ -256,7 +266,10 @@ function sameContent(a: Content, b: Content): boolean {
 
 /** Pending input while waiting for a password. */
 let pendingOpen: { name: string; bytes: Uint8Array } | null = null
+/** Bumped by every open, cancel and close: an open started under an older token never applies. */
 let openToken = 0
+/** Settles the open in progress as not opened once it is superseded (see `runOpen`). */
+let abandonOpen: (() => void) | null = null
 let lastCoalesce: { key: string; at: number } | null = null
 let gestureStart: Content | null = null
 
@@ -310,10 +323,28 @@ export const useEditor = create<EditorStore>()(
       return selection.filter((id) => ids.has(id))
     }
 
-    async function finishOpen(name: string, bytes: Uint8Array, password?: string): Promise<boolean> {
-      // A newer open (or close) supersedes this one; whoever finishes last must not win.
-      const token = ++openToken
-      set({ load: { status: 'loading', fileName: name } })
+    /** Supersedes the open in progress, if any: it never applies, and nothing waits on it any more. */
+    function supersedeOpen(): number {
+      abandonOpen?.()
+      abandonOpen = null
+      return ++openToken
+    }
+
+    /**
+     * Runs `open` as the open in progress, under a new token (see `openToken`). Resolves with
+     * whether it opened, or with false as soon as it is superseded, even while one of its steps
+     * (pdf.js, storage) never ends: each checks the token once it does.
+     */
+    function runOpen(load: Extract<LoadState, { status: 'loading' }>, open: (token: number) => Promise<boolean>): Promise<boolean> {
+      const token = supersedeOpen()
+      set({ load })
+      const abandoned = new Promise<boolean>((resolve) => (abandonOpen = () => resolve(false)))
+      return Promise.race([open(token), abandoned])
+    }
+
+    async function finishOpen(token: number, name: string, bytes: Uint8Array, password?: string): Promise<boolean> {
+      // A newer open, a cancel or a close supersedes this one, however late it finishes.
+      if (token !== openToken) return false
       let opening: Promise<PDFDocumentProxy> | null = null
       let pdf: PDFDocumentProxy | null = null
       try {
@@ -321,12 +352,21 @@ export const useEditor = create<EditorStore>()(
         opening = openPdf(bytes, password)
         const [id, opened] = await Promise.all([sha256Hex(bytes), opening])
         pdf = opened
+        // Given up on while pdf.js was busy: let go of the document now rather than after the rest.
+        if (token !== openToken) {
+          void pdf.loadingTask.destroy()
+          return false
+        }
         const pages = await readPageInfos(pdf)
         const formFields = await extractFormFields(pdf, pages).catch((err) => {
           console.warn('[forms] could not read form fields', err)
           return [] as FormField[]
         })
-        const session = await loadSession(id).catch(() => null)
+        // undefined: the saved work couldn't be read, so the document opens without it.
+        const session = await loadSession(id).catch((err: unknown) => {
+          console.warn('[storage] could not read the saved work', err)
+          return undefined
+        })
         const elements = session?.elements ?? []
         // Load the fonts this document uses before measuring any text.
         const fonts = new Map<string, [FontId, boolean]>()
@@ -347,7 +387,7 @@ export const useEditor = create<EditorStore>()(
         lastCoalesce = null
         pendingOpen = null
         set({
-          doc: { id, name, bytes, pdf, pages, formFields },
+          doc: { id, name, bytes, pdf, pages, formFields, sessionLoadFailed: session === undefined },
           load: { status: 'idle' },
           elements: elements.map((e) => (e.kind === 'text' ? withTextLayout(e) : e)),
           formValues: { ...defaultFormValues(formFields), ...session?.formValues },
@@ -404,51 +444,59 @@ export const useEditor = create<EditorStore>()(
       rightPanelTab: 'items',
 
       // --- document -------------------------------------------------------
-      async openDocument(input, password) {
+      openDocument(input, password) {
         const name = input instanceof File ? input.name : input.name
-        set({ load: { status: 'loading', fileName: name } })
-        let bytes: Uint8Array
-        try {
-          bytes = input instanceof File ? new Uint8Array(await input.arrayBuffer()) : input.bytes
-        } catch {
-          set({ load: { status: 'error', fileName: name, message: 'Could not read the file.' } })
-          return false
-        }
-        return finishOpen(name, bytes, password)
+        return runOpen({ status: 'loading', fileName: name }, async (token) => {
+          let bytes: Uint8Array
+          try {
+            bytes = input instanceof File ? new Uint8Array(await input.arrayBuffer()) : input.bytes
+          } catch {
+            if (token === openToken) set({ load: { status: 'error', fileName: name, message: 'Could not read the file.' } })
+            return false
+          }
+          return finishOpen(token, name, bytes, password)
+        })
       },
 
       async submitPassword(password) {
         const p = pendingOpen
-        if (!p || password === null) {
-          pendingOpen = null
-          set({ load: { status: 'idle' } })
-          return
-        }
-        await finishOpen(p.name, p.bytes, password)
+        if (!p || password === null) return get().cancelOpen()
+        await runOpen({ status: 'loading', fileName: p.name, unlocking: true }, (token) => finishOpen(token, p.name, p.bytes, password))
       },
 
-      async openRecent(id, name) {
-        set({ load: { status: 'loading', fileName: name } })
-        let bytes: Uint8Array | null
-        try {
-          bytes = await loadDocumentBytes(id)
-        } catch (err) {
-          // The record may still be there (and the work saved with it): don't call it gone.
-          console.warn('[storage] could not read document', err)
-          set({ load: { status: 'error', fileName: name, message: 'Couldn’t read this document from this device’s storage.' } })
-          return false
-        }
-        if (!bytes) {
-          set({ load: { status: 'error', fileName: name, message: 'This document is no longer stored on this device.' } })
-          return false
-        }
-        return finishOpen(name, bytes)
+      openRecent(id, name) {
+        return runOpen({ status: 'loading', fileName: name }, async (token) => {
+          let bytes: Uint8Array | null
+          try {
+            bytes = await loadDocumentBytes(id)
+          } catch (err) {
+            // The record may still be there (and the work saved with it): don't call it gone.
+            console.warn('[storage] could not read document', err)
+            if (token === openToken) {
+              set({ load: { status: 'error', fileName: name, message: 'Couldn’t read this document from this device’s storage.' } })
+            }
+            return false
+          }
+          if (token !== openToken) return false
+          if (!bytes) {
+            set({ load: { status: 'error', fileName: name, message: 'This document is no longer stored on this device.' } })
+            return false
+          }
+          return finishOpen(token, name, bytes)
+        })
+      },
+
+      cancelOpen() {
+        // An open still in progress finds its token out of date and lets go of what it parsed.
+        supersedeOpen()
+        pendingOpen = null
+        set({ load: { status: 'idle' } })
       },
 
       closeDocument() {
         const { doc } = get()
         if (doc) void doc.pdf.loadingTask.destroy()
-        openToken++
+        supersedeOpen()
         pendingOpen = null
         gestureStart = null
         lastCoalesce = null
@@ -535,7 +583,7 @@ export const useEditor = create<EditorStore>()(
 
       setFormValue(name, value, opts) {
         const { formValues } = get()
-        if (formValues[name] === value) return
+        if (storedValue(formValues, name) === value) return
         commit({ formValues: { ...formValues, [name]: value } }, opts)
       },
 
@@ -728,7 +776,7 @@ export function filledCount(s: EditorState = useEditor.getState()): number {
   const fields = s.doc?.formFields ?? []
   let n = s.elements.length
   for (const f of fields) {
-    const v = s.formValues[f.name]
+    const v = storedValue(s.formValues, f.name)
     if (v !== undefined && JSON.stringify(v) !== JSON.stringify(f.defaultValue)) n++
   }
   return n

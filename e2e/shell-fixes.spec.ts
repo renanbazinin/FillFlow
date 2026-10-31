@@ -23,6 +23,19 @@ function focused(page: Page): Promise<string> {
   })
 }
 
+/** A point just inside the start of a (left-to-right) text field's text. */
+function textStart(input: Locator): Promise<{ x: number; y: number }> {
+  return input.evaluate((el) => {
+    const box = el.getBoundingClientRect()
+    return { x: box.left + el.clientLeft + parseFloat(getComputedStyle(el).paddingLeft) + 1, y: box.top + box.height / 2 }
+  })
+}
+
+/** A text field's selection, as [start, end]. */
+function selection(input: Locator): Promise<(number | null)[]> {
+  return input.evaluate((el) => [(el as HTMLInputElement).selectionStart, (el as HTMLInputElement).selectionEnd])
+}
+
 async function openSample(page: Page): Promise<void> {
   await gotoHome(page)
   await openPdf(page, SAMPLE_PDF)
@@ -186,6 +199,90 @@ test('side panel tab panels show keyboard focus; without a form there are no tab
   await expect(page.getByRole('tabpanel')).toHaveCount(0)
 })
 
+test.describe('moving around the Form & items sheet', () => {
+  test.use({ viewport: { width: 800, height: 900 } })
+
+  /** Whether focus is on the sheet's last Tab stop. */
+  function onLastTabStop(page: Page): Promise<boolean> {
+    return page.getByRole('dialog').evaluate((sheet) => {
+      const stops = [...sheet.querySelectorAll<HTMLElement>('a[href], button, input, select, textarea, [tabindex]')].filter(
+        (el) => el.tabIndex >= 0 && !el.matches(':disabled') && el.checkVisibility(),
+      )
+      return stops.length > 1 && stops.at(-1) === document.activeElement
+    })
+  }
+
+  test('Shift+Tab goes from the tabs to the close button, then around to the end', async ({ page }) => {
+    await openSample(page)
+    await page.getByRole('button', { name: 'Form & items' }).focus()
+    await page.keyboard.press('Enter')
+    await expect(page.getByRole('dialog')).toBeVisible()
+    const close = page.getByRole('button', { name: 'Close panel' })
+    const formTab = page.getByRole('tab', { name: /^Form/ })
+    await page.keyboard.press('Tab')
+    await expect(close).toBeFocused()
+    await page.keyboard.press('Tab')
+    await expect(formTab).toBeFocused()
+    await page.keyboard.press('Shift+Tab')
+    await expect(close).toBeFocused()
+    await page.keyboard.press('Shift+Tab')
+    await expect.poll(() => onLastTabStop(page)).toBe(true)
+    // First in Tab order, the close button still shows at the right end of the header.
+    const [closeBox, tabsBox] = await Promise.all([close.boundingBox(), page.getByRole('tablist').boundingBox()])
+    expect(closeBox!.x).toBeGreaterThan(tabsBox!.x + tabsBox!.width)
+  })
+
+  test('a click or Tab from one field to another lands on it', async ({ page }) => {
+    await openSample(page)
+    await page.getByRole('button', { name: 'Form & items' }).click()
+    const field = (name: RegExp) => page.getByRole('dialog').getByRole('textbox', { name })
+    const fullName = field(/^Full name/)
+    await fullName.click()
+    await page.keyboard.type('Ada Lovelace')
+    // Leaving a field takes its "current field" marker away: focus must not drop to the sheet.
+    await field(/^Email/).click()
+    await expect(field(/^Email/)).toBeFocused()
+    await page.keyboard.type('ada@example.com')
+    await expect(field(/^Email/)).toHaveValue('ada@example.com')
+    await page.keyboard.press('Shift+Tab')
+    await expect(field(/^Date of birth/)).toBeFocused()
+    await page.keyboard.press('Tab')
+    await expect(field(/^Email/)).toBeFocused()
+    await expect(fullName).toHaveValue('Ada Lovelace')
+
+    // The browser makes the move itself: the caret goes where the click is, ...
+    const start = await textStart(fullName)
+    await page.mouse.click(start.x, start.y)
+    await page.keyboard.type('X')
+    await expect(fullName).toHaveValue('XAda Lovelace')
+    // ... Tab selects the whole value, ...
+    await field(/^Date of birth/).click()
+    await page.keyboard.press('Shift+Tab')
+    await expect(fullName).toBeFocused()
+    expect(await selection(fullName)).toEqual([0, 'XAda Lovelace'.length])
+    // ... and a drag selects text.
+    await field(/^Email/).click()
+    const box = (await fullName.boundingBox())!
+    await page.mouse.move(start.x, start.y)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width - 4, start.y, { steps: 5 })
+    await page.mouse.up()
+    expect(await selection(fullName)).toEqual([0, 'XAda Lovelace'.length])
+  })
+
+  test('after a press on a tab, Tab into the tab list goes to that tab', async ({ page }) => {
+    await openSample(page)
+    await page.getByRole('button', { name: 'Form & items' }).click()
+    const itemsTab = page.getByRole('tab', { name: /^Items/ })
+    await itemsTab.click()
+    await expect(itemsTab).toHaveAttribute('aria-selected', 'true')
+    await page.keyboard.press('Shift+Tab')
+    await expect(page.getByRole('button', { name: 'Close panel' })).toBeFocused()
+    await page.keyboard.press('Tab')
+    await expect(itemsTab).toBeFocused()
+  })
+})
+
 test.describe('between the phone and tablet layouts', () => {
   test.use({ viewport: { width: 700, height: 900 } })
 
@@ -210,6 +307,38 @@ test.describe('between the phone and tablet layouts', () => {
         return box !== null && box.x >= 16 && box.x + box.width <= 640 - 16
       })
       .toBe(true)
+  })
+})
+
+test.describe('on a short touch screen', () => {
+  test.use({ viewport: { width: 667, height: 375 }, isMobile: true, hasTouch: true })
+
+  test('the More menu stays on screen and scrolls to its last items', async ({ page }) => {
+    await openSample(page)
+    const more = page.getByRole('button', { name: 'More' })
+    const menu = page.getByRole('menu')
+    const close = menu.getByRole('menuitem', { name: 'Close document' })
+
+    await more.focus()
+    await page.keyboard.press('Enter')
+    await expect(menu).toBeVisible()
+    await menu.evaluate(async (el) => {
+      await Promise.all(el.getAnimations().map((a) => a.finished))
+    })
+    const box = (await menu.boundingBox())!
+    expect(box.y + box.height).toBeLessThanOrEqual(375)
+    // Keys scroll the item they move to into view.
+    await page.keyboard.press('End')
+    await expect(close).toBeFocused()
+    await expect(close).toBeInViewport({ ratio: 1 })
+    await page.keyboard.press('Escape')
+
+    await more.tap()
+    await expect(menu).toBeVisible()
+    await close.scrollIntoViewIfNeeded()
+    await expect(close).toBeInViewport({ ratio: 1 })
+    await close.tap()
+    await expect(page.getByRole('button', { name: /try a sample form/i })).toBeVisible()
   })
 })
 
@@ -246,6 +375,22 @@ test.describe('toasts and modals on a phone', () => {
       [box.x + box.width / 2, box.y + box.height / 2],
     )
     expect(hitsToast).toBe(true)
+  })
+
+  test('a tap from one field to another in a sheet puts the caret where it is', async ({ page }) => {
+    await openSample(page)
+    await page.getByRole('button', { name: 'More' }).tap()
+    await page.getByRole('menuitem', { name: /Form & items/ }).tap()
+    const field = (name: RegExp) => page.getByRole('dialog').getByRole('textbox', { name })
+    const fullName = field(/^Full name/)
+    await fullName.tap()
+    await page.keyboard.type('Ada Lovelace')
+    await field(/^Email/).tap()
+    await expect(field(/^Email/)).toBeFocused()
+    const start = await textStart(fullName)
+    await page.touchscreen.tap(start.x, start.y)
+    await page.keyboard.type('X')
+    await expect(fullName).toHaveValue('XAda Lovelace')
   })
 })
 
@@ -357,6 +502,21 @@ test('a "Clear all items" from the menu says locked items stay', async ({ page }
   await expect(confirmDialog).toContainText('One locked item stays')
   await confirmDialog.getByRole('button', { name: 'Clear all' }).click()
   await expect(page.locator('[data-page-index="1"]').getByText('Keep me')).toBeVisible()
+})
+
+test('Ctrl/⌘+O opens another PDF on a Hebrew keyboard layout too', async ({ page }) => {
+  // Listening from the start, so the file picker is caught by the time the key goes in (it goes
+  // through a CDP session of its own, which doesn't wait for Playwright's).
+  let pickers = 0
+  page.on('filechooser', () => pickers++)
+  await openSample(page)
+  const before = pickers
+  // A real key press on the O key, which types ם on that layout.
+  const cdp = await page.context().newCDPSession(page)
+  const key = { key: 'ם', code: 'KeyO', windowsVirtualKeyCode: 79, modifiers: process.platform === 'darwin' ? 4 : 2 }
+  await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...key })
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...key })
+  await expect.poll(() => pickers).toBe(before + 1)
 })
 
 test('a Hebrew file name keeps its own order inside the password prompt', async ({ page }) => {

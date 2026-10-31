@@ -1,4 +1,4 @@
-import { FONTS } from '../../model/fonts'
+import { fontDef } from '../../model/fonts'
 import type { FontId, TextAlign } from '../../model/types'
 
 /**
@@ -48,7 +48,7 @@ export const EMPTY_TEXT_WIDTH_EM = 0.6
 
 /** Distance from the top of a line box to its baseline, in points. */
 export function baselineOffset(fontId: FontId, fontSize: number, lineHeight: number): number {
-  const f = FONTS[fontId]
+  const f = fontDef(fontId)
   const ascent = (f.ascent / f.unitsPerEm) * fontSize
   const descent = (f.descent / f.unitsPerEm) * fontSize
   const lineBox = fontSize * lineHeight
@@ -146,7 +146,7 @@ export function measureTextCanvas(text: string, fontId: FontId, bold: boolean, f
   let w100 = cache.get(key)
   if (w100 === undefined) {
     const c = getContext()
-    c.font = `${bold ? 700 : 400} ${MEASURE_PX}px "${FONTS[fontId].cssFamily}"`
+    c.font = `${bold ? 700 : 400} ${MEASURE_PX}px "${fontDef(fontId).cssFamily}"`
     c.fontKerning = 'none'
     w100 = c.measureText(text).width
     if (cache.size > 5000) cache.clear()

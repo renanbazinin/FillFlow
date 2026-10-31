@@ -31,9 +31,13 @@ type Matrix = [number, number, number, number, number, number]
 
 /** Annotation types whose appearance is plain markup (nothing interactive or embedded is lost). */
 const BAKEABLE = new Set(['Text', 'FreeText', 'Line', 'Square', 'Circle', 'Polygon', 'PolyLine', 'Highlight', 'Underline', 'Squiggly', 'StrikeOut', 'Caret', 'Ink', 'Stamp', 'Watermark'])
+/** Text markup, which pdf.js (the editor) draws only with valid /QuadPoints. */
+const TEXT_MARKUP = new Set(['Highlight', 'Underline', 'Squiggly', 'StrikeOut'])
 
-/** Flags that keep an annotation off the screen: Invisible, Hidden, NoView. */
-const OFF_SCREEN = 1 | 2 | 32
+/** Flags that keep an annotation off the screen: Hidden, NoView. */
+const OFF_SCREEN = 2 | 32
+/** Invisible: hides only types the viewer doesn't know (of the ones above, pdf.js doesn't know Watermark). */
+const INVISIBLE = 1
 /** The Print flag (unset by default): without it, an annotation never reaches paper. */
 const PRINT = 4
 
@@ -44,8 +48,21 @@ const PARENT = PDFName.of('Parent')
 
 function numbers(obj: PDFObject | undefined, length: number): number[] | null {
   if (!(obj instanceof PDFArray) || obj.size() !== length) return null
-  const out = obj.asArray().map((o) => (o instanceof PDFNumber ? o.asNumber() : NaN))
+  // Elements may be indirect: pdf.js (the editor) resolves them.
+  const out = Array.from({ length }, (_, i) => obj.lookup(i)).map((o) => (o instanceof PDFNumber ? o.asNumber() : NaN))
   return out.every(Number.isFinite) ? out : null
+}
+
+/** Whether pdf.js (the editor) shows the annotation on screen and in print: its viewable / printable rules. */
+function shownAndPrinted(dict: PDFDict, type: string): boolean {
+  // Flags that aren't a positive integer count as none.
+  const flags = dict.lookup(PDFName.of('F'))
+  const f = flags instanceof PDFNumber && Number.isInteger(flags.asNumber()) && flags.asNumber() > 0 ? flags.asNumber() : 0
+  if (!(f & PRINT) || f & OFF_SCREEN || (f & INVISIBLE && type === 'Watermark')) return false
+  if (!TEXT_MARKUP.has(type)) return true
+  const quads = dict.lookup(PDFName.of('QuadPoints'))
+  const n = quads instanceof PDFArray ? quads.size() : 0
+  return n > 0 && n % 8 === 0 && numbers(quads, n) !== null
 }
 
 /** PDF 32000-1 §12.5.5: maps the appearance's transformed BBox onto the annotation's /Rect. */
@@ -118,14 +135,13 @@ export function bakeAnnotationsUnder(doc: PDFDocument, page: PDFPage, info: Page
     const raw = annots.get(i)
     if (!(dict instanceof PDFDict)) continue
     const rect = numbers(dict.lookup(PDFName.of('Rect')), 4)
-    const flags = dict.lookup(PDFName.of('F'))
-    const f = flags instanceof PDFNumber ? flags.asNumber() : 0
-    if (!rect || f & OFF_SCREEN) continue
-    const subtype = dict.lookup(PDFName.of('Subtype'))
+    if (!rect) continue
+    const subtype = dict.lookup(SUBTYPE)
+    const type = subtype instanceof PDFName ? subtype.decodeText() : ''
     let bake: Entry['bake'] = null
-    // Screen-only annotations, and those in an optional content group (which keep their own
-    // visibility rules), are left alone.
-    if (f & PRINT && subtype instanceof PDFName && BAKEABLE.has(subtype.decodeText()) && !dict.has(PDFName.of('OC'))) {
+    // What the editor doesn't show, screen-only annotations, and those in an optional content
+    // group (which keep their own visibility rules), are left alone.
+    if (BAKEABLE.has(type) && shownAndPrinted(dict, type) && !dict.has(PDFName.of('OC'))) {
       const ap = normalAppearance(doc, dict)
       const m = ap ? appearancePlacement(doc.context.lookup(ap) as PDFStream, rect) : null
       if (ap && m) bake = { ap, m }

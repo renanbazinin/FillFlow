@@ -19,7 +19,7 @@ vi.mock('../lib/utils/misc', async (original) => {
   return { ...misc, sha256Hex: vi.fn(misc.sha256Hex) }
 })
 
-const { useEditor, parseStyles } = await import('./editor')
+const { useEditor, filledCount, parseStyles } = await import('./editor')
 const pdfjs = await import('../lib/pdf/pdfjs')
 const db = await import('../lib/storage/db')
 const misc = await import('../lib/utils/misc')
@@ -149,6 +149,20 @@ describe('editor store history', () => {
     s().clearAll()
     expect(s().elements).toEqual([])
     expect(s().formValues).toEqual({ name: 'orig' })
+    useEditor.setState({ doc: null })
+  })
+
+  it('never takes a property every object inherits for the value of a field named after it', () => {
+    const field = (name: string): FormField => ({ name, type: 'text', widgets: [], readOnly: false, required: false, defaultValue: '' })
+    const formFields = ['constructor', '__proto__', 'toString'].map(field)
+    const pdf = { loadingTask: { destroy: async () => {} } } as never
+    useEditor.setState({ doc: { id: 'x', name: 'x.pdf', bytes: new Uint8Array(), pdf, pages: [], formFields } })
+    expect(filledCount()).toBe(0)
+    s().setFormValue('__proto__', 'Ada')
+    s().setFormValue('constructor', '')
+    expect(Object.hasOwn(s().formValues, '__proto__')).toBe(true)
+    expect(s().formValues).toEqual({ ['__proto__']: 'Ada', constructor: '' })
+    expect(filledCount()).toBe(1)
     useEditor.setState({ doc: null })
   })
 
@@ -305,5 +319,114 @@ describe('opening documents', () => {
     vi.mocked(db.loadDocumentBytes).mockResolvedValueOnce(null)
     expect(await s().openRecent('id', 'f.pdf')).toBe(false)
     expect(s().load).toMatchObject({ status: 'error', message: 'This document is no longer stored on this device.' })
+  })
+
+  /** A promise settled by the test. */
+  function deferred<T>() {
+    let resolve!: (value: T) => void
+    let reject!: (err: unknown) => void
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res
+      reject = rej
+    })
+    return { promise, resolve, reject }
+  }
+
+  /** Opens `bytes`, every step succeeding; `readSession` stands in for reading its saved work. */
+  async function openFully(readSession: () => Promise<null> = async () => null) {
+    const pdf = fakePdf()
+    vi.mocked(pdfjs.openPdf).mockResolvedValueOnce(pdf as never)
+    vi.mocked(pdfjs.readPageInfos).mockResolvedValueOnce([])
+    vi.mocked(db.loadSession).mockImplementationOnce(readSession)
+    vi.mocked(db.rememberDocument).mockResolvedValueOnce()
+    const opened = await s().openDocument(bytes)
+    return { pdf, opened }
+  }
+
+  it('opens a document whose saved work can’t be read without it, and says so on the document', async () => {
+    const lost = await openFully(() => Promise.reject(new DOMException('Data lost due to missing file.', 'NotReadableError')))
+    expect(lost.opened).toBe(true)
+    expect(s().doc).toMatchObject({ name: 'f.pdf', sessionLoadFailed: true })
+    expect(s().elements).toEqual([])
+    expect((await openFully()).opened).toBe(true)
+    expect(s().doc?.sessionLoadFailed).toBe(false)
+  })
+
+  /** Lets pending promise chains run. */
+  const settled = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+  it('a cancelled open never applies nor is waited on, lets go of what it parsed and leaves the open document', async () => {
+    await openFully()
+    const open = s().doc
+    const parsing = deferred<unknown>()
+    vi.mocked(pdfjs.openPdf).mockReturnValueOnce(parsing.promise as never)
+    vi.mocked(pdfjs.readPageInfos).mockClear()
+    const late = s().openDocument({ name: 'g.pdf', bytes: bytes.bytes })
+    expect(s().load).toEqual({ status: 'loading', fileName: 'g.pdf' })
+    s().cancelOpen()
+    expect(s().load).toEqual({ status: 'idle' })
+    // Settled at once, while pdf.js is still busy (a stalled load may never finish).
+    expect(await late).toBe(false)
+    const pdf = fakePdf()
+    parsing.resolve(pdf)
+    await vi.waitFor(() => expect(pdf.loadingTask.destroy).toHaveBeenCalledTimes(1))
+    expect(pdfjs.readPageInfos).not.toHaveBeenCalled()
+    expect(s().doc).toBe(open)
+    expect(open?.pdf.loadingTask.destroy).not.toHaveBeenCalled()
+    expect(s().load).toEqual({ status: 'idle' })
+  })
+
+  it('a stored document read after a cancel neither opens nor reports a failure', async () => {
+    vi.mocked(pdfjs.openPdf).mockClear()
+    const found = deferred<Uint8Array | null>()
+    vi.mocked(db.loadDocumentBytes).mockReturnValueOnce(found.promise)
+    const late = s().openRecent('id', 'f.pdf')
+    s().cancelOpen()
+    expect(await late).toBe(false)
+    found.resolve(bytes.bytes)
+    await settled()
+    expect(pdfjs.openPdf).not.toHaveBeenCalled()
+
+    const failed = deferred<Uint8Array | null>()
+    vi.mocked(db.loadDocumentBytes).mockReturnValueOnce(failed.promise)
+    const lateFailure = s().openRecent('id', 'f.pdf')
+    s().cancelOpen()
+    expect(await lateFailure).toBe(false)
+    failed.reject(new Error('NotReadableError'))
+    await settled()
+    expect(s().load).toEqual({ status: 'idle' })
+  })
+
+  it('the open started last wins, however long reading the earlier file takes', async () => {
+    const file = new File([bytes.bytes], 'slow.pdf', { type: 'application/pdf' })
+    const reading = deferred<ArrayBuffer>()
+    vi.spyOn(file, 'arrayBuffer').mockReturnValueOnce(reading.promise)
+    const slow = s().openDocument(file)
+    expect((await openFully()).opened).toBe(true)
+    expect(await slow).toBe(false)
+    reading.resolve(bytes.bytes.slice().buffer)
+    await settled()
+    expect(s().doc?.name).toBe('f.pdf')
+    expect(s().load).toEqual({ status: 'idle' })
+  })
+
+  it('cancels the password prompt, even while the password is being tried', async () => {
+    vi.mocked(pdfjs.openPdf).mockRejectedValueOnce(new pdfjs.PasswordRequiredError(false))
+    await s().openDocument(bytes)
+    expect(s().load.status).toBe('password')
+    const trying = deferred<unknown>()
+    vi.mocked(pdfjs.openPdf).mockReturnValueOnce(trying.promise as never)
+    const attempt = s().submitPassword('secret')
+    expect(s().load).toEqual({ status: 'loading', fileName: 'f.pdf', unlocking: true })
+    await s().submitPassword(null)
+    expect(s().load).toEqual({ status: 'idle' })
+    await attempt
+    const pdf = fakePdf()
+    trying.resolve(pdf)
+    await vi.waitFor(() => expect(pdf.loadingTask.destroy).toHaveBeenCalledTimes(1))
+    expect(s().doc).toBeNull()
+    // Nothing is left to retry.
+    await s().submitPassword('again')
+    expect(s().load).toEqual({ status: 'idle' })
   })
 })

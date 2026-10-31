@@ -1,10 +1,22 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
-import { SAMPLE_PDF, clickPagePoint, gotoHome, openPdf, pdfPage, showPage, trackPageErrors } from './support/app'
+import {
+  SAMPLE_PDF,
+  clickPagePoint,
+  fillFormField,
+  gotoHome,
+  openPdf,
+  pdfPage,
+  recentDocument,
+  showPage,
+  storedSessions,
+  trackPageErrors,
+} from './support/app'
 import { readViewSizes } from './support/pdf'
 
 /**
  * The signature dialog and picture import: text pasted along with a picture of it, Ctrl/⌘+S and
- * Ctrl/⌘+O inside the dialog (on any keyboard layout), keyboard focus inside the dialog, and SVG files.
+ * Ctrl/⌘+O inside the dialog (on any keyboard layout), keyboard focus inside the dialog and back on
+ * the dock, Ctrl/⌘+Z under a confirmation, error messages, and SVG and EXIF-rotated pictures.
  */
 
 /** A 24 × 24 icon, as icon sets ship them. */
@@ -33,6 +45,11 @@ async function openSignatureDialog(page: Page): Promise<Locator> {
   if (await createNew.isVisible()) await createNew.click()
   await expect(dialog).toBeVisible()
   return dialog
+}
+
+/** Waits for the element's own animations (a popover or dialog opening) to finish. */
+async function animationsDone(locator: Locator): Promise<void> {
+  await locator.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)))
 }
 
 /** One mouse stroke across the drawing pad. */
@@ -226,6 +243,183 @@ test('deleting a saved signature from the dialog keeps focus in the dialog', asy
   expect(errors).toEqual([])
 })
 
+test('Ctrl/⌘+Z leaves the drawing alone while a confirmation is open over the dialog', async ({ page }) => {
+  const errors = trackPageErrors(page)
+  await openEditor(page)
+  // A saved signature, to have one to delete.
+  let dialog = await openSignatureDialog(page)
+  await dialog.getByRole('tab', { name: 'Type' }).click()
+  await dialog.getByLabel('Your full name').fill('Ada Lovelace')
+  await dialog.getByRole('button', { name: 'Use signature' }).click()
+  await expect(dialog).toBeHidden()
+  await page.keyboard.press('Escape') // don't place it
+
+  dialog = await openSignatureDialog(page)
+  await dialog.getByRole('tab', { name: 'Draw' }).click()
+  const pad = dialog.getByRole('img', { name: /^Drawing area/ })
+  await drawStroke(page, pad)
+  await drawStroke(page, pad, 0.15)
+  await expect(pad).toHaveAccessibleName(/2 strokes so far/)
+
+  // The delete confirmation, with focus fallen to <body> after a press on its backdrop.
+  await dialog.getByRole('button', { name: /^Delete signature saved/ }).click()
+  const confirmation = page.getByRole('alertdialog')
+  await expect(confirmation).toBeVisible()
+  await page.mouse.click(15, 15)
+  await expect.poll(() => page.evaluate(() => document.activeElement === document.body)).toBe(true)
+  await expect(confirmation).toBeVisible()
+  await page.keyboard.press('ControlOrMeta+z')
+
+  // Closed: the drawing is as it was, and the shortcut undoes strokes again.
+  await confirmation.getByRole('button', { name: 'Cancel' }).click()
+  await expect(confirmation).toBeHidden()
+  await expect(pad).toHaveAccessibleName(/2 strokes so far/)
+  await page.keyboard.press('ControlOrMeta+z')
+  await expect(pad).toHaveAccessibleName(/1 stroke so far/)
+  expect(errors).toEqual([])
+})
+
+test('a new signature or initials started from the saved list by keyboard gives focus back to the dock button', async ({ page }) => {
+  const errors = trackPageErrors(page)
+  await openEditor(page)
+  const focused = () => page.evaluate(() => document.activeElement?.getAttribute('aria-label'))
+  for (const [role, label, shortcut] of [
+    ['signature', 'Signature', 's'],
+    ['initials', 'Initials', 'i'],
+  ] as const) {
+    const dialog = page.getByRole('dialog', { name: `Add your ${role}` })
+    const name = dialog.getByRole('textbox', { name: role === 'signature' ? 'Your full name' : 'Your initials' })
+    const use = dialog.getByRole('button', { name: `Use ${role}` })
+    // One saved, so the dock button opens the saved list.
+    await dockButton(page, label).click()
+    await dialog.getByRole('tab', { name: 'Type' }).click()
+    await name.fill(role === 'signature' ? 'Ada Lovelace' : 'AL')
+    await use.click()
+    await expect(dialog).toBeHidden()
+    await page.keyboard.press('Escape') // don't place it
+
+    const fromDock = async () => {
+      await dockButton(page, label).focus()
+      await page.keyboard.press('Enter')
+    }
+    const fromShortcut = async () => {
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+      await page.keyboard.press(shortcut)
+    }
+    /** Opens the saved list with `open`, starts a new one there by keyboard, then closes the dialog with `close`. */
+    const createNew = async (open: () => Promise<void>, close: () => Promise<void>) => {
+      await open()
+      await page.getByRole('dialog', { name: /^Saved / }).getByRole('button', { name: `New ${role}` }).focus()
+      await page.keyboard.press('Enter')
+      await expect(dialog).toBeVisible()
+      await close()
+      await expect(dialog).toBeHidden()
+      await expect.poll(focused).toBe(label)
+    }
+    await createNew(fromDock, () => page.keyboard.press('Escape'))
+    await createNew(fromShortcut, () => page.keyboard.press('Escape'))
+    await createNew(fromDock, async () => {
+      await dialog.getByRole('button', { name: 'Cancel' }).focus()
+      await page.keyboard.press('Enter')
+    })
+    // Used: while it waits to be placed, the dock button's tooltip doesn't cover the placement hint.
+    await createNew(fromDock, async () => {
+      await dialog.getByRole('tab', { name: 'Type' }).focus()
+      await name.fill(role === 'signature' ? 'Grace Hopper' : 'GH')
+      await use.focus()
+      await page.keyboard.press('Enter')
+    })
+    await expect(page.getByText(`Click to place your ${role}`)).toBeVisible()
+    await expect(page.getByRole('tooltip')).toHaveCount(0)
+    await page.keyboard.press('Escape') // don't place it
+  }
+  expect(errors).toEqual([])
+})
+
+test('opening the saved signatures clears the messages that would cover them; the signature dialog keeps errors', async ({ page }) => {
+  const errors = trackPageErrors(page)
+  await openEditor(page)
+  const shown = page.locator('[data-sonner-toast]:not([data-removed="true"])')
+  // A signature waiting to be placed, with its "Click where…" message.
+  const dialog = await openSignatureDialog(page)
+  await dialog.getByRole('tab', { name: 'Type' }).click()
+  await dialog.getByLabel('Your full name').fill('Ada Lovelace')
+  await dialog.getByRole('button', { name: 'Use signature' }).click()
+  await expect(dialog).toBeHidden()
+  const placeMessage = shown.filter({ hasText: 'Click where you want to place it' })
+  await expect(placeMessage).toBeVisible()
+  // An error that passes: a picture that can't be opened.
+  const pickBrokenPicture = () =>
+    page
+      .locator('input[type="file"][accept="image/*"]')
+      .first()
+      .setInputFiles({ name: 'broken.png', mimeType: 'image/png', buffer: Buffer.from('not a picture') })
+  await pickBrokenPicture()
+  const error = shown.filter({ hasText: /This image couldn.t be opened/ })
+  await expect(error).toBeVisible()
+
+  // The saved list opens where messages sit, so they all go. One left up would hide the newest tile
+  // and, with the pointer resting on it, stay there: a press on the tile would never reach it.
+  await dockButton(page, 'Signature').click()
+  const saved = page.getByRole('dialog', { name: 'Saved signatures' })
+  await expect(saved).toBeVisible()
+  await animationsDone(saved)
+  const box = (await saved.getByRole('button', { name: /^Place signature saved/ }).first().boundingBox())!
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await expect(placeMessage).toHaveCount(0)
+  await expect(error).toHaveCount(0)
+  await expect(page.locator('[data-sonner-toast]')).toHaveCount(0) // gone, not just leaving
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
+  await expect(saved).toBeHidden()
+  await expect(page.getByText('Click to place your signature')).toBeVisible()
+  await page.keyboard.press('Escape') // don't place it
+
+  // The dialog keeps errors: one raised while the saved list is open stays up when "New" opens it.
+  await dockButton(page, 'Signature').click()
+  await expect(saved).toBeVisible()
+  await pickBrokenPicture()
+  await expect(error).toBeVisible()
+  await saved.getByRole('button', { name: 'New signature' }).click()
+  await expect(dialog).toBeVisible()
+  await animationsDone(dialog)
+  await expect(error).toBeVisible()
+  expect(errors).toEqual([])
+})
+
+test('opening the saved signatures leaves up an error that stays until it is acted on', async ({ page, context }) => {
+  const errors = trackPageErrors(page)
+  await openEditor(page)
+  const shown = page.locator('[data-sonner-toast]:not([data-removed="true"])')
+  // One saved, so the dock button opens the saved list.
+  const dialog = await openSignatureDialog(page)
+  await dialog.getByRole('tab', { name: 'Type' }).click()
+  await dialog.getByLabel('Your full name').fill('Ada Lovelace')
+  await dialog.getByRole('button', { name: 'Use signature' }).click()
+  await expect(dialog).toBeHidden()
+  await page.keyboard.press('Escape') // don't place it
+
+  // Newer work on the document is saved in another tab: this one stops saving, and says so until reloaded.
+  const savedName = async (p: Page) => (await storedSessions(p)).find((s) => s.fileName === 'sample-form.pdf')?.formValues['Full name']
+  await fillFormField(page, 'Full name', 'From tab A')
+  await expect.poll(() => savedName(page)).toBe('From tab A')
+  const other = await context.newPage()
+  await gotoHome(other)
+  await (await recentDocument(other, /sample-form/i)).click()
+  await fillFormField(other, 'Full name', 'From tab B')
+  await expect.poll(() => savedName(other)).toBe('From tab B')
+  await other.close()
+  const outdated = shown.filter({ hasText: 'This document was changed in another tab' })
+  await expect(outdated).toBeVisible()
+
+  await dockButton(page, 'Signature').click()
+  const saved = page.getByRole('dialog', { name: 'Saved signatures' })
+  await expect(saved).toBeVisible()
+  await animationsDone(saved)
+  await expect(outdated).toBeVisible()
+  await expect(outdated.getByRole('button', { name: 'Reload' })).toBeVisible()
+  expect(errors).toEqual([])
+})
+
 test('SVG pictures are drawn at full resolution, not at their nominal size', async ({ page }) => {
   const errors = trackPageErrors(page)
   const sizes = await readViewSizes(SAMPLE_PDF)
@@ -258,3 +452,50 @@ test('SVG pictures are drawn at full resolution, not at their nominal size', asy
   expect(signature && Math.max(...signature)).toBe(1600)
   expect(errors).toEqual([])
 })
+
+test('pictures pasted onto the page are prepared like the image tool’s: SVG sharp, photos upright', async ({ page }) => {
+  const errors = trackPageErrors(page)
+  await openEditor(page)
+  const placed = page.locator('[data-element-id] img')
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+
+  // A 24 × 24 icon becomes a 2000 px picture (it used to stay 24 px).
+  await page.evaluate((svg) => {
+    const data = new DataTransfer()
+    data.items.add(new File([svg], 'check.svg', { type: 'image/svg+xml' }))
+    document.body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
+  }, ICON_SVG)
+  await expect
+    .poll(() => placed.evaluateAll((imgs) => imgs.map((img) => [(img as HTMLImageElement).naturalWidth, (img as HTMLImageElement).naturalHeight])))
+    .toEqual([[2000, 2000]])
+
+  // A 40 × 20 photo whose EXIF says to turn it a quarter clockwise is stored turned: 20 × 40 pixels
+  // (a PDF ignores EXIF, so it used to come out sideways and squashed).
+  await page.evaluate(async () => {
+    const canvas = document.createElement('canvas')
+    canvas.width = 40
+    canvas.height = 20
+    canvas.getContext('2d')!.fillRect(0, 0, 40, 20)
+    const jpeg = new Uint8Array(await (await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg')))!.arrayBuffer())
+    // An APP1 "Exif" segment with one entry, Orientation (0x0112) = 6, after the start-of-image marker.
+    const exif = [0xff, 0xe1, 0, 34, 0x45, 0x78, 0x69, 0x66, 0, 0, 0x4d, 0x4d, 0, 42, 0, 0, 0, 8, 0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0, 0, 0, 0, 0]
+    const data = new DataTransfer()
+    data.items.add(new File([jpeg.subarray(0, 2), new Uint8Array(exif), jpeg.subarray(2)], 'photo.jpg', { type: 'image/jpeg' }))
+    document.body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
+  })
+  const photo = page.locator('[data-element-id] img[src^="data:image/jpeg"]')
+  await expect(photo).toHaveCount(1)
+  expect(jpegFrameSize((await photo.getAttribute('src'))!)).toEqual([20, 40])
+  expect(errors).toEqual([])
+})
+
+/** Width and height of a JPEG's pixels as stored (its frame header), whatever its EXIF says. */
+function jpegFrameSize(dataUrl: string): [number, number] | null {
+  const bytes = Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64')
+  for (let i = 2; i + 8 < bytes.length; i += 2 + bytes.readUInt16BE(i + 2)) {
+    const marker = bytes[i + 1]
+    // Start of frame: C0–CF, except DHT (C4), JPG (C8) and DAC (CC).
+    if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) return [bytes.readUInt16BE(i + 7), bytes.readUInt16BE(i + 5)]
+  }
+  return null
+}

@@ -1,4 +1,5 @@
 import type { PDFDocumentProxy } from '../../lib/pdf/pdfjs'
+import { prefersReducedMotion } from '../../lib/utils/motion'
 import type { PageInfo } from '../../model/types'
 import { bitmapTarget, regionTarget, releaseCanvas, renderPageBitmap, retainPage, type BitmapTarget } from './pageRender'
 import { renderQueue } from './renderQueue'
@@ -44,10 +45,6 @@ interface Bitmap {
 interface Coverage {
   fraction: FrameFraction
   scaleKey: string
-}
-
-function prefersReducedMotion(): boolean {
-  return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
 }
 
 /**

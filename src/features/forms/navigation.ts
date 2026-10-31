@@ -36,7 +36,8 @@ export function revealField(field: FormField, opts: { behavior?: ScrollBehavior 
   const widget = primaryWidget(field)
   if (!widget) return undefined
   useEditor.getState().setActiveField(field.name)
-  viewer.scrollToRect(widget.page, widget.rect, { behavior: opts.behavior ?? 'smooth', margin: 96 })
+  // Unless told otherwise, the viewer animates the scroll only when motion is welcome and the jump is short.
+  viewer.scrollToRect(widget.page, widget.rect, { behavior: opts.behavior, margin: 96 })
   return widget
 }
 

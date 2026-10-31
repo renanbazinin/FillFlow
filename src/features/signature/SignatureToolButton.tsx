@@ -59,8 +59,9 @@ export function SignatureToolButton({
           useEditor.getState().openDialog(role)
           return
         }
-        // Toasts share the dock's spot and would cover the tiles.
-        toast.dismiss()
+        // The list opens where toasts sit, and any left up would cover its tiles: clear them all but the
+        // errors that stay until acted on (Reload). A passing autosave failure still shows in the title's save status.
+        for (const t of toast.getToasts()) if (!('type' in t && t.type === 'error' && t.duration === Infinity)) toast.dismiss(t.id)
         setOpen(true)
       })
   }, [role])
@@ -82,8 +83,11 @@ export function SignatureToolButton({
     placeSavedSignature(item)
   }
 
-  const createNew = () => {
+  const createNew = (byKeyboard: boolean) => {
     handedOff.current = true
+    // The dialog gives focus back to what had it when it opened, and this popover will be gone by
+    // then: move keyboard focus to the dock button first. (Clicks get no focus back, as in `activate`.)
+    if (byKeyboard) triggerRef.current?.focus({ preventScroll: true })
     setOpen(false)
     useEditor.getState().openDialog(role)
   }
@@ -120,6 +124,9 @@ export function SignatureToolButton({
           className={className}
           onPointerDown={() => (pressed.current = true)}
           onKeyDown={() => (pressed.current = false)}
+          // Focus coming back while a signature waits to be placed (the dialog closed on "Use"): its
+          // tooltip would cover the placement hint.
+          onFocus={(e) => useEditor.getState().placingAssetId !== null && e.preventDefault()}
         />
       </PopoverTrigger>
       <PopoverContent
@@ -159,7 +166,8 @@ export function SignatureToolButton({
           <p className="px-3 pb-3 text-[13px] text-fg-muted">Nothing saved yet. Create one and tick “Save for next time”.</p>
         )}
         <div className="border-t border-line p-1.5">
-          <Button data-new variant="ghost" size="sm" onClick={createNew} className="w-full justify-start text-fg">
+          {/* Pressing Enter or Space on a button fires a click with no click count. */}
+          <Button data-new variant="ghost" size="sm" onClick={(e) => createNew(e.detail === 0)} className="w-full justify-start text-fg">
             <Plus />
             {role === 'signature' ? 'New signature' : 'New initials'}
           </Button>

@@ -67,6 +67,16 @@ describe('summary counts', () => {
     expect(countChangedFields(fields, { name: 'Ada', city: 'Tel Aviv', tags: [] })).toBe(2)
   })
 
+  it('reads only stored values, also for fields named like what objects inherit', () => {
+    const odd = [field('__proto__', 'text'), field('constructor', 'text'), field('toString', 'checkbox', false)]
+    expect(countFilledFields(odd, {})).toBe(0)
+    expect(countChangedFields(odd, {})).toBe(0)
+    expect(unwrittenFieldLabels(odd, {}, ['__proto__', 'constructor', 'toString'])).toEqual([])
+    const values = JSON.parse('{"__proto__": "Ada", "constructor": "", "toString": true}')
+    expect(countFilledFields(odd, values)).toBe(2)
+    expect(countChangedFields(odd, values)).toBe(2)
+  })
+
   it('pluralizes', () => {
     expect(plural(1, 'page')).toBe('1 page')
     expect(plural(2, 'page')).toBe('2 pages')
@@ -114,8 +124,26 @@ describe('isSaveShortcut', () => {
     expect(isOpenShortcut(key({ ctrlKey: true, key: 'o', code: 'KeyO' }), false)).toBe(true)
     expect(isOpenShortcut(key({ metaKey: true, key: 'o', code: 'KeyO' }), true)).toBe(true)
     expect(isOpenShortcut(key({ ctrlKey: true, key: 'ם', code: 'KeyO' }), false)).toBe(true)
+    expect(isOpenShortcut(key({ metaKey: true, key: 'ם', code: 'KeyO' }), true)).toBe(true)
+    expect(isSaveShortcut(key({ metaKey: true, key: 'ד', code: 'KeyS' }), true)).toBe(true)
     expect(isOpenShortcut(key({ ctrlKey: true }), false)).toBe(false)
     expect(isOpenShortcut(key({ key: 'o', code: 'KeyO' }), false)).toBe(false)
+  })
+
+  it('goes by the letter a Latin layout types, as the browser does, not by physical key', () => {
+    for (const mac of [false, true]) {
+      const mod = (k: Partial<KeyboardEvent>) => key({ ...k, ctrlKey: !mac, metaKey: mac })
+      // Dvorak: R (reload) is on the O key, O on the S key, S on the semicolon key.
+      expect(isOpenShortcut(mod({ key: 'r', code: 'KeyO' }), mac)).toBe(false)
+      expect(isSaveShortcut(mod({ key: 'o', code: 'KeyS' }), mac)).toBe(false)
+      expect(isOpenShortcut(mod({ key: 'o', code: 'KeyS' }), mac)).toBe(true)
+      expect(isSaveShortcut(mod({ key: 's', code: 'Semicolon' }), mac)).toBe(true)
+      // Colemak: R is on the S key, Y (redo) on the O key; O and S are on the semicolon and D keys.
+      expect(isSaveShortcut(mod({ key: 'r', code: 'KeyS' }), mac)).toBe(false)
+      expect(isOpenShortcut(mod({ key: 'y', code: 'KeyO' }), mac)).toBe(false)
+      expect(isOpenShortcut(mod({ key: 'o', code: 'Semicolon' }), mac)).toBe(true)
+      expect(isSaveShortcut(mod({ key: 's', code: 'KeyD' }), mac)).toBe(true)
+    }
   })
 })
 

@@ -2,6 +2,7 @@ import { createImageElement, createTextElement, IMAGE_DEFAULT_WIDTH } from '../.
 import type { Asset, Element, Point } from '../../../model/types'
 import { getSelectedElements, useEditor } from '../../../store/editor'
 import { createId } from '../../../lib/utils/id'
+import { importImageAsset } from '../../signature/decode'
 import { viewer } from '../../viewer/viewerApi'
 import { fitRectInPage } from '../lib/geometry'
 import { nextPasteIndex, pasteDelta } from '../lib/paste'
@@ -137,47 +138,20 @@ export function pasteItems(): boolean {
   return true
 }
 
-function readAsDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader()
-    r.onload = () => resolve(String(r.result))
-    r.onerror = () => reject(r.error)
-    r.readAsDataURL(blob)
-  })
-}
-
-function loadImage(src: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image()
-    img.onload = () => resolve(img)
-    img.onerror = () => reject(new Error('Unsupported image'))
-    img.src = src
-  })
-}
-
 /** Pastes an image from the system clipboard as a new picture on the current page. */
 export async function pasteImageBlob(blob: Blob): Promise<boolean> {
-  if (!useEditor.getState().doc) return false
-  let dataUrl = await readAsDataUrl(blob)
-  const img = await loadImage(dataUrl)
-  let mime: Asset['mime'] = blob.type === 'image/jpeg' ? 'image/jpeg' : 'image/png'
-  if (blob.type !== 'image/png' && blob.type !== 'image/jpeg') {
-    // Re-encode anything else (webp, gif, bmp…) as PNG, which every exporter path supports.
-    const canvas = document.createElement('canvas')
-    canvas.width = img.naturalWidth
-    canvas.height = img.naturalHeight
-    canvas.getContext('2d')?.drawImage(img, 0, 0)
-    dataUrl = canvas.toDataURL('image/png')
-    mime = 'image/png'
-  }
-  const w = img.naturalWidth || 1
-  const h = img.naturalHeight || 1
-  const s = useEditor.getState()
-  const assetId = s.addAsset({ mime, dataUrl, width: w, height: h })
+  const doc = useEditor.getState().doc
+  if (!doc) return false
+  // Prepared like a picture from the image tool: upright (EXIF), at most 2000 px, SVG drawn sharp.
+  const asset = await importImageAsset(blob)
+  // Another document was opened meanwhile: the picture was meant for this one.
+  if (useEditor.getState().doc !== doc) return false
   const page = targetPage()
   const size = pageSize(page)
   const center = visibleCenterOn(page)
   if (!size || !center) return false
+  const { width: w, height: h } = asset
+  const assetId = useEditor.getState().addAsset(asset)
   let width = Math.min(IMAGE_DEFAULT_WIDTH.image, size.width * 0.8)
   if (width / (w / h) > size.height * 0.8) width = size.height * 0.8 * (w / h)
   const el = createImageElement(page, center, 'image', assetId, w / h, width)

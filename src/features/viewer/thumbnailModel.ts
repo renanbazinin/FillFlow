@@ -1,4 +1,5 @@
 import { useEditor, type EditorState } from '../../store/editor'
+import { storedValue } from '../../lib/pdf/forms/values'
 import type { PageInfo } from '../../model/types'
 
 /** Thumbnail box: 150 CSS px wide for portrait/landscape pages, height-limited for very tall ones. */
@@ -37,7 +38,7 @@ export function pageBadgeCounts(s: BadgeInput): number[] {
   const counts = new Array<number>(n).fill(0)
   for (const e of s.elements) if (e.page >= 0 && e.page < n) counts[e.page]++
   for (const field of s.doc?.formFields ?? []) {
-    const value = s.formValues[field.name]
+    const value = storedValue(s.formValues, field.name)
     if (value === undefined || sameValue(value, field.defaultValue)) continue
     const pages = new Set<number>()
     for (const w of field.widgets) if (w.page >= 0 && w.page < n) pages.add(w.page)

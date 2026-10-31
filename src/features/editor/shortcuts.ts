@@ -1,6 +1,7 @@
 import type { LucideIcon } from 'lucide-react'
 import { isMac } from '../../lib/utils/misc'
 import { TOOLS } from '../../model/tools'
+import { shortcutLetter } from '../elements/lib/keys'
 
 /**
  * Key names used in shortcut definitions: 'mod' (⌘ / Ctrl), 'shift', 'alt', named keys
@@ -151,13 +152,18 @@ export type ShellCommand = 'download' | 'open' | 'help' | 'zoomIn' | 'zoomOut' |
 
 type KeyLike = Pick<KeyboardEvent, 'key' | 'code' | 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey'>
 
-/** Maps a keydown to a shell command (pure; see useShellShortcuts.test.ts). */
+/**
+ * Maps a keydown to a shell command (pure; see shortcuts.test.ts). Letters go by the layout's own
+ * Latin letter, or by physical key on non-Latin layouts, where the browser's ⌘/Ctrl+S and O would
+ * otherwise take over.
+ */
 export function shellCommandFor(e: KeyLike, mac: boolean): ShellCommand | null {
   const mod = mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey
   if (mod && !e.altKey) {
     const k = e.key.toLowerCase()
-    if (k === 's' && !e.shiftKey) return 'download'
-    if (k === 'o' && !e.shiftKey) return 'open'
+    const letter = shortcutLetter(e)
+    if (letter === 's' && !e.shiftKey) return 'download'
+    if (letter === 'o' && !e.shiftKey) return 'open'
     if (k === '=' || k === '+' || e.code === 'NumpadAdd') return 'zoomIn'
     if (k === '-' || k === '_' || e.code === 'NumpadSubtract') return 'zoomOut'
     if ((k === '0' || e.code === 'Digit0' || e.code === 'Numpad0') && !e.shiftKey) return 'fitWidth'

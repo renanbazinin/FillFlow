@@ -20,18 +20,22 @@ async function openWithPassword(page: Page, file: string, password: string) {
   await showPage(page, 0)
 }
 
-/** Letter keys as Chrome reports them on a Hebrew keyboard layout: the layout's own letter, on the Latin key. */
-const HEBREW_KEYS = {
-  s: { key: 'ד', code: 'KeyS', windowsVirtualKeyCode: 83 },
-  o: { key: 'ם', code: 'KeyO', windowsVirtualKeyCode: 79 },
+/** Letter keys as Chrome reports them on other keyboard layouts: the letter the layout types, and the key it is on. */
+const LAYOUT_KEYS = {
+  // Hebrew types its own letters on the Latin keys.
+  hebrewS: { key: 'ד', code: 'KeyS', windowsVirtualKeyCode: 83 },
+  hebrewO: { key: 'ם', code: 'KeyO', windowsVirtualKeyCode: 79 },
+  // Dvorak has O on the S key; Colemak has Y (redo) on the O key.
+  dvorakO: { key: 'o', code: 'KeyS', windowsVirtualKeyCode: 79 },
+  colemakY: { key: 'y', code: 'KeyO', windowsVirtualKeyCode: 89 },
 }
 
-/** Presses Ctrl/⌘ + a letter key on a Hebrew keyboard layout (Playwright's keyboard types US keys only). */
-async function hebrewKeyboard(page: Page): Promise<(letter: keyof typeof HEBREW_KEYS) => Promise<void>> {
+/** Presses Ctrl/⌘ + a letter key on another keyboard layout (Playwright's keyboard types US keys only). */
+async function layoutKeyboard(page: Page): Promise<(key: keyof typeof LAYOUT_KEYS) => Promise<void>> {
   const cdp = await page.context().newCDPSession(page)
   const modifiers = process.platform === 'darwin' ? 4 : 2 // ⌘ / Ctrl
-  return async (letter) => {
-    for (const type of ['rawKeyDown', 'keyUp'] as const) await cdp.send('Input.dispatchKeyEvent', { type, modifiers, ...HEBREW_KEYS[letter] })
+  return async (key) => {
+    for (const type of ['rawKeyDown', 'keyUp'] as const) await cdp.send('Input.dispatchKeyEvent', { type, modifiers, ...LAYOUT_KEYS[key] })
   }
 }
 
@@ -40,7 +44,7 @@ test('the export dialog keeps the browser’s “Open file” and “Save page�
   await openPdf(page, SAMPLE_PDF)
   await showPage(page, 0)
   const dialog = await openExportDialog(page)
-  const pressHebrew = await hebrewKeyboard(page)
+  const press = await layoutKeyboard(page)
   let downloads = 0
   page.on('download', () => downloads++)
   // Whether the browser would act on a key: is it still unprevented once dispatch is over?
@@ -66,19 +70,51 @@ test('the export dialog keeps the browser’s “Open file” and “Save page�
   for (const { target, save } of targets) {
     await page.evaluate(() => ((window as unknown as { browserKeys: string[] }).browserKeys = []))
     await target.focus()
-    // On a US keyboard layout, then on a Hebrew one.
+    // On a US keyboard layout, then on Hebrew and Dvorak ones; Colemak's ⌘Y / Ctrl+Y on the O key isn't "Open file".
     await page.keyboard.press('ControlOrMeta+o')
-    await pressHebrew('o')
+    await press('hebrewO')
+    await press('dvorakO')
+    await press('colemakY')
     if (save) {
       await page.keyboard.press('ControlOrMeta+s')
-      await pressHebrew('s')
+      await press('hebrewS')
     }
     await expect
       .poll(browserKeys)
-      .toEqual(['o: blocked', 'ם: blocked', ...(save ? ['s: blocked', 'ד: blocked'] : [])])
+      .toEqual(['o: blocked', 'ם: blocked', 'o: blocked', 'y: allowed', ...(save ? ['s: blocked', 'ד: blocked'] : [])])
   }
   await expect(dialog).toBeVisible()
   expect(downloads).toBe(0)
+})
+
+/** Drops a file on the window, as when one is dragged in from the desktop. */
+async function dropFile(page: Page, name: string, type: string) {
+  const dataTransfer = await page.evaluateHandle(
+    ({ name, type }) => {
+      const dt = new DataTransfer()
+      dt.items.add(new File(['Not a PDF'], name, { type }))
+      return dt
+    },
+    { name, type },
+  )
+  for (const event of ['dragenter', 'dragover', 'drop']) await page.dispatchEvent('body', event, { dataTransfer })
+}
+
+test('opening the export dialog clears passing toasts but keeps errors up', async ({ page }) => {
+  await gotoHome(page)
+  await openPdf(page, SAMPLE_PDF)
+  await showPage(page, 0)
+  const toasts = page.locator('[data-sonner-toast]')
+  const tip = toasts.filter({ hasText: /fillable fields? found/ })
+  await expect(tip).toBeVisible()
+  // A dropped file that isn't a PDF gets an error toast.
+  await dropFile(page, 'notes.txt', 'text/plain')
+  const error = toasts.filter({ hasText: 'isn’t a PDF' })
+  await expect(error).toBeVisible()
+
+  await openExportDialog(page)
+  await expect(tip).toHaveCount(0)
+  await expect(error).toBeVisible()
 })
 
 test('does not promise an unchanged copy when the form gets flattened', async ({ page }) => {

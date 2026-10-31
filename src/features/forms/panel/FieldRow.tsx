@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef } from 'react'
 import { cn } from '../../../lib/utils/misc'
+import { scrollBehavior } from '../../../lib/utils/motion'
 import type { FormField } from '../../../model/types'
 import { useEditor } from '../../../store/editor'
 import { revealField } from '../navigation'
@@ -16,7 +17,7 @@ export const FieldRow = memo(function FieldRow({ field }: { field: FormField }) 
 
   useEffect(() => {
     const el = ref.current
-    if (active && el && !el.contains(document.activeElement)) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    if (active && el && !el.contains(document.activeElement)) el.scrollIntoView({ block: 'nearest', behavior: scrollBehavior() })
   }, [active])
 
   return (

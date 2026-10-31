@@ -127,9 +127,11 @@ afterEach(async () => {
   vi.useRealTimers()
 })
 
+/** Opens a stored document the way the store does: its saved work is loaded first. */
 async function openRemembered(id: string) {
   const doc = makeDoc(id)
   await rememberDocument({ id, name: doc.name, size: 4, pageCount: 1 }, doc.bytes)
+  await loadSession(id)
   open(doc)
   return doc
 }
@@ -263,6 +265,33 @@ describe('autosave', () => {
       expect((await loadSession('again'))?.formValues).toEqual({ Name: 'Ada L' })
     })
 
+    it.each([
+      [
+        'the page is hidden',
+        () => {
+          visibility = 'hidden'
+          document.dispatchEvent(new Event('visibilitychange'))
+        },
+      ],
+      ['the page is unloaded', () => window.dispatchEvent(new Event('pagehide'))],
+    ])('never saves over stored work that the new copy could not load, not even when %s', async (_, leave) => {
+      await openAgainDoc()
+      const read = vi.spyOn(IDBObjectStore.prototype, 'get').mockImplementationOnce(() => {
+        throw new DOMException('Data lost due to missing file.', 'NotReadableError')
+      })
+      await expect(loadSession('again')).rejects.toThrow()
+      read.mockRestore()
+      open(makeDoc('again'))
+      useEditor.getState().addElement(mark())
+      // Well inside the autosave delay: the write made on the way out must still check.
+      leave()
+      await settle()
+      expect(status()).toMatchObject({ state: 'error', error: 'Your saved work on this document didn’t load.' })
+      const session = await loadSession('again')
+      expect(session?.formValues).toEqual({ Name: 'Ada L' })
+      expect(session?.elements).toEqual([])
+    })
+
     it('takes newer work from another tab as the base, and says the replaced copy’s late changes are lost', async () => {
       await openAgainDoc()
       const mine = (await loadSession('again'))?.updatedAt ?? 0
@@ -281,6 +310,75 @@ describe('autosave', () => {
       const session = await loadSession('again')
       expect(session?.formValues).toEqual({ Name: 'Grace' })
       expect(session?.elements).toHaveLength(1)
+    })
+  })
+
+  describe('when its saved work could not be read as it opened', () => {
+    const NOT_LOADED = 'Your saved work on this document didn’t load'
+
+    /** Opens 'lost' the way the store does when reading its saved work fails: without it. */
+    async function openWithoutWork() {
+      const read = vi.spyOn(IDBObjectStore.prototype, 'get').mockImplementationOnce(() => {
+        throw new DOMException('Data lost due to missing file.', 'NotReadableError')
+      })
+      await expect(loadSession('lost')).rejects.toThrow()
+      read.mockRestore()
+      const doc: LoadedDocument = { ...makeDoc('lost'), sessionLoadFailed: true }
+      await rememberDocument({ id: 'lost', name: doc.name, size: 4, pageCount: 1 }, doc.bytes)
+      open(doc)
+      stop = startAutosave()
+      return doc
+    }
+
+    const lastToast = () => vi.mocked(toast.error).mock.calls.at(-1) as unknown as [string, { id?: string; description?: string; action?: { onClick(): void } }]
+
+    it('says so before any work goes in, and keeps to that one message', async () => {
+      await saveSession(buildSession({ docId: 'lost', fileName: 'lost.pdf', elements: [], formValues: { Name: 'Ada' }, assets: {} }, 100))
+      const doc = await openWithoutWork()
+      expect(toast.error).toHaveBeenCalledTimes(1)
+      expect(lastToast()).toMatchObject([NOT_LOADED, { id: 'autosave-outdated', description: 'Reload it to try again before you make changes.' }])
+      expect(status().state).toBe('idle')
+
+      // The first change finds that work and isn't saved over it; the same toast says so.
+      useEditor.getState().setFormValue('Name', 'Grace')
+      await waitForSave()
+      expect((await loadSession('lost'))?.formValues).toEqual({ Name: 'Ada' })
+      expect(status()).toMatchObject({ state: 'error', error: `${NOT_LOADED}.` })
+      expect(toast.error).toHaveBeenCalledTimes(2)
+      expect(lastToast()).toMatchObject([NOT_LOADED, { id: 'autosave-outdated', description: expect.stringMatching(/aren’t being saved/) }])
+
+      // "Reload" opens the document again, which reads its saved work again.
+      const openDocument = vi.fn(async () => true)
+      const real = useEditor.getState().openDocument
+      useEditor.setState({ openDocument })
+      lastToast()[1].action?.onClick()
+      useEditor.setState({ openDocument: real })
+      expect(openDocument).toHaveBeenCalledWith({ name: doc.name, bytes: doc.bytes })
+    })
+
+    it('says why a change still waiting in it is lost when the document is opened again', async () => {
+      await saveSession(buildSession({ docId: 'lost', fileName: 'lost.pdf', elements: [], formValues: { Name: 'Ada' }, assets: {} }, 100))
+      await openWithoutWork()
+      useEditor.getState().setFormValue('Name', 'Grace')
+      // "Reload" before the change is written: a copy that reads the work replaces this one.
+      await loadSession('lost')
+      open(makeDoc('lost'), { Name: 'Ada' })
+      await settle()
+      expect(toast.error).toHaveBeenLastCalledWith('Your latest changes to “⁨lost.pdf⁩” couldn’t be saved', {
+        description: 'Its saved work didn’t load.',
+      })
+      expect((await loadSession('lost'))?.formValues).toEqual({ Name: 'Ada' })
+    })
+
+    it('takes the message back once its work is saved, when no work can be read there', async () => {
+      await openWithoutWork()
+      expect(lastToast()[0]).toBe(NOT_LOADED)
+      vi.mocked(toast.dismiss).mockClear()
+      useEditor.getState().setFormValue('Name', 'Grace')
+      await waitForSave()
+      expect(status().state).toBe('saved')
+      expect(toast.dismiss).toHaveBeenCalledWith('autosave-outdated')
+      expect((await loadSession('lost'))?.formValues).toEqual({ Name: 'Grace' })
     })
   })
 

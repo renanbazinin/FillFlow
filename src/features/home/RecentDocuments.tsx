@@ -6,7 +6,9 @@ import { confirm } from '../../components/ui/confirm'
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../../components/ui/menu'
 import {
   forgetDocument,
+  forgetStaleSessions,
   forgetUnlistedSessions,
+  hasUnlistedSessions,
   listRecentDocuments,
   loadDocumentBytes,
   removeRecentDocument,
@@ -18,20 +20,33 @@ import { usePointerAwareClose } from '../editor/usePointerAwareClose'
 import { displayName } from './pdfFiles'
 import { pluralize, recentMetaLine } from './recentMeta'
 
-/** Recently opened documents (stored only in this browser). Renders nothing when empty. */
+/**
+ * Recently opened documents (stored only in this browser). When there are none, renders nothing,
+ * or a line offering to delete the work still saved for documents that dropped off the list.
+ */
 export function RecentDocuments({ className }: { className?: string }) {
   const [docs, setDocs] = useState<RecentDocument[] | null>(null)
   const [showSkeleton, setShowSkeleton] = useState(false)
+  /** Work is still saved for documents that are no longer listed. */
+  const [olderWork, setOlderWork] = useState(false)
 
   useEffect(() => {
     let alive = true
-    const load = () =>
-      listRecentDocuments()
+    // Work on documents that dropped off the list is kept for a while (opening the same file
+    // again brings it back), then let go of.
+    const tidied = forgetStaleSessions().catch((err) => console.warn('[recents] could not delete old saved work', err))
+    const load = () => {
+      void tidied
+        .then(hasUnlistedSessions)
+        .then((found) => alive && setOlderWork(found))
+        .catch((err) => console.warn('[recents] could not look for saved work', err))
+      return listRecentDocuments()
         .then((list) => alive && setDocs(list))
         .catch((err) => {
           console.warn('[recents] could not list documents', err)
           if (alive) setDocs((prev) => prev ?? [])
         })
+    }
     // IndexedDB usually answers within a frame; only show a skeleton if it doesn't.
     const skeletonTimer = window.setTimeout(() => alive && setShowSkeleton(true), 150)
     void load()
@@ -52,8 +67,8 @@ export function RecentDocuments({ className }: { className?: string }) {
   /** Which card gets keyboard focus once a removal has re-rendered the list. */
   const focusAfterRemoval = useRef<number | null>(null)
 
-  // A removal takes the focused control (the card's menu button, Clear all) away with it: move
-  // focus to the card now in its place, or to the dropzone once the list is gone.
+  // A removal takes the focused control (the card's menu button, Clear all, Delete it) away with
+  // it: move focus to the card now in its place, or to the dropzone once the list is gone.
   useEffect(() => {
     const index = focusAfterRemoval.current
     if (index === null || docs === null) return
@@ -66,7 +81,7 @@ export function RecentDocuments({ className }: { className?: string }) {
         cards?.[Math.min(index, cards.length - 1)] ?? document.querySelector<HTMLElement>('button[aria-describedby="ff-dropzone-hint"]')
       target?.focus()
     })
-  }, [docs])
+  }, [docs, olderWork])
 
   const remove = async (doc: RecentDocument) => {
     const ok = await confirm({
@@ -102,15 +117,37 @@ export function RecentDocuments({ className }: { className?: string }) {
     const results = await Promise.allSettled(docs.map((d) => forgetDocument(d.id)))
     const kept = docs.filter((_, i) => results[i].status === 'rejected')
     // Work kept from documents that dropped off the list to make room goes too.
-    await forgetUnlistedSessions().catch((err) => console.warn('[recents] could not delete saved work', err))
+    await forgetUnlistedSessions()
+      .then(() => setOlderWork(false))
+      .catch((err) => console.warn('[recents] could not delete saved work', err))
     focusAfterRemoval.current = 0
     setDocs(kept)
     if (kept.length) toast.error('Some documents couldn’t be removed')
     else toast.success('Recent documents cleared')
   }
 
+  const deleteOlderWork = async () => {
+    const ok = await confirm({
+      title: 'Delete work from older documents?',
+      description: 'What you filled in, typed or signed on documents that are no longer listed will be deleted from this device. This can’t be undone.',
+      confirmLabel: 'Delete',
+      danger: true,
+    })
+    if (!ok) return
+    try {
+      await forgetUnlistedSessions()
+      focusAfterRemoval.current = 0
+      setOlderWork(false)
+      toast.success('Work from older documents deleted')
+    } catch {
+      toast.error('Couldn’t delete the work')
+    }
+  }
+
   if (docs === null && !showSkeleton) return null
-  if (docs !== null && docs.length === 0) return null
+  if (docs !== null && docs.length === 0) {
+    return olderWork ? <OlderWorkNotice className={className} onDelete={() => void deleteOlderWork()} /> : null
+  }
 
   return (
     <section aria-labelledby="ff-recents-title" className={className}>
@@ -137,7 +174,10 @@ export function RecentDocuments({ className }: { className?: string }) {
                 onRemove={() => void remove(doc)}
                 onMissing={() => {
                   // The saved work stays: opening the same file from disk restores it.
-                  void removeRecentDocument(doc.id).catch(() => {})
+                  void removeRecentDocument(doc.id)
+                    .then(hasUnlistedSessions)
+                    .then(setOlderWork)
+                    .catch(() => {})
                   setDocs((list) => list?.filter((d) => d.id !== doc.id) ?? null)
                 }}
               />
@@ -226,6 +266,18 @@ function RecentCard({
         </MenuContent>
       </Menu>
     </li>
+  )
+}
+
+/** In place of an empty list: the work on documents that dropped off it can still be deleted. */
+function OlderWorkNotice({ className, onDelete }: { className?: string; onDelete: () => void }) {
+  return (
+    <p className={cn('text-center text-[13px] text-fg-subtle', className)}>
+      Work from older documents is still saved on this device.{' '}
+      <button type="button" onClick={onDelete} className="font-medium text-fg-muted underline-offset-4 hover:text-fg hover:underline">
+        Delete it
+      </button>
+    </p>
   )
 }
 

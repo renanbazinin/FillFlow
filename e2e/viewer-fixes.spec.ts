@@ -1,7 +1,21 @@
 import { writeFile } from 'node:fs/promises'
 import { expect, test, type Locator, type Page } from '@playwright/test'
-import { PDFDocument, PDFTextField, concatTransformationMatrix, drawObject, popGraphicsState, pushGraphicsState } from 'pdf-lib'
-import { SAMPLE_PDF, downloadPdf, fillFormField, fixture, formField, gotoHome, openPdf, showPage, trackPageErrors } from './support/app'
+import { PDFDocument, PDFTextField, StandardFonts, concatTransformationMatrix, drawObject, popGraphicsState, pushGraphicsState } from 'pdf-lib'
+import {
+  SAMPLE_PDF,
+  clickPagePoint,
+  downloadPdf,
+  expectEditing,
+  fillFormField,
+  fixture,
+  formField,
+  gotoHome,
+  openPdf,
+  pdfPage,
+  selectTool,
+  showPage,
+  trackPageErrors,
+} from './support/app'
 import { pageText } from './support/pdf'
 
 /**
@@ -23,6 +37,37 @@ async function scannedPdf(pageCount: number): Promise<Uint8Array> {
     page.pushOperators(pushGraphicsState(), concatTransformationMatrix(595, 0, 0, 842, 0, 0), drawObject(name), popGraphicsState())
   }
   return doc.save()
+}
+
+/** More pages than are always kept ready: large documents mount page layers near the viewport only. */
+const LONG_PAGES = 70
+const LETTER = { width: 612, height: 792 }
+
+/** A long document with a text field "Name" on page 1. */
+async function longFormPdf(path: string): Promise<string> {
+  const doc = await PDFDocument.create()
+  const font = await doc.embedFont(StandardFonts.Helvetica)
+  const name = doc.getForm().createTextField('Name')
+  for (let i = 0; i < LONG_PAGES; i++) {
+    const page = doc.addPage([LETTER.width, LETTER.height])
+    page.drawText(`Page ${i + 1}`, { x: 50, y: 740, size: 24, font })
+    if (i === 0) name.addToPage(page, { x: 72, y: 600, width: 300, height: 24 })
+  }
+  await writeFile(path, await doc.save())
+  return path
+}
+
+/** Wheel-scrolls the document until page `index` (0-based) reaches the upper part of the window. */
+async function wheelToPage(page: Page, index: number): Promise<void> {
+  const target = await pdfPage(page, index)
+  await page.mouse.move(720, 450)
+  for (let i = 0; i < 100; i++) {
+    const box = await target.boundingBox()
+    if (box && box.y > -200 && box.y < 300) return
+    await page.mouse.wheel(0, Math.max(-3000, Math.min(3000, (box?.y ?? 3000) - 150)))
+    await page.waitForTimeout(30)
+  }
+  throw new Error(`Could not scroll to page ${index + 1}`)
 }
 
 /** The Pages panel's list (CSS only: a collapsed panel is inert, so it has no accessible role then). */
@@ -136,6 +181,81 @@ test('a collapsed Pages panel neither renders nor scrolls its thumbnails', async
   await expect(current.locator('img')).toBeVisible()
   expect(Number(await current.getAttribute('data-thumb-index'))).toBeGreaterThan(30)
   expect(errors).toEqual([])
+})
+
+test.describe('a document too long to keep every page ready', () => {
+  test('scrolling away from a text being typed keeps the edit going', async ({ page }, testInfo) => {
+    const errors = trackPageErrors(page)
+    await gotoHome(page)
+    await openPdf(page, await longFormPdf(testInfo.outputPath('long.pdf')))
+    await showPage(page, 0)
+    await selectTool(page, 'Text', 'T')
+    await clickPagePoint(page, 0, { x: 300, y: 300 }, LETTER)
+    await expectEditing(page)
+    await page.keyboard.type('Hello')
+
+    await wheelToPage(page, 40)
+    const editor = page.locator('textarea[aria-label="Edit text"]')
+    await expect(editor).toBeFocused()
+    await page.keyboard.type(' world')
+    await wheelToPage(page, 0)
+    await page.keyboard.press('Escape')
+    await expect(page.locator('[data-element-layer="0"] [data-element-id][data-kind="text"]')).toHaveText('Hello world')
+    expect(errors).toEqual([])
+  })
+
+  test('scrolling away from a form field being typed into keeps its focus', async ({ page }, testInfo) => {
+    const errors = trackPageErrors(page)
+    await gotoHome(page)
+    await openPdf(page, await longFormPdf(testInfo.outputPath('long.pdf')))
+    await showPage(page, 0)
+    const input = page.locator('[data-page-index="0"] [data-form-field="Name"] input')
+    await input.click()
+    await page.keyboard.type('Ada')
+
+    await wheelToPage(page, 40)
+    await expect(input).toBeFocused()
+    // Not page shortcuts: "l" would pick the Line tool, "e" the Ellipse…
+    await page.keyboard.type(' Lovelace')
+    await expect(input).toHaveValue('Ada Lovelace')
+    const selectButton = page.getByRole('button', { name: 'Select', exact: true }).filter({ visible: true }).first()
+    await expect(selectButton).toHaveAttribute('aria-pressed', 'true')
+    expect(errors).toEqual([])
+  })
+
+  test('an item dragged pages away lands where it is dropped', async ({ page }, testInfo) => {
+    const errors = trackPageErrors(page)
+    await gotoHome(page)
+    await openPdf(page, await longFormPdf(testInfo.outputPath('long.pdf')))
+    await showPage(page, 0)
+    await selectTool(page, 'Checkmark', 'C')
+    await clickPagePoint(page, 0, { x: 300, y: 250 }, LETTER)
+    await selectTool(page, 'Select', 'V')
+    const mark = page.locator('[data-element-id][data-kind="mark"]')
+    const start = await mark.boundingBox()
+    const area = await page.getByRole('region', { name: 'Document pages' }).boundingBox()
+    if (!start || !area) throw new Error('The item or the document is not visible')
+    const from = { x: start.x + start.width / 2, y: start.y + start.height / 2 }
+
+    // Held at the bottom edge, the item carries the document along: page 1 scrolls far out of range.
+    await page.mouse.move(from.x, from.y)
+    await page.mouse.down()
+    await page.mouse.move(from.x, area.y + area.height - 8, { steps: 10 })
+    const fourth = await pdfPage(page, 3)
+    await expect
+      .poll(async () => (await fourth.boundingBox())?.y ?? Infinity, { intervals: [100], timeout: 30_000 })
+      .toBeLessThan(area.y + area.height / 2 - 100)
+    const drop = { x: from.x + 60, y: area.y + area.height / 2 }
+    await page.mouse.move(drop.x, drop.y, { steps: 6 })
+    await page.mouse.up()
+
+    const dropped = page.locator('[data-element-layer="3"] [data-element-id][data-kind="mark"]')
+    await expect(dropped).toHaveCount(1)
+    const end = await dropped.boundingBox()
+    expect(Math.abs((end?.x ?? 0) + (end?.width ?? 0) / 2 - drop.x)).toBeLessThan(3)
+    expect(Math.abs((end?.y ?? 0) + (end?.height ?? 0) / 2 - drop.y)).toBeLessThan(3)
+    expect(errors).toEqual([])
+  })
 })
 
 test.describe('in a browser without the newest JavaScript built-ins', () => {

@@ -32,7 +32,7 @@ import {
   writeTextAppearance,
   type TextSpec,
 } from '../pdf/forms/appearance'
-import { adoptOrphanWidgets, relinkBareWidgets, sanitizeFieldList } from '../pdf/forms/fieldTree'
+import { adoptOrphanWidgets, relinkBareWidgets, relinkCutOffFields, sanitizeFieldList } from '../pdf/forms/fieldTree'
 import { flattenFields } from '../pdf/forms/flatten'
 import { FieldIndex, PDF_OFF, PageIndex, nameForLog, usesPrintFlag, widgetEntries } from '../pdf/forms/pdfIndex'
 import { fieldValue, valuesEqual } from '../pdf/forms/values'
@@ -324,7 +324,8 @@ async function ensureAppearances(ctx: Ctx, target: PDFField) {
  *
  * - Our fields are found by widget (by page and position when the file was rewritten, see
  *   FieldIndex); widgets missing from the field tree, or cut off from their field by the
- *   rewrite, are linked into it first.
+ *   rewrite, are linked into it first, and fields the rewrite cut off from their parents are
+ *   put back under them.
  * - Only fields whose stored value differs from the wanted one are rewritten; the others keep
  *   their original appearance (unless it is missing or the file asked for regeneration).
  * - Text, combo and list appearances are drawn by us with bidi-aware layout (see
@@ -358,6 +359,12 @@ export async function applyFormValues(
         console.warn('[forms] could not link widgets back to their fields', err)
       }
       index = new FieldIndex(form, pages, fields, opts)
+      // It may also have cut fields off the parents their names need: put them back.
+      const moved = relinkCutOffFields(form, fields, index)
+      if (moved) {
+        console.warn(`[forms] ${moved} field(s) had lost their parent in the rewrite`)
+        index = new FieldIndex(form, pages, fields, opts)
+      }
     }
     ctx = {
       doc: pdfDoc,

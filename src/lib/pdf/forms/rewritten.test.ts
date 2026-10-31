@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber, PDFString } from 'pdf-lib'
+import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFString, type PDFRef } from 'pdf-lib'
 import type { FormField, FormValues, FormWidget, PageInfo } from '../../../model/types'
 import { renderPdf } from '../../export/engine'
 import { applyFormValues } from '../../export/forms'
@@ -316,6 +316,7 @@ describe('widgets the rewrite cut off from their fields', () => {
         Subtype: 'Widget',
         FT: 'Tx',
         T: PDFString.of('x'),
+        TU: PDFString.of('Your name'),
         V: PDFString.of('Old'),
         DA: PDFString.of('/Helv 12 Tf 0 g'),
         Rect: [50, 700, 250, 720],
@@ -334,7 +335,7 @@ describe('widgets the rewrite cut off from their fields', () => {
     const fields = await extractFormFields(opened.pdf, opened.pages)
     await opened.raw.loadingTask.destroy()
     const { pages } = opened
-    expect(fields.map((f) => [f.name, f.widgets.length, f.defaultValue])).toEqual([['x', 2, 'Old']])
+    expect(fields.map((f) => [f.name, f.widgets.length, f.defaultValue, f.label])).toEqual([['x', 2, 'Old', 'Your name']])
     const deps = { ...testDeps, decrypt: pdfjsDecrypt() }
     const input = (flattenForms: boolean) => makeInput(bytes, pages, [], { formFields: fields, formValues: { x: 'Both' }, options: { flattenForms } })
 
@@ -342,18 +343,259 @@ describe('widgets the rewrite cut off from their fields', () => {
     const reopened = await openWithPdfjs(live)
     const reread = await extractFormFields(reopened.pdf, reopened.pages)
     await reopened.raw.loadingTask.destroy()
-    expect(reread.map((f) => [f.name, f.widgets.length, f.defaultValue])).toEqual([['x', 2, 'Both']])
+    // The label too: pdf.js reads it from the widget.
+    expect(reread.map((f) => [f.name, f.widgets.length, f.defaultValue, f.label])).toEqual([['x', 2, 'Both', 'Your name']])
     const field = (await PDFDocument.load(live)).getForm().getTextField('x')
     const widgets = field.acroField.getWidgets()
     expect(widgets).toHaveLength(2)
     // The field keeps its own actions, its first widget the widget's.
     expect(field.acroField.dict.lookup(PDFName.of('AA'), PDFDict).keys().map(String)).toEqual(['/K'])
     expect(widgets[0].dict.lookup(PDFName.of('AA'), PDFDict).keys().map(String)).toEqual(['/Fo'])
+    // Acrobat reads the label from the field.
+    expect(field.acroField.dict.lookup(PDFName.of('TU'), PDFString, PDFHexString).decodeText()).toBe('Your name')
 
     const flat = await renderPdf(input(true), deps)
     expect((await PDFDocument.load(flat)).getPage(0).node.Annots()?.size() ?? 0).toBe(0)
     const pdf = await openPdfjs(flat)
     expect((await textInView(pdf, 1)).filter((t) => t.str === 'Both')).toHaveLength(2)
     await pdf.loadingTask.destroy()
+  })
+
+  it('keeps the full names of fields whose parents the rewrite cut off', async () => {
+    const doc = await PDFDocument.create()
+    const page = doc.addPage([612, 792])
+    const form = doc.getForm()
+    const { context } = doc
+    const kidsOf = (ref: PDFRef) => context.lookup(ref, PDFDict).lookup(PDFName.of('Kids'), PDFArray)
+    /** A text field named "name" under `parent` that is its own widget. */
+    const name = (parent: PDFRef, y: number) => {
+      const ref = context.register(
+        context.obj({
+          Type: 'Annot',
+          Subtype: 'Widget',
+          FT: 'Tx',
+          T: PDFString.of('name'),
+          Parent: parent,
+          DA: PDFString.of('/Helv 0 Tf 0 g'),
+          Rect: [50, y, 250, y + 20],
+          F: 4,
+          P: page.ref,
+        }),
+      )
+      kidsOf(parent).push(ref)
+      page.node.addAnnot(ref)
+      return ref
+    }
+    const other = form.createTextField('p1.other')
+    other.addToPage(page, { x: 300, y: 700, width: 200, height: 20 })
+    const c = form.createTextField('a.b.c')
+    c.addToPage(page, { x: 300, y: 550, width: 200, height: 20 })
+    const list = form.acroForm.dict.lookup(PDFName.of('Fields'), PDFArray)
+    // Parents missing from the field list: p1, p2, p3, and a (whose kid b is listed instead).
+    const p1 = other.acroField.getParent()!.ref
+    list.remove(list.indexOf(p1)!)
+    name(p1, 700)
+    name(context.register(context.obj({ T: PDFString.of('p2'), Kids: [] })), 650)
+    // A second widget names p3's kid as its /Parent, but the kid has no /Kids to list it in.
+    const kid = name(context.register(context.obj({ T: PDFString.of('p3'), Kids: [] })), 600)
+    page.node.addAnnot(context.register(context.obj({ Type: 'Annot', Subtype: 'Widget', Parent: kid, Rect: [300, 600, 500, 620], F: 4, P: page.ref })))
+    const b = c.acroField.getParent()!
+    name(b.ref, 550)
+    list.set(list.indexOf(b.getParent()!.ref)!, b.ref)
+    form.updateFieldAppearances()
+    const bytes = await encryptPdf(await doc.save({ updateFieldAppearances: false }), { owner: 'owner-only' })
+
+    const read = async (file: Uint8Array) => {
+      const opened = await openWithPdfjs(file)
+      const fields = await extractFormFields(opened.pdf, opened.pages)
+      await opened.raw.loadingTask.destroy()
+      return { fields, pages: opened.pages }
+    }
+    const { fields, pages } = await read(bytes)
+    expect(fields.map((f) => [f.name, f.widgets.length])).toEqual([
+      ['p1.name', 1],
+      ['p1.other', 1],
+      ['p2.name', 1],
+      ['p3.name', 2],
+      ['a.b.name', 1],
+      ['a.b.c', 1],
+    ])
+    const filled: FormValues = { 'p1.name': 'First', 'p1.other': 'Other', 'p2.name': 'Second', 'p3.name': 'Third', 'a.b.name': 'Fourth', 'a.b.c': 'Fifth' }
+    const unwritten: string[][] = []
+    const out = await renderPdf(makeInput(bytes, pages, [], { formFields: fields, formValues: filled, options: { flattenForms: false } }), {
+      ...testDeps,
+      decrypt: pdfjsDecrypt(),
+      onUnwrittenFields: (names) => unwritten.push(names),
+    })
+    expect(unwritten).toEqual([])
+    const reopened = await read(out)
+    expect(reopened.fields.map((f) => [f.name, f.widgets.length])).toEqual(fields.map((f) => [f.name, f.widgets.length]))
+    expect(defaultFormValues(reopened.fields)).toEqual(filled)
+    const saved = (await PDFDocument.load(out)).getForm()
+    expect(saved.getTextField('p1.name').acroField.getParent()?.ref).toBe(saved.getTextField('p1.other').acroField.getParent()?.ref)
+
+    // Saved again as it is, every "name" keeps its own value.
+    const again = await renderPdf(
+      makeInput(out, reopened.pages, [], { formFields: reopened.fields, formValues: defaultFormValues(reopened.fields), options: { flattenForms: false } }),
+      testDeps,
+    )
+    expect(defaultFormValues((await read(again)).fields)).toEqual(filled)
+  })
+
+  it('keeps the names of copies of a field whose parent the rewrite cut off', async () => {
+    const doc = await PDFDocument.create()
+    const page = doc.addPage([612, 792])
+    const { context } = doc
+    const js = (code: string) => context.obj({ S: 'JavaScript', JS: PDFString.of(code) })
+    doc.getForm().createTextField('listed').addToPage(page, { x: 50, y: 700, width: 200, height: 20 })
+    // Acrobat's copies of a field: the parent, missing from the field list, holds the field type;
+    // each copy is a field of its own merged with its widget, with only its name, value and label.
+    const parent = context.register(context.obj({ FT: 'Tx', T: PDFString.of('Text1'), DA: PDFString.of('/Helv 0 Tf 0 g'), Kids: [] }))
+    const copies = ['First copy', 'Second copy'].map((label, i) => {
+      const copy = context.register(
+        context.obj({
+          Type: 'Annot',
+          Subtype: 'Widget',
+          T: PDFString.of(String(i)),
+          TU: PDFString.of(label),
+          V: PDFString.of(`Old ${i}`),
+          DV: PDFString.of(`Default ${i}`),
+          Parent: parent,
+          Rect: [50, 650 - i * 50, 250, 670 - i * 50],
+          F: 4,
+          P: page.ref,
+          AA: { K: js(`keystroke ${i}`), Fo: js(`focus ${i}`), ...(i ? { C: js('calculate') } : {}) },
+        }),
+      )
+      context.lookup(parent, PDFDict).lookup(PDFName.of('Kids'), PDFArray).push(copy)
+      page.node.addAnnot(copy)
+      return copy
+    })
+    doc.getForm().acroForm.dict.set(PDFName.of('CO'), context.obj([copies[1]]))
+    const bytes = await encryptPdf(await doc.save(), { owner: 'owner-only' })
+
+    const read = async (file: Uint8Array) => {
+      const opened = await openWithPdfjs(file)
+      const fields = await extractFormFields(opened.pdf, opened.pages)
+      await opened.raw.loadingTask.destroy()
+      return { fields, pages: opened.pages }
+    }
+    const { fields, pages } = await read(bytes)
+    expect(fields.map((f) => [f.name, f.widgets.length, f.defaultValue, f.label])).toEqual([
+      ['listed', 1, '', undefined],
+      ['Text1.0', 1, 'Old 0', 'First copy'],
+      ['Text1.1', 1, 'Old 1', 'Second copy'],
+    ])
+    const filled: FormValues = { listed: 'Listed', 'Text1.0': 'Zero', 'Text1.1': 'One' }
+    const unwritten: string[][] = []
+    const out = await renderPdf(makeInput(bytes, pages, [], { formFields: fields, formValues: filled, options: { flattenForms: false } }), {
+      ...testDeps,
+      decrypt: pdfjsDecrypt(),
+      onUnwrittenFields: (names) => unwritten.push(names),
+    })
+    expect(unwritten).toEqual([])
+    const reopened = await read(out)
+    expect(reopened.fields.map((f) => [f.name, f.widgets.length, f.label])).toEqual(fields.map((f) => [f.name, f.widgets.length, f.label]))
+    expect(defaultFormValues(reopened.fields)).toEqual(filled)
+    const saved = (await PDFDocument.load(out)).getForm()
+    expect(saved.getFields().map((f) => f.getName())).toEqual(['listed', 'Text1.0', 'Text1.1'])
+    // A copy's own actions: the field's on the field, the widget's on its widget.
+    const actions = (dict: PDFDict) => dict.lookup(PDFName.of('AA'), PDFDict).keys().map(String)
+    for (const [i, own] of [['/K'], ['/K', '/C']].entries()) {
+      const copy = saved.getTextField(`Text1.${i}`).acroField
+      expect(actions(copy.dict)).toEqual(own)
+      expect(actions(copy.getWidgets()[0].dict)).toEqual(['/Fo'])
+    }
+    // The calculation order lists the field, not its widget.
+    expect(saved.acroForm.dict.lookup(PDFName.of('CO'), PDFArray).asArray()).toEqual([saved.getTextField('Text1.1').ref])
+
+    // Saved again as it is, every copy keeps its own value.
+    const again = await renderPdf(
+      makeInput(out, reopened.pages, [], { formFields: reopened.fields, formValues: defaultFormValues(reopened.fields), options: { flattenForms: false } }),
+      testDeps,
+    )
+    expect(defaultFormValues((await read(again)).fields)).toEqual(filled)
+
+    // Flattened, every value is drawn in its own box.
+    const flat = await renderPdf(makeInput(bytes, pages, [], { formFields: fields, formValues: filled, options: { flattenForms: true } }), {
+      ...testDeps,
+      decrypt: pdfjsDecrypt(),
+    })
+    expect((await PDFDocument.load(flat)).getPage(0).node.Annots()?.size() ?? 0).toBe(0)
+    const pdf = await openPdfjs(flat)
+    const items = await textInView(pdf, 1)
+    await pdf.loadingTask.destroy()
+    for (const [name, text] of Object.entries(filled)) {
+      const box = fields.find((f) => f.name === name)!.widgets[0].rect
+      const inBox = items.filter((t) => t.str === text && t.x >= box.x - 1 && t.x <= box.x + box.width && t.y >= box.y && t.y <= box.y + box.height + 1)
+      expect(inBox, name).toHaveLength(1)
+    }
+  })
+
+  it('links copies of fields the rewrite cut off from their parent into the fields of their names', async () => {
+    const doc = await PDFDocument.create()
+    const page = doc.addPage([612, 792])
+    const { context } = doc
+    const list = doc.getForm().acroForm.dict.lookup(PDFName.of('Fields'), PDFArray)
+    /** A copy of the field `parent`: a field of its own merged with its widget, whose type `parent` holds. */
+    const copy = (parent: PDFRef, name: string, rect: number[], entries: Record<string, unknown>) => {
+      const ref = context.register(context.obj({ Type: 'Annot', Subtype: 'Widget', T: PDFString.of(name), Parent: parent, Rect: rect, F: 4, P: page.ref, ...entries }))
+      context.lookup(parent, PDFDict).lookup(PDFName.of('Kids'), PDFArray).push(ref)
+      page.node.addAnnot(ref)
+    }
+    // A form merged twice: two parents "Text1" with a copy "0" each, only one of them in the field list.
+    for (const [y, listed] of [
+      [650, true],
+      [600, false],
+    ] as const) {
+      const parent = context.register(context.obj({ FT: 'Tx', T: PDFString.of('Text1'), DA: PDFString.of('/Helv 0 Tf 0 g'), Kids: [] }))
+      copy(parent, '0', [50, y, 250, y + 20], { TU: PDFString.of('Copy'), V: PDFString.of('Old') })
+      if (listed) list.push(parent)
+    }
+    // Copies of a check box, whose parent is missing from the field list.
+    const box = context.register(context.obj({ FT: 'Btn', T: PDFString.of('Check1'), Kids: [] }))
+    const look = (ops: string) => context.register(context.stream(ops, { BBox: [0, 0, 14, 14] }))
+    for (const [i, on] of [true, false].entries()) {
+      const state = on ? 'Yes' : 'Off'
+      copy(box, String(i), [50 + i * 30, 550, 64 + i * 30, 564], { V: state, AS: state, AP: { N: { Yes: look('0 g 2 2 10 10 re f'), Off: look('') } } })
+    }
+    const bytes = await encryptPdf(await doc.save(), { owner: 'owner-only' })
+
+    const read = async (file: Uint8Array) => {
+      const opened = await openWithPdfjs(file)
+      const fields = await extractFormFields(opened.pdf, opened.pages)
+      await opened.raw.loadingTask.destroy()
+      return { fields, pages: opened.pages }
+    }
+    const { fields, pages } = await read(bytes)
+    expect(fields.map((f) => [f.name, f.type, f.widgets.length, f.defaultValue])).toEqual([
+      ['Text1.0', 'text', 2, 'Old'],
+      ['Check1.0', 'checkbox', 1, true],
+      ['Check1.1', 'checkbox', 1, false],
+    ])
+    const filled: FormValues = { 'Text1.0': 'New', 'Check1.0': false, 'Check1.1': true }
+    const unwritten: string[][] = []
+    const out = await renderPdf(makeInput(bytes, pages, [], { formFields: fields, formValues: filled, options: { flattenForms: false } }), {
+      ...testDeps,
+      decrypt: pdfjsDecrypt(),
+      onUnwrittenFields: (names) => unwritten.push(names),
+    })
+    expect(unwritten).toEqual([])
+    const reopened = await read(out)
+    expect(reopened.fields.map((f) => [f.name, f.type, f.widgets.length, f.label])).toEqual(fields.map((f) => [f.name, f.type, f.widgets.length, f.label]))
+    expect(defaultFormValues(reopened.fields)).toEqual(filled)
+    // The copy joined the field of its name, not a field of its own under it.
+    const saved = (await PDFDocument.load(out)).getForm()
+    expect(saved.getFields().map((f) => [f.getName(), f.acroField.getWidgets().length])).toEqual([
+      ['Text1.0', 2],
+      ['Check1.0', 1],
+      ['Check1.1', 1],
+    ])
+
+    const again = await renderPdf(
+      makeInput(out, reopened.pages, [], { formFields: reopened.fields, formValues: defaultFormValues(reopened.fields), options: { flattenForms: false } }),
+      testDeps,
+    )
+    expect(defaultFormValues((await read(again)).fields)).toEqual(filled)
   })
 })

@@ -81,10 +81,17 @@ function PanelHeader({
   /** Inside a modal sheet (which takes initial focus itself): no tooltip on the close button. */
   sheet?: boolean
 }) {
+  const closeButton = (
+    <IconButton label={closeLabel} icon={closeIcon} size="icon-sm" onClick={onClose} tooltip={!sheet} className="order-last pointer-coarse:size-10" />
+  )
   return (
     <div className="flex h-12 shrink-0 items-center gap-2 border-b border-line pl-3 pr-2">
+      {/* In a sheet the close button comes first in Tab order (it still shows on the right): Shift+Tab
+          from a tab moves past the whole tab list, and with nothing before the list, focus would leave
+          the sheet and be pulled back. The focus trap only wraps around from its first Tab stop. */}
+      {sheet && closeButton}
       <div className="flex min-w-0 flex-1 items-center gap-2">{children}</div>
-      <IconButton label={closeLabel} icon={closeIcon} size="icon-sm" onClick={onClose} tooltip={!sheet} className="pointer-coarse:size-10" />
+      {!sheet && closeButton}
     </div>
   )
 }
@@ -167,7 +174,13 @@ export function InspectorPanel() {
     >
       <PanelHeader onClose={close} closeLabel={docked ? 'Hide panel' : 'Close panel'} closeIcon={<PanelRightClose />} sheet={!docked}>
         {hasForm ? (
-          <Tabs.List aria-label="Panel" className="inline-flex items-center gap-0.5 rounded-[10px] bg-surface-3 p-[3px]">
+          <Tabs.List
+            aria-label="Panel"
+            // A pressed tab focuses itself. Without this, Radix takes the press for a click on the
+            // list, and the next Tab into the list stops on the list itself (unseen), not the tab.
+            onMouseDown={(e) => e.preventDefault()}
+            className="inline-flex items-center gap-0.5 rounded-[10px] bg-surface-3 p-[3px]"
+          >
             <TabTrigger value="form" count={fieldCount}>
               Form
             </TabTrigger>

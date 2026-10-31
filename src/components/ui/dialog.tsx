@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from 'react'
+import { useRef, type FocusEvent, type ReactNode } from 'react'
 import { Dialog as RDialog } from 'radix-ui'
 import { X } from 'lucide-react'
 import { cn } from '../../lib/utils/misc'
@@ -25,6 +25,39 @@ export interface DialogProps {
 
 const WIDTHS = { sm: 'max-w-sm', md: 'max-w-lg', lg: 'max-w-2xl', xl: 'max-w-4xl' }
 
+/**
+ * Radix's focus trap moves focus to the modal itself when anything inside it is removed while
+ * nothing has focus, which is also the case for a moment while focus moves from one control to
+ * another. A control that removes something as it loses focus (the form panel's current-field
+ * marker) would then cancel the browser's own move: a click, tap or Tab would land on the modal
+ * (moving focus on in code afterwards still loses the caret where it was clicked, Tab's select-all
+ * and drag selection). So while focus moves from one control to another inside, the modal can't
+ * take focus; it can again once the next control has it. Spread on the modal's content.
+ */
+function useKeepFocusMoves() {
+  const restore = useRef<(() => void) | null>(null)
+  return {
+    onBlurCapture: (e: FocusEvent<HTMLElement>) => {
+      const content = e.currentTarget
+      const next = e.relatedTarget
+      if (restore.current || !next || next === content || !content.contains(next)) return
+      content.removeAttribute('tabindex')
+      const timer = window.setTimeout(() => {
+        restore.current?.()
+        // The move didn't happen after all (the control went away or can't take focus now): focus
+        // went nowhere, so do what the trap would have done.
+        if (document.activeElement === document.body && content.isConnected) content.focus({ preventScroll: true })
+      })
+      restore.current = () => {
+        window.clearTimeout(timer)
+        restore.current = null
+        if (!content.hasAttribute('tabindex')) content.setAttribute('tabindex', '-1')
+      }
+    },
+    onFocusCapture: () => restore.current?.(),
+  }
+}
+
 /** Centered modal dialog (bottom sheet on small screens). */
 export function Dialog({
   open,
@@ -40,11 +73,13 @@ export function Dialog({
   onOpenAutoFocus,
   onCloseAutoFocus,
 }: DialogProps) {
+  const focusMoves = useKeepFocusMoves()
   return (
     <RDialog.Root open={open} onOpenChange={onOpenChange}>
       <RDialog.Portal>
         <RDialog.Overlay className="fixed inset-0 z-[80] bg-overlay backdrop-blur-[2px] data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out" />
         <RDialog.Content
+          {...focusMoves}
           onOpenAutoFocus={(e) => {
             onModalOpen(e)
             onOpenAutoFocus?.(e)
@@ -104,12 +139,14 @@ export interface SheetProps {
 /** Slide-over panel (used for side panels on small screens). */
 export function Sheet({ open, onOpenChange, side = 'right', title, children, className }: SheetProps) {
   const contentRef = useRef<HTMLDivElement>(null)
+  const focusMoves = useKeepFocusMoves()
   return (
     <RDialog.Root open={open} onOpenChange={onOpenChange}>
       <RDialog.Portal>
         <RDialog.Overlay className="fixed inset-0 z-[70] bg-overlay data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out" />
         <RDialog.Content
           ref={contentRef}
+          {...focusMoves}
           // The sheet itself takes focus on open (no ring or tooltip on its first control);
           // Tab moves on into it.
           onOpenAutoFocus={(e) => {

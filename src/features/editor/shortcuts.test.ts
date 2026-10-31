@@ -65,6 +65,22 @@ describe('shellCommandFor', () => {
     expect(shellCommandFor(key('s', { ctrl: true }), true)).toBeNull()
   })
 
+  it('finds S and O on any keyboard layout', () => {
+    // Hebrew: the S and O keys type ד and ם, so the physical key counts.
+    expect(shellCommandFor(key('ד', { ctrl: true }, 'KeyS'), false)).toBe('download')
+    expect(shellCommandFor(key('ם', { ctrl: true }, 'KeyO'), false)).toBe('open')
+    expect(shellCommandFor(key('ד', { meta: true }, 'KeyS'), true)).toBe('download')
+    expect(shellCommandFor(key('ם', { meta: true }, 'KeyO'), true)).toBe('open')
+    expect(shellCommandFor(key('ם', { ctrl: true, shift: true }, 'KeyO'), false)).toBeNull()
+    // Latin layouts go by the letter typed: Dvorak and Colemak type R on the O and S keys, and
+    // Ctrl/⌘+R stays the browser's reload.
+    expect(shellCommandFor(key('r', { ctrl: true }, 'KeyO'), false)).toBeNull()
+    expect(shellCommandFor(key('r', { ctrl: true }, 'KeyS'), false)).toBeNull()
+    expect(shellCommandFor(key('r', { meta: true }, 'KeyO'), true)).toBeNull()
+    expect(shellCommandFor(key('o', { ctrl: true }, 'KeyS'), false)).toBe('open')
+    expect(shellCommandFor(key('s', { meta: true }, 'Semicolon'), true)).toBe('download')
+  })
+
   it('handles zoom keys on main and numeric keypads', () => {
     expect(shellCommandFor(key('=', { ctrl: true }), false)).toBe('zoomIn')
     expect(shellCommandFor(key('+', { ctrl: true, shift: true }), false)).toBe('zoomIn')

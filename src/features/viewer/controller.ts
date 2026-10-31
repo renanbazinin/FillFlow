@@ -1,6 +1,7 @@
 import type { PageInfo, Point, Rect } from '../../model/types'
 import { PT_TO_PX, useEditor } from '../../store/editor'
 import { clamp, isEditableTarget } from '../../lib/utils/misc'
+import { prefersReducedMotion } from '../../lib/utils/motion'
 import type { PagePoint, ViewerHandle } from './viewerApi'
 import { DOCK_OVERLAP, PAD_BOTTOM, PAD_TOP, SCROLL_TOP_MARGIN, ZOOM_SETTLE_MS, horizontalPadding } from './constants'
 import { clampScale, computeFitScale, pinchScale, stepZoom, wheelDeltaPx, wheelZoomLog } from './zoom'
@@ -46,10 +47,6 @@ const ACTIVATABLE =
 /** Space on these controls means "activate", so it must not start panning. */
 function isActivatable(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest(ACTIVATABLE) !== null
-}
-
-function prefersReducedMotion(): boolean {
-  return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
 }
 
 /** A modal (dialog, sheet, alert) is open over the editor: keys and gestures belong to it. */

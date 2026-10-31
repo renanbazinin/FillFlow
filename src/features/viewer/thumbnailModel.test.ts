@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Element, FormField, PageInfo } from '../../model/types'
+import type { Element, FormField, FormValues, PageInfo } from '../../model/types'
 import type { LoadedDocument } from '../../store/editor'
 import { THUMB_MAX_HEIGHT, THUMB_WIDTH, pageBadgeCounts, thumbnailPixelRatio, thumbnailSize } from './thumbnailModel'
 
@@ -77,6 +77,14 @@ describe('pageBadgeCounts', () => {
       formValues: { name: '', agree: false, tags: [] },
     })
     expect(counts).toEqual([0, 0, 0])
+  })
+
+  it('reads only stored values, also for fields named like built-in object properties', () => {
+    const named = [field('__proto__', [0], ''), field('constructor', [1], ''), field('toString', [2], '')]
+    expect(pageBadgeCounts({ doc: doc(pages, named), elements: [], formValues: {} })).toEqual([0, 0, 0])
+    // As restored from a saved session: "__proto__" is then an ordinary own key.
+    const stored = JSON.parse('{"__proto__": "Ada", "toString": ""}') as FormValues
+    expect(pageBadgeCounts({ doc: doc(pages, named), elements: [], formValues: stored })).toEqual([1, 0, 0])
   })
 
   it('returns the same array while inputs are unchanged', () => {

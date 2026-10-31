@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 import { useShallow } from 'zustand/react/shallow'
 import { confirm } from '../../components/ui/confirm'
 import { getFormDocumentInfo } from '../../lib/pdf/formFields'
+import { scrollBehavior } from '../../lib/utils/motion'
 import type { FormField } from '../../model/types'
 import { useEditor } from '../../store/editor'
 import { cssEscape, focusField, revealField } from './navigation'
@@ -66,7 +67,7 @@ function FieldList({ fields }: { fields: FormField[] }) {
       // Small screens: the page is behind this sheet, so fill the field right here.
       revealField(next)
       const row = rootRef.current.querySelector<HTMLElement>(`[data-panel-field="${cssEscape(next.name)}"]`)
-      row?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      row?.scrollIntoView({ block: 'nearest', behavior: scrollBehavior() })
       row?.querySelector<HTMLElement>('input, textarea, select, button, [tabindex="0"]')?.focus({ preventScroll: true })
       return
     }

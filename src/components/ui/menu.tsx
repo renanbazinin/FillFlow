@@ -14,7 +14,18 @@ export const MenuTrigger = DropdownMenu.Trigger
 export function MenuContent({ className, sideOffset = 6, align = 'end', ...props }: ComponentProps<typeof DropdownMenu.Content>) {
   return (
     <DropdownMenu.Portal>
-      <DropdownMenu.Content sideOffset={sideOffset} align={align} collisionPadding={8} className={cn(PANEL, 'min-w-52', className)} {...props} />
+      {/* No taller than the room left on screen (Radix measures it): on short screens the menu scrolls. */}
+      <DropdownMenu.Content
+        sideOffset={sideOffset}
+        align={align}
+        collisionPadding={8}
+        className={cn(
+          PANEL,
+          'max-h-(--radix-dropdown-menu-content-available-height) min-w-52 overflow-y-auto overscroll-contain scrollbar-thin',
+          className,
+        )}
+        {...props}
+      />
     </DropdownMenu.Portal>
   )
 }

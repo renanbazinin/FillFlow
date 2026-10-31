@@ -80,14 +80,24 @@ function restoreCatalog(doc: PDFDocument, info: RecoveredCatalog) {
   }
 }
 
-/** A page label number tree: runs of plain page numbers become one entry, other labels a prefix each. */
+/**
+ * A page label number tree: runs of page numbers ("1", "2"… or "A-1", "A-2"…) become one
+ * decimal range, other labels a prefix each.
+ */
 function pageLabels(doc: PDFDocument, labels: string[]): PDFDict {
-  const number = (s: string | undefined) => (s !== undefined && /^[1-9]\d{0,8}$/.test(s) ? Number(s) : 0)
+  // A decimal range labels a page with its prefix followed by the page's number.
+  const numbered = (label: string | undefined) => {
+    const m = label === undefined ? null : /^(.*?)([1-9]\d{0,8})$/s.exec(label)
+    return m && { prefix: m[1], n: Number(m[2]) }
+  }
   const nums: PDFObject[] = []
   labels.forEach((label, i) => {
-    const n = number(label)
-    if (n && i > 0 && number(labels[i - 1]) === n - 1) return
-    nums.push(PDFNumber.of(i), doc.context.obj(n ? { S: 'D', St: n } : { P: text(label) }))
+    const page = numbered(label)
+    const previous = numbered(labels[i - 1])
+    // The next number after the same prefix continues the range (so a "1" always starts one).
+    if (page && previous?.prefix === page.prefix && previous.n === page.n - 1) return
+    const range = page ? { S: 'D', St: page.n, ...(page.prefix ? { P: text(page.prefix) } : {}) } : { P: text(label) }
+    nums.push(PDFNumber.of(i), doc.context.obj(range))
   })
   return doc.context.obj({ Nums: nums })
 }
@@ -122,7 +132,8 @@ function restoreLayers(doc: PDFDocument, layers: NonNullable<RecoveredCatalog['l
   if (doc.catalog.has(PDFName.of('OCProperties'))) return
   const copies = new Map<string, PDFRef[]>()
   const all: PDFRef[] = []
-  const usage = new Map<string, PDFRef[]>()
+  // Per event, the groups with a usage state (ON or OFF) for it.
+  const usage = new Map<string, { ref: PDFRef; on: boolean }[]>()
   for (const [ref, obj] of context.enumerateIndirectObjects()) {
     if (!(obj instanceof PDFDict) || obj.get(TYPE) !== OCG) continue
     all.push(ref)
@@ -137,7 +148,7 @@ function restoreLayers(doc: PDFDocument, layers: NonNullable<RecoveredCatalog['l
     }
     const key = layerKey(decodedText(obj.lookup(PDFName.of('Name'))), intent, states.View, states.Print)
     copies.set(key, [...(copies.get(key) ?? []), ref])
-    for (const [event, state] of Object.entries(states)) if (state) usage.set(event, [...(usage.get(event) ?? []), ref])
+    for (const [event, state] of Object.entries(states)) if (state) usage.set(event, [...(usage.get(event) ?? []), { ref, on: state === 'ON' }])
   }
   if (!all.length) return
 
@@ -173,8 +184,13 @@ function restoreLayers(doc: PDFDocument, layers: NonNullable<RecoveredCatalog['l
     }
   }
   if (rb.size) config.set(PDFName.of('RBGroups'), context.obj([...rb.values()].map((refs) => context.obj(refs))))
-  // Viewers apply /Usage states only to groups listed for an event; pdf.js (the editor) always does.
-  const auto = [...usage].map(([event, refs]) => context.obj({ Event: event, Category: [event], OCGs: refs }))
+  // Viewers apply /Usage states only to groups listed for an event; pdf.js (the editor) applies them
+  // to all, but never shows a group that is off by default, so such a group isn't listed to turn on.
+  const auto: PDFDict[] = []
+  for (const [event, groups] of usage) {
+    const refs = groups.filter((g) => !g.on || !off.includes(g.ref)).map((g) => g.ref)
+    if (refs.length) auto.push(context.obj({ Event: event, Category: [event], OCGs: refs }))
+  }
   if (auto.length) config.set(PDFName.of('AS'), context.obj(auto))
   doc.catalog.set(PDFName.of('OCProperties'), context.obj({ OCGs: all, D: config }))
 }
