@@ -1,0 +1,358 @@
+@import "tailwindcss";
+
+/* Dark mode is class-based (`.dark` on <html>), driven by src/lib/theme.ts. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ------------------------------------------------------------------------- */
+/* Design tokens                                                             */
+/* ------------------------------------------------------------------------- */
+
+@theme {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans Hebrew", Arial, sans-serif;
+  --font-display: "Instrument Serif", ui-serif, Georgia, "Times New Roman", serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+
+  /* Brand (from the FillFlow logo: azure → teal). */
+  --color-brand-blue: #1f6feb;
+  --color-brand-teal: #14b8a6;
+
+  --animate-fade-in: ff-fade-in 140ms ease-out;
+  --animate-fade-out: ff-fade-out 120ms ease-in;
+  --animate-scale-in: ff-scale-in 170ms cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-slide-up: ff-slide-up 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-slide-down: ff-slide-down 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-slide-in-right: ff-slide-in-right 240ms cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-slide-in-left: ff-slide-in-left 240ms cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-shimmer: ff-shimmer 1.4s linear infinite;
+
+  @keyframes ff-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes ff-fade-out {
+    from { opacity: 1; }
+    to { opacity: 0; }
+  }
+  @keyframes ff-scale-in {
+    from { opacity: 0; transform: scale(0.96) translateY(4px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
+  }
+  @keyframes ff-slide-up {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes ff-slide-down {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes ff-slide-in-right {
+    from { transform: translateX(100%); }
+    to { transform: translateX(0); }
+  }
+  @keyframes ff-slide-in-left {
+    from { transform: translateX(-100%); }
+    to { transform: translateX(0); }
+  }
+  @keyframes ff-shimmer {
+    from { background-position: -200% 0; }
+    to { background-position: 200% 0; }
+  }
+}
+
+/* Semantic colors resolve through CSS variables so they flip with the theme. */
+@theme inline {
+  --color-canvas: var(--ff-canvas);
+  --color-surface: var(--ff-surface);
+  --color-surface-2: var(--ff-surface-2);
+  --color-surface-3: var(--ff-surface-3);
+  --color-line: var(--ff-line);
+  --color-line-strong: var(--ff-line-strong);
+  /* Resting border of interactive controls (inputs, checkboxes…): ≥ 3:1 against their background. */
+  --color-control: var(--ff-control);
+  --color-fg: var(--ff-fg);
+  --color-fg-muted: var(--ff-fg-muted);
+  --color-fg-subtle: var(--ff-fg-subtle);
+  --color-accent: var(--ff-accent);
+  --color-accent-hover: var(--ff-accent-hover);
+  --color-accent-ink: var(--ff-accent-ink);
+  --color-accent-soft: var(--ff-accent-soft);
+  --color-accent-fg: var(--ff-accent-fg);
+  --color-danger: var(--ff-danger);
+  --color-danger-soft: var(--ff-danger-soft);
+  --color-success: var(--ff-success);
+  --color-success-soft: var(--ff-success-soft);
+  --color-warning: var(--ff-warning);
+  --color-warning-soft: var(--ff-warning-soft);
+  --color-overlay: var(--ff-overlay);
+
+  /* On-page colors. Pages are always white paper, so these do NOT change with the theme. */
+  --color-selection: #2563eb;
+  --color-field: rgb(37 99 235 / 0.07);
+  --color-field-hover: rgb(37 99 235 / 0.13);
+  --color-field-border: rgb(37 99 235 / 0.28);
+  --color-field-required: rgb(220 38 38 / 0.45);
+
+  --shadow-xs: 0 1px 2px var(--ff-shadow-1);
+  --shadow-float: 0 1px 2px var(--ff-shadow-1), 0 10px 28px -8px var(--ff-shadow-2);
+  --shadow-overlay: 0 0 0 1px var(--ff-shadow-1), 0 28px 70px -16px var(--ff-shadow-3);
+  --shadow-page: 0 0 0 1px var(--ff-shadow-1), 0 2px 4px var(--ff-shadow-1), 0 10px 30px -10px var(--ff-shadow-2);
+}
+
+:root {
+  color-scheme: light;
+  --ff-canvas: #eceef2;
+  --ff-canvas-dot: rgb(16 24 40 / 0.07);
+  --ff-surface: #ffffff;
+  --ff-surface-2: #f7f8fa;
+  --ff-surface-3: #eef0f4;
+  --ff-line: #e3e6eb;
+  --ff-line-strong: #cdd2da;
+  --ff-control: #7b8597;
+  --ff-fg: #0e1726;
+  --ff-fg-muted: #4f5a6b;
+  /* Small-text colors (fg-subtle, success, warning) stay ≥ 4.5:1 on the backgrounds they sit on. */
+  --ff-fg-subtle: #626c7d;
+  --ff-accent: #2563eb;
+  --ff-accent-hover: #1d4fd8;
+  --ff-accent-ink: #1d4fd8;
+  --ff-accent-soft: rgb(37 99 235 / 0.1);
+  --ff-accent-fg: #ffffff;
+  --ff-danger: #dc2626;
+  --ff-danger-soft: rgb(220 38 38 / 0.1);
+  --ff-success: #047857;
+  --ff-success-soft: rgb(14 159 110 / 0.12);
+  --ff-warning: #a15c07;
+  --ff-warning-soft: rgb(234 179 8 / 0.14);
+  --ff-overlay: rgb(9 13 22 / 0.42);
+  --ff-shadow-1: rgb(16 24 40 / 0.07);
+  --ff-shadow-2: rgb(16 24 40 / 0.2);
+  --ff-shadow-3: rgb(16 24 40 / 0.32);
+  /* The safe-area insets, for script to read: menus and popovers keep clear of them (ui/menu.tsx). */
+  --ff-safe-top: env(safe-area-inset-top, 0px);
+  --ff-safe-right: env(safe-area-inset-right, 0px);
+  --ff-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --ff-safe-left: env(safe-area-inset-left, 0px);
+}
+
+.dark {
+  color-scheme: dark;
+  --ff-canvas: #0c0f15;
+  --ff-canvas-dot: rgb(255 255 255 / 0.05);
+  --ff-surface: #141821;
+  --ff-surface-2: #1a1f2a;
+  --ff-surface-3: #222836;
+  --ff-line: #262d3b;
+  --ff-line-strong: #364052;
+  --ff-control: #6b7790;
+  --ff-fg: #e8ebf1;
+  --ff-fg-muted: #a3acbb;
+  --ff-fg-subtle: #8a94a6;
+  /* White text on the accent (and on its hover) stays ≥ 4.5:1, and the accent as a focus ring or a
+     marker ≥ 3:1 on every surface, also on the accent-soft tint of an active or selected row (a narrow
+     window: a darker accent fails the tint, a lighter one the white text). */
+  --ff-accent: #3170ea;
+  --ff-accent-hover: #1d4fd8;
+  --ff-accent-ink: #7aa7ff;
+  --ff-accent-soft: rgb(122 167 255 / 0.15);
+  --ff-accent-fg: #ffffff;
+  --ff-danger: #f05252;
+  --ff-danger-soft: rgb(240 82 82 / 0.15);
+  --ff-success: #31c48d;
+  --ff-success-soft: rgb(49 196 141 / 0.15);
+  --ff-warning: #fbbf24;
+  --ff-warning-soft: rgb(251 191 36 / 0.14);
+  --ff-overlay: rgb(0 0 0 / 0.6);
+  --ff-shadow-1: rgb(0 0 0 / 0.35);
+  --ff-shadow-2: rgb(0 0 0 / 0.5);
+  --ff-shadow-3: rgb(0 0 0 / 0.65);
+}
+
+/* ------------------------------------------------------------------------- */
+/* Base                                                                      */
+/* ------------------------------------------------------------------------- */
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    background: var(--ff-canvas);
+    color: var(--ff-fg);
+    font-family: var(--font-sans);
+    font-feature-settings: "cv11", "ss01";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    overscroll-behavior: none;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  label[for],
+  summary {
+    cursor: pointer;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ff-accent);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--ff-accent) 28%, transparent);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 1ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 1ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  /* Forced colors mode (Windows Contrast themes) recolors the page to the system palette. A PDF
+     page is white paper in every theme (its canvas is never recolored), so what is drawn on it
+     (fields, items, their selection) keeps its own colors. So does a signing pad, paper the ink is
+     drawn on (the page color would hide dark ink). */
+  @media (forced-colors: active) {
+    [data-page-index],
+    [data-signing-pad]:has(> canvas) {
+      forced-color-adjust: none;
+    }
+  }
+}
+
+/* Forced colors mode also drops fills and shadows, all that marks a pressed toggle (a tool, a
+   picked row, the chosen option of a toggle group: data-state=on), the selected tab or the current
+   page: they are drawn in the system highlight colors, as system-highlight (below) draws them, and
+   what they hold follows their text color (a key chip keeps its own). Unlayered, to win over the
+   component fills (bg-accent…) that forced colors would turn into the page color. */
+@media (forced-colors: active) {
+  [aria-pressed="true"],
+  [data-state="on"],
+  [role="tab"][aria-selected="true"],
+  [aria-current]:not([aria-current="false"]) {
+    forced-color-adjust: none;
+    background-color: Highlight;
+    color: HighlightText;
+
+    & > :not(kbd) {
+      color: inherit;
+    }
+  }
+}
+
+/* ------------------------------------------------------------------------- */
+/* Components                                                                */
+/* ------------------------------------------------------------------------- */
+
+@layer components {
+  /* Touch screens: a control is at least 40×40, about a fingertip. A floor that size utilities
+     (h-8, size-9…) can't lower; a min-w-* / min-h-* utility still overrides it. */
+  .min-tap-size {
+    @media (pointer: coarse) {
+      min-width: 2.5rem;
+      min-height: 2.5rem;
+    }
+  }
+}
+
+/* ------------------------------------------------------------------------- */
+/* Utilities                                                                 */
+/* ------------------------------------------------------------------------- */
+
+/* Transparency checkerboard (signature / image previews). What is previewed on it keeps its
+   colors in forced colors mode, as on the PDF page it goes to. */
+@utility bg-checker {
+  background-color: #ffffff;
+  background-image: conic-gradient(#eef0f4 25%, transparent 0 50%, #eef0f4 0 75%, transparent 0);
+  background-size: 16px 16px;
+  forced-color-adjust: none;
+}
+
+/* The system's selection colors, for what is chosen or highlighted in forced colors mode (Windows
+   Contrast themes), which drops fills and shadows: forced-colors:data-[highlighted]:system-highlight
+   (pressed toggles, selected tabs and the current page get them on their own, above).
+   forced-color-adjust: none keeps the browser from putting a Canvas-colored backplate behind the
+   text on it; children keep their own colors too (text-current makes one follow the text). */
+@utility system-highlight {
+  forced-color-adjust: none;
+  background-color: Highlight;
+  color: HighlightText;
+}
+
+/* Subtle dot grid for the editor canvas. */
+@utility bg-canvas-dots {
+  background-color: var(--ff-canvas);
+  background-image: radial-gradient(var(--ff-canvas-dot) 1px, transparent 1.2px);
+  background-size: 22px 22px;
+}
+
+@utility bg-brand-gradient {
+  background-image: linear-gradient(135deg, var(--color-brand-blue) 0%, var(--color-brand-teal) 100%);
+}
+
+@utility text-brand-gradient {
+  background-image: linear-gradient(120deg, var(--color-brand-blue) 0%, var(--color-brand-teal) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@utility scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ff-line-strong) transparent;
+}
+
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@utility pb-safe {
+  padding-bottom: max(env(safe-area-inset-bottom), 0px);
+}
+
+/* Left and right safe areas (a phone held sideways: notch, rounded corners). index.html opts into
+   edge-to-edge (viewport-fit=cover), so whatever touches a side edge pads it: pl-safe is the inset,
+   pl-safe-2 the inset or at least the gutter 2 (0.5rem), whichever is wider. */
+@utility pl-safe {
+  padding-left: max(env(safe-area-inset-left), 0px);
+}
+
+@utility pr-safe {
+  padding-right: max(env(safe-area-inset-right), 0px);
+}
+
+@utility pl-safe-* {
+  padding-left: max(--spacing(--value(number)), env(safe-area-inset-left));
+}
+
+@utility pr-safe-* {
+  padding-right: max(--spacing(--value(number)), env(safe-area-inset-right));
+}
+
+@utility px-safe-* {
+  padding-left: max(--spacing(--value(number)), env(safe-area-inset-left));
+  padding-right: max(--spacing(--value(number)), env(safe-area-inset-right));
+}
+
+/* Skeleton shimmer for loading placeholders. */
+@utility skeleton {
+  background-image: linear-gradient(90deg, var(--ff-surface-3) 0%, var(--ff-surface-2) 50%, var(--ff-surface-3) 100%);
+  background-size: 200% 100%;
+  animation: var(--animate-shimmer);
+}
