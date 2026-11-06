@@ -30,6 +30,8 @@ interface ElementsUiState {
   /** Bumped whenever an element font finishes loading (text re-layout). */
   fontVersion: number
   contextMenu: ContextMenuAt | null
+  /** A pen, not a finger, last came near the screen: items take its presses (see HitArea). */
+  penInput: boolean
 }
 
 export const useElementsUi = create<ElementsUiState>(() => ({
@@ -38,7 +40,14 @@ export const useElementsUi = create<ElementsUiState>(() => ({
   dropPreview: null,
   fontVersion: 0,
   contextMenu: null,
+  penInput: false,
 }))
+
+/** Follows which of pen and touch is in use; a mouse changes nothing (it never scrolls by dragging). */
+export function notePointerType(type: string): void {
+  const pen = type === 'pen' ? true : type === 'touch' ? false : null
+  if (pen !== null && useElementsUi.getState().penInput !== pen) useElementsUi.setState({ penInput: pen })
+}
 
 export function setContextMenu(at: ContextMenuAt | null): void {
   useElementsUi.setState({ contextMenu: at })

@@ -4,12 +4,15 @@ import {
   SAMPLE_PDF,
   SAMPLE_SPOTS,
   clickPagePoint,
+  expectFormFieldValue,
   fillFormField,
   fixture,
+  formField,
   gotoHome,
   openPdf,
   selectTool,
   showPage,
+  trackPageErrors,
   typeAndCommit,
 } from './support/app'
 import { readViewSizes } from './support/pdf'
@@ -52,6 +55,38 @@ async function chooseFromMore(page: Page, item: string | RegExp): Promise<void> 
   await page.keyboard.press('Enter')
 }
 
+/**
+ * How much of the focused field on a page (0 to 1) the floating tool dock covers, and how much is
+ * out of sight (outside the visible part of the pages); null when focus isn't on a field on a page.
+ */
+function focusedFieldHidden(page: Page): Promise<{ underDock: number; outOfSight: number } | null> {
+  return page.evaluate(() => {
+    const box = document.activeElement?.closest('[data-page-index] [data-form-widget]')?.getBoundingClientRect()
+    if (!box) return null
+    const pages = document.querySelector('[role="region"][aria-label="Document pages"]')!
+    const { left, top } = pages.getBoundingClientRect()
+    const view = { left, top, right: left + pages.clientWidth, bottom: top + pages.clientHeight }
+    const dock = document.querySelector('[role="toolbar"][aria-label="Tools"]')!.getBoundingClientRect()
+    const share = (r: { left: number; top: number; right: number; bottom: number }) =>
+      (Math.max(0, Math.min(box.right, r.right) - Math.max(box.left, r.left)) *
+        Math.max(0, Math.min(box.bottom, r.bottom) - Math.max(box.top, r.top))) /
+      (box.width * box.height)
+    return { underDock: share(dock), outOfSight: 1 - share(view) }
+  })
+}
+
+/** Waits until an element is done animating in (a sheet sliding, a menu scaling). */
+function settled(target: Locator): Promise<void> {
+  return target.evaluate(async (el) => {
+    await Promise.all(el.getAnimations().map((a) => a.finished))
+  })
+}
+
+/** How far the pages are scrolled down. */
+function pagesScrollTop(page: Page): Promise<number> {
+  return page.getByRole('region', { name: 'Document pages' }).evaluate((el) => el.scrollTop)
+}
+
 /** Replaces a component's render function with one that throws (served by the dev server). */
 async function crashComponent(page: Page, file: string, component: string): Promise<void> {
   await page.route(`**/src/${file}*`, async (route) => {
@@ -89,7 +124,7 @@ test.describe('focus comes back to what opened a dialog', () => {
     await expect.poll(() => focused(page)).toBe('Signature')
 
     await fillFormField(page, 'Full name', 'Ada Lovelace')
-    await chooseFromMore(page, /Clear all items/)
+    await chooseFromMore(page, /Clear everything/)
     await expect(page.getByRole('alertdialog')).toBeVisible()
     await page.keyboard.press('Escape')
     await expect.poll(() => focused(page)).toBe('More')
@@ -470,6 +505,23 @@ for (const colorScheme of ['light', 'dark'] as const) {
       }
     }
   })
+
+  test(`the home heading's colored words meet WCAG AA in the ${colorScheme} theme`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme })
+    await gotoHome(page)
+    const { ends, canvas } = await page
+      .getByRole('heading', { level: 1 })
+      .locator('em')
+      .evaluate((em) => {
+        const style = getComputedStyle(em)
+        return {
+          ends: ['--color-brand-blue', '--color-brand-teal'].map((name) => style.getPropertyValue(name).trim()),
+          canvas: getComputedStyle(document.documentElement).getPropertyValue('--ff-canvas').trim(),
+        }
+      })
+    // Large text (44px and up): 3:1 at both ends of the gradient.
+    for (const end of ends) expect(contrast(end, canvas), `${end} on ${canvas}`).toBeGreaterThanOrEqual(3)
+  })
 }
 
 test('the drop zone is named by the words it shows', async ({ page }) => {
@@ -489,7 +541,7 @@ test('the home logo scrolls to the top without animating when motion is reduced'
   expect(top).toBe(0)
 })
 
-test('a "Clear all items" from the menu says locked items stay', async ({ page }) => {
+test('a "Clear everything" from the menu says locked items stay', async ({ page }) => {
   const sizes = await readViewSizes(SAMPLE_PDF)
   await openSample(page)
   await selectTool(page, 'Text', 'T')
@@ -497,11 +549,14 @@ test('a "Clear all items" from the menu says locked items stay', async ({ page }
   await typeAndCommit(page, 'Keep me')
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Shift+L' : 'Control+Shift+L')
   await fillFormField(page, 'Full name', 'Ada Lovelace')
-  await chooseFromMore(page, /Clear all items/)
+  await chooseFromMore(page, /Clear everything/)
   const confirmDialog = page.getByRole('alertdialog')
   await expect(confirmDialog).toContainText('One locked item stays')
   await confirmDialog.getByRole('button', { name: 'Clear all' }).click()
   await expect(page.locator('[data-page-index="1"]').getByText('Keep me')).toBeVisible()
+  // Everything, as it says: the form is back to how it was too (the Items panel's "Clear all items"
+  // leaves the form alone).
+  await expectFormFieldValue(page, 'Full name', '')
 })
 
 test('Ctrl/⌘+O opens another PDF on a Hebrew keyboard layout too', async ({ page }) => {
@@ -593,3 +648,535 @@ test.describe('crashes never leave a blank page', () => {
     await expect(page.getByRole('button', { name: /try a sample form/i })).toBeVisible()
   })
 })
+
+for (const viewport of [
+  { width: 1366, height: 657 },
+  { width: 1536, height: 730 },
+]) {
+  test.describe(`Tab through the fields on the pages at ${viewport.width}×${viewport.height}`, () => {
+    test.use({ viewport })
+
+    test('shows each field whole, clear of the tool dock', async ({ page }) => {
+      await openSample(page)
+      const hint = page.locator('[data-sonner-toast]').filter({ hasText: /fillable fields/ })
+      await expect(hint).toBeVisible()
+      await page.getByRole('region', { name: 'Document pages' }).focus()
+      let fields = 0
+      for (let i = 0; i < 30; i++) {
+        await page.keyboard.press('Tab')
+        const hidden = await focusedFieldHidden(page)
+        if (hidden === null) break
+        fields++
+        expect(hidden, await focused(page)).toEqual({ underDock: 0, outOfSight: 0 })
+        // Once a field is in use, the hint about the fields makes way for them.
+        if (fields === 1) await expect(hint).toHaveCount(0)
+      }
+      // Text boxes, a text area, radio buttons, checkboxes, a list.
+      expect(fields).toBeGreaterThanOrEqual(12)
+    })
+  })
+}
+
+test.describe('at 1920×947', () => {
+  test.use({ viewport: { width: 1920, height: 947 } })
+
+  test('a press on a drop-down or a list low beside the tool dock leaves the pages where they are', async ({ page }) => {
+    await openSample(page)
+    for (const [name, side] of [
+      ['Country', 'left'],
+      ['Referral', 'right'],
+    ] as const) {
+      const select = (await formField(page, name)).locator('select')
+      // Its bottom just above the pages' bottom edge, in the strip the dock floats over; pressed
+      // beside the dock, where all of it shows.
+      const at = await select.evaluate((el, side) => {
+        const pages = document.querySelector('[role="region"][aria-label="Document pages"]')!
+        pages.scrollTop += el.getBoundingClientRect().bottom - (pages.getBoundingClientRect().top + pages.clientHeight - 20)
+        const box = el.getBoundingClientRect()
+        const point = { x: side === 'left' ? box.left + 20 : box.right - 20, y: box.bottom - 12 }
+        return { ...point, onIt: el.contains(document.elementFromPoint(point.x, point.y)) }
+      }, side)
+      expect(at.onIt).toBe(true)
+      const before = await pagesScrollTop(page)
+      // The drop-down opens, the list takes focus: neither moves the pages under the pointer.
+      await page.mouse.click(at.x, at.y)
+      await expect(select).toBeFocused()
+      await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))))
+      expect(await pagesScrollTop(page), name).toBe(before)
+      await page.keyboard.press('Escape')
+    }
+  })
+})
+
+test('Tab into a field wider than the view brings in the end its text sits at', async ({ page }) => {
+  await page.setViewportSize({ width: 1366, height: 657 })
+  await gotoHome(page)
+  await openPdf(page, fixture('form-basic.pdf'))
+  await showPage(page, 0)
+  const name = (await formField(page, 'Name')).locator('input')
+  const hebrewName = (await formField(page, 'Hebrew name')).locator('input')
+  await page.getByRole('button', { name: /^Zoom level/ }).click()
+  await page.getByRole('menuitemradio', { name: '300%' }).click()
+  // The field is right-aligned: Hebrew starts at its right edge, and Latin text sits there too.
+  for (const value of ['ישראל כהן', 'Israel Cohen']) {
+    await hebrewName.fill(value)
+    await name.focus()
+    await page.keyboard.press('Tab')
+    await expect(hebrewName).toBeFocused()
+    const { field, text, view } = await hebrewName.evaluate((el) => {
+      const pages = document.querySelector('[role="region"][aria-label="Document pages"]')!
+      const left = pages.getBoundingClientRect().left
+      const box = el.getBoundingClientRect()
+      const style = getComputedStyle(el)
+      return {
+        field: box.width,
+        text: box.right - parseFloat(style.borderRightWidth) - parseFloat(style.paddingRight),
+        view: { left, right: left + pages.clientWidth },
+      }
+    })
+    expect(field).toBeGreaterThan(view.right - view.left)
+    expect(text, value).toBeLessThanOrEqual(view.right)
+  }
+})
+
+test('a field that gets focus back with the window stays where the user left it', async ({ page }) => {
+  await openSample(page)
+  await page.getByRole('region', { name: 'Document pages' }).focus()
+  await page.keyboard.press('Tab')
+  // The field right at the top edge of the pages, where moving to it would bring it down a little.
+  await page.evaluate(() => {
+    const pages = document.querySelector('[role="region"][aria-label="Document pages"]')!
+    const field = document.activeElement!.closest('[data-form-widget]')!
+    pages.scrollTop += field.getBoundingClientRect().top - pages.getBoundingClientRect().top - 4
+  })
+  const before = await pagesScrollTop(page)
+  // The window loses focus (the field stays the document's focused element), then gets it back: the
+  // browser hands it back to the same field.
+  await page.evaluate(() => {
+    const field = document.activeElement as HTMLElement
+    window.dispatchEvent(new FocusEvent('blur'))
+    field.blur()
+    field.focus()
+  })
+  expect(await pagesScrollTop(page)).toBe(before)
+  // Moved to with the keyboard, it comes clear of the edge.
+  await page.keyboard.press('Tab')
+  await page.keyboard.press('Shift+Tab')
+  await expect.poll(() => pagesScrollTop(page)).toBeLessThan(before)
+})
+
+test.describe('on a phone held sideways', () => {
+  test.use({ viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true })
+
+  test('Tab to a field under the tool dock brings it clear', async ({ page }) => {
+    await openSample(page)
+    await (await formField(page, 'Phone')).locator('input').tap()
+    await page.keyboard.press('Tab')
+    await expect.poll(() => focused(page)).toBe('Home address')
+    expect(await focusedFieldHidden(page)).toEqual({ underDock: 0, outOfSight: 0 })
+  })
+
+  test('a field being typed into stays clear of the tool dock when the keyboard shrinks the page', async ({ page }) => {
+    await openSample(page)
+    const dock = page.getByRole('toolbar', { name: 'Tools' })
+    const email = (await formField(page, 'Email')).locator('input')
+    await email.tap()
+    await page.keyboard.type('dana@example.com')
+    // Held sideways, a phone is this short in a browser anyway, its bars taking the rest, keyboard open
+    // or not (most browsers lay it over the page): the tools stay.
+    await page.setViewportSize({ width: 915, height: 332 })
+    await expect(email).toBeFocused()
+    await expect(dock).toBeVisible()
+    // A keyboard that shrinks the page (in-app browsers do), then the browser's own scroll to what has
+    // focus. With half the screen gone, the dock makes way while typing.
+    await page.setViewportSize({ width: 844, height: 190 })
+    await email.evaluate((el) => el.scrollIntoView({ block: 'nearest' }))
+    await expect(dock).toBeHidden()
+    expect(await focusedFieldHidden(page)).toEqual({ underDock: 0, outOfSight: 0 })
+
+    // On to the next field with Tab, or with the keyboard's Next key (Enter): all of it shows.
+    const phone = (await formField(page, 'Phone')).locator('input')
+    for (const key of ['Tab', 'Enter']) {
+      await phone.focus()
+      await page.keyboard.press(key)
+      await expect.poll(() => focused(page)).toBe('Home address')
+      await expect.poll(() => focusedFieldHidden(page), key).toEqual({ underDock: 0, outOfSight: 0 })
+    }
+
+    // Done typing, the dock is back: the keyboard closed (the field keeps focus), or focus moved on.
+    await page.setViewportSize({ width: 844, height: 390 })
+    await expect(dock).toBeVisible()
+    await page.setViewportSize({ width: 844, height: 190 })
+    await expect(dock).toBeHidden()
+    await page.evaluate(() => (document.activeElement as HTMLElement).blur())
+    await expect(dock).toBeVisible()
+
+    // A read-only box opens no keyboard: the dock stays.
+    await email.evaluate((el) => el.setAttribute('readonly', ''))
+    await email.focus()
+    await expect(email).toBeFocused()
+    await expect(dock).toBeVisible()
+  })
+
+  test('controls keep clear of the notch and the rounded corners', async ({ page }) => {
+    const inset = 47
+    const cdp = await page.context().newCDPSession(page)
+    await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { left: inset, right: inset, top: 0, bottom: 21 } })
+    /** The controls in `scope` that reach into the left or right safe area. */
+    const inSafeAreas = (scope: Locator, controls = 'a, button, input, textarea, [role="menuitem"], [role="menuitemradio"]') =>
+      scope.evaluate(
+        (root, { controls, inset }) =>
+          [...root.querySelectorAll(controls)].flatMap((el) => {
+            const box = el.getBoundingClientRect()
+            if (!box.width || (box.left >= inset && box.right <= innerWidth - inset)) return []
+            return [`${el.getAttribute('aria-label') ?? el.textContent?.trim()} at ${Math.round(box.left)}–${Math.round(box.right)}`]
+          }),
+        { controls, inset },
+      )
+
+    await gotoHome(page)
+    // The logo link's padding may reach past its logo: the logo is what counts.
+    expect(await inSafeAreas(page.getByRole('banner'), 'svg, nav a, nav [role="radio"]')).toEqual([])
+
+    await openPdf(page, SAMPLE_PDF)
+    await showPage(page, 0)
+    expect(await inSafeAreas(page.getByRole('banner'))).toEqual([])
+    await page.getByRole('button', { name: 'More' }).tap()
+    const menu = page.getByRole('menu')
+    await settled(menu)
+    expect(await inSafeAreas(menu)).toEqual([])
+    await page.keyboard.press('Escape')
+
+    await page.getByRole('button', { name: 'Pages', exact: true }).tap()
+    const pagesSheet = page.getByRole('dialog', { name: 'Pages' })
+    await settled(pagesSheet)
+    await expect(pagesSheet.getByRole('button', { name: /^Page 1/ })).toBeVisible()
+    expect(await inSafeAreas(pagesSheet)).toEqual([])
+    await page.keyboard.press('Escape')
+    await expect(pagesSheet).toHaveCount(0)
+
+    await page.getByRole('button', { name: 'Form & items' }).tap()
+    const formSheet = page.getByRole('dialog', { name: 'Form and items' })
+    await settled(formSheet)
+    await expect(formSheet.getByRole('button', { name: 'Next empty field' })).toBeVisible()
+    expect(await inSafeAreas(formSheet)).toEqual([])
+  })
+})
+
+test.describe('on a touch phone', () => {
+  test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
+
+  test('menus and tool choices show no keyboard shortcuts', async ({ page }) => {
+    await openSample(page)
+    await page.getByRole('button', { name: 'More' }).tap()
+    const menu = page.getByRole('menu')
+    await expect(menu.getByRole('menuitem', { name: /Zoom in/ })).toBeVisible()
+    expect(await menu.innerText()).not.toMatch(/Ctrl|⌘/)
+    await page.keyboard.press('Escape')
+
+    const shapes = page.getByRole('button', { name: 'Shapes' })
+    await shapes.scrollIntoViewIfNeeded()
+    await shapes.tap()
+    const choices = page.getByRole('dialog')
+    await expect(choices.getByRole('button', { name: /Rectangle/ })).toBeVisible()
+    await expect(choices.locator('kbd').filter({ visible: true })).toHaveCount(0)
+  })
+
+  test('the tabs of the Form & items sheet are 40px targets', async ({ page }) => {
+    await openSample(page)
+    await page.getByRole('button', { name: 'More' }).tap()
+    await page.getByRole('menuitem', { name: 'Form & items' }).tap()
+    const sheet = page.getByRole('dialog', { name: 'Form and items' })
+    await settled(sheet)
+    const tabs = sheet.getByRole('tab')
+    await expect(tabs).toHaveCount(2)
+    for (const tab of await tabs.all()) expect((await tab.boundingBox())!.height, (await tab.textContent()) ?? '').toBeGreaterThanOrEqual(40)
+  })
+})
+
+test('shortcuts that open something wait while the More menu is open', async ({ page }) => {
+  let pickers = 0
+  page.on('filechooser', () => pickers++)
+  await openSample(page)
+  const before = pickers
+  // Whether the last key's default action (the browser's own Save page / Open file) was stopped.
+  await page.evaluate(() => {
+    window.addEventListener('keydown', (e) => document.documentElement.setAttribute('data-key-stopped', String(e.defaultPrevented)))
+  })
+  const more = page.getByRole('button', { name: 'More' })
+  const menu = page.getByRole('menu')
+  const mod = process.platform === 'darwin' ? 'Meta' : 'Control'
+  for (const key of [`${mod}+o`, `${mod}+s`, '?']) {
+    await more.focus()
+    await page.keyboard.press('Enter')
+    await expect(menu).toBeVisible()
+    await page.keyboard.press(key)
+    if (key !== '?') await expect(page.locator('html')).toHaveAttribute('data-key-stopped', 'true')
+    // Nothing opened under the menu (where the menu would stay stuck open over it): one Escape
+    // closes the menu, and focus is back on its button.
+    await page.keyboard.press('Escape')
+    await expect(menu).toHaveCount(0)
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    await expect(more).toBeFocused()
+  }
+  expect(pickers).toBe(before)
+})
+
+test('Tab and Shift+Tab move between the shortcut list and the close button, both shown focused', async ({ page }) => {
+  await openSample(page)
+  await page.keyboard.press('?')
+  const dialog = page.getByRole('dialog', { name: 'Keyboard shortcuts' })
+  const list = dialog.getByRole('region', { name: 'Shortcut list' })
+  const close = dialog.getByRole('button', { name: 'Close' })
+  const ringed = (target: Locator) => target.evaluate((el) => el.matches(':focus-visible') && getComputedStyle(el).outlineStyle !== 'none')
+  await expect(list).toBeFocused()
+  expect(await ringed(list)).toBe(true)
+  for (const [key, target] of [
+    ['Tab', close],
+    ['Tab', list],
+    ['Shift+Tab', close],
+    ['Shift+Tab', list],
+  ] as const) {
+    await page.keyboard.press(key)
+    await expect(target).toBeFocused()
+    expect(await ringed(target), key).toBe(true)
+  }
+})
+
+test('the home headings nest: the feature tiles have a section heading of their own', async ({ page }) => {
+  /** The headings in reading order, as screen readers list them: "level name". */
+  const outline = () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll('h1, h2, h3, h4, h5, h6')].map((h) => `${h.tagName[1]} ${h.textContent?.replace(/\s+/g, ' ').trim()}`),
+    )
+  const hero = '1 Fill & sign any PDF, right in your browser.'
+  const tiles = ['3 Fill any form', '3 Sign in seconds', '3 Private by design', '3 Pick up where you left off']
+  await gotoHome(page)
+  await expect(page.getByRole('region', { name: 'Why FillFlow' })).toBeVisible()
+  expect(await outline()).toEqual([hero, '2 Why FillFlow', ...tiles])
+
+  // With a recent document, its list comes first, as a section of its own.
+  await openPdf(page, SAMPLE_PDF)
+  await showPage(page, 0)
+  await page.getByRole('button', { name: 'Back to home' }).click()
+  await expect(page.getByRole('heading', { name: 'Recent documents' })).toBeVisible()
+  expect(await outline()).toEqual([hero, '2 Recent documents', '2 Why FillFlow', ...tiles])
+})
+
+test.describe('the Date tool', () => {
+  test.use({ locale: 'en-US' })
+
+  test('offers its formats written as today, and inserts and remembers the one picked', async ({ page }) => {
+    // 5 November: day-first and month-first give two different dates.
+    await page.clock.setFixedTime(new Date(2026, 10, 5, 12))
+    const sizes = await readViewSizes(SAMPLE_PDF)
+    await openSample(page)
+    const tool = page.getByRole('button', { name: 'Date', exact: true })
+    await tool.click()
+    // The tool is on at once (the next click on a page inserts the date), its formats on show.
+    await expect(tool).toHaveAttribute('aria-pressed', 'true')
+    const formats = page.getByRole('dialog', { name: 'Date format' })
+    const options = formats.getByRole('button')
+    const names = ['05/11/2026 (DD/MM/YYYY)', '11/05/2026 (MM/DD/YYYY)', '2026-11-05 (YYYY-MM-DD)', '05.11.2026 (DD.MM.YYYY)', '5 Nov 2026', 'November 5, 2026']
+    await expect(options).toHaveCount(names.length)
+    for (const [i, name] of names.entries()) await expect(options.nth(i)).toHaveAccessibleName(name)
+    // The tool's hint makes way for the list.
+    const hint = page.getByRole('status').filter({ hasText: /today/ })
+    await expect(hint).toHaveCSS('opacity', '0')
+
+    await formats.getByRole('button', { name: '05.11.2026 (DD.MM.YYYY)' }).click()
+    await expect(formats).toHaveCount(0)
+    await expect(hint).toHaveCSS('opacity', '1')
+    await clickPagePoint(page, 1, SAMPLE_SPOTS.emergencyName, sizes[1])
+    await expect(page.locator('[data-page-index="1"]').getByText('05.11.2026', { exact: true })).toBeVisible()
+
+    // Remembered for next time.
+    await openSample(page)
+    await tool.click()
+    await expect(formats.getByRole('button', { name: '05.11.2026 (DD.MM.YYYY)' })).toHaveAttribute('aria-pressed', 'true')
+  })
+})
+
+test('a tool picked from the dock with the keyboard adds its item with the next Enter', async ({ page }) => {
+  await openSample(page)
+  const pages = page.getByRole('region', { name: 'Document pages' })
+  const dock = page.getByRole('toolbar', { name: 'Tools' })
+  const hint = page.getByRole('status').filter({ has: page.locator('kbd') })
+  const items = (kind: string) => page.locator(`[data-element-id][data-kind="${kind}"]`)
+  /** Presses a dock button with Enter, as once Tab has reached it. */
+  const press = async (name: string) => {
+    await dock.getByRole('button', { name, exact: true }).focus()
+    await page.keyboard.press('Enter')
+  }
+
+  // The shortcut list has it.
+  await page.keyboard.press('?')
+  const shortcuts = page.getByRole('dialog', { name: 'Keyboard shortcuts' })
+  await expect(shortcuts.getByText('Add the active tool’s item in the middle of the view')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(shortcuts).toHaveCount(0)
+
+  // A tool of its own: focus goes on to the pages, where Enter adds its item (on the button, Enter
+  // would only press it again). The hint says so.
+  await press('Checkmark')
+  await expect(pages).toBeFocused()
+  await expect(hint.locator('kbd')).toHaveText(['Enter', 'Esc'])
+  await expect(hint).toContainText('to add')
+  await page.keyboard.press('Enter')
+  await expect(items('mark')).toHaveCount(1)
+  await page.keyboard.press('Escape')
+
+  // A shape picked from the Shapes list.
+  await press('Shapes')
+  const shapes = page.getByRole('dialog', { name: 'Shapes' })
+  await expect(shapes.getByRole('button', { name: /^Rectangle/ })).toBeFocused()
+  await page.keyboard.press('Tab')
+  await page.keyboard.press('Enter')
+  await expect(shapes).toHaveCount(0)
+  await expect(pages).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(items('shape')).toHaveCount(1)
+  await page.keyboard.press('Escape')
+
+  // A date format.
+  await press('Date')
+  const formats = page.getByRole('dialog', { name: 'Date format' })
+  await expect(formats.getByRole('button', { pressed: true })).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(formats).toHaveCount(0)
+  await expect(pages).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(items('text')).toHaveCount(1)
+  await page.keyboard.press('Escape')
+
+  // A signature made in its dialog, used with Enter. The message and the hint say Enter places it.
+  await press('Signature')
+  const dialog = page.getByRole('dialog', { name: 'Add your signature' })
+  await dialog.getByRole('tab', { name: 'Type' }).focus()
+  await dialog.getByLabel('Your full name').focus()
+  await page.keyboard.type('Ada Lovelace')
+  await dialog.getByRole('button', { name: 'Use signature' }).focus()
+  await page.keyboard.press('Enter')
+  await expect(dialog).toHaveCount(0)
+  await expect(pages).toBeFocused()
+  await expect(page.locator('[data-sonner-toast]', { hasText: 'Click where you want to place it, or press Enter' })).toBeVisible()
+  await expect(hint).toContainText('Click to place your signature')
+  await expect(hint).toContainText('to place')
+  await page.keyboard.press('Enter')
+  await expect(items('image')).toHaveCount(1)
+
+  // A saved one, picked from the dock's list.
+  await press('Signature')
+  const saved = page.getByRole('dialog', { name: 'Saved signatures' })
+  await expect(saved.getByRole('button', { name: /^Place signature saved/ })).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(saved).toHaveCount(0)
+  await expect(pages).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(items('image')).toHaveCount(2)
+
+  // A picture, once chosen.
+  const chooser = page.waitForEvent('filechooser')
+  await press('Image')
+  await (await chooser).setFiles({
+    name: 'stamp.svg',
+    mimeType: 'image/svg+xml',
+    buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20" fill="#b91c1c"/></svg>'),
+  })
+  await expect(pages).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(items('image')).toHaveCount(3)
+})
+
+/** Shows a message with the app's own `toast` (the module the app loaded, so its toasters show it). */
+async function showToast(page: Page, message: string, options: Record<string, unknown> = {}): Promise<void> {
+  const url = await page.evaluate(() =>
+    performance
+      .getEntriesByType('resource')
+      .map((entry) => entry.name)
+      .filter((name) => /\/deps\/sonner\.js(\?|$)/.test(name))
+      .pop(),
+  )
+  if (!url) throw new Error('The app has not loaded sonner')
+  await page.evaluate(
+    async ({ url, message, options }) => {
+      const { toast } = await import(/* @vite-ignore */ url)
+      toast(message, options)
+    },
+    { url, message, options },
+  )
+}
+
+test('the dock’s lists clear passing messages out of their way, and leave up those that stay until acted on', async ({ page }) => {
+  const errors = trackPageErrors(page)
+  await openSample(page)
+  // One signature saved, so the Signature button opens its list.
+  await page.getByRole('button', { name: 'Signature', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Add your signature' })
+  await dialog.getByRole('tab', { name: 'Type' }).click()
+  await dialog.getByLabel('Your full name').fill('Ada Lovelace')
+  await dialog.getByRole('button', { name: 'Use signature' }).click()
+  await expect(dialog).toHaveCount(0)
+  await page.keyboard.press('Escape') // don't place it
+
+  const shown = page.locator('[data-sonner-toast]:not([data-removed="true"])')
+  for (const [tool, list] of [
+    ['Shapes', 'Shapes'],
+    ['Date', 'Date format'],
+    ['Signature', 'Saved signatures'],
+  ]) {
+    await showToast(page, 'A passing message')
+    // Not an error: whatever its kind, a message in the stack of those that stay until acted on stays.
+    await showToast(page, 'A message that stays', { id: 'stays', toasterId: 'staying', duration: Infinity })
+    await expect(shown.filter({ hasText: 'A passing message' })).toBeVisible()
+    await page.getByRole('toolbar', { name: 'Tools' }).getByRole('button', { name: tool, exact: true }).click()
+    await expect(page.getByRole('dialog', { name: list })).toBeVisible()
+    await expect(shown.filter({ hasText: 'A passing message' }), tool).toHaveCount(0)
+    await expect(shown.filter({ hasText: 'A message that stays' }), tool).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('dialog', { name: list })).toHaveCount(0)
+  }
+  expect(errors).toEqual([])
+})
+
+/** The names Chrome gives the dialogs on screen (popovers are dialogs too), as screen readers get them. */
+async function dialogNames(page: Page): Promise<string[]> {
+  const cdp = await page.context().newCDPSession(page)
+  const { nodes } = await cdp.send('Accessibility.getFullAXTree')
+  await cdp.detach()
+  return nodes.filter((node) => !node.ignored && node.role?.value === 'dialog').map((node) => String(node.name?.value ?? ''))
+}
+
+test('the Shapes list and a color list are named as written', async ({ page }) => {
+  const sizes = await readViewSizes(SAMPLE_PDF)
+  await openSample(page)
+  await page.getByRole('button', { name: 'Shapes', exact: true }).click()
+  await expect(page.getByRole('button', { name: /^Rectangle/ })).toBeVisible()
+  expect(await dialogNames(page)).toEqual(['Shapes'])
+  await page.keyboard.press('Escape')
+
+  await selectTool(page, 'Text', 'T')
+  await clickPagePoint(page, 1, SAMPLE_SPOTS.emergencyName, sizes[1])
+  await typeAndCommit(page, 'Ada')
+  await page.getByRole('button', { name: 'Text color' }).click()
+  await expect(page.getByRole('radiogroup', { name: 'Text color' })).toBeVisible()
+  // Not "TEXT COLOR", as its caption shows it.
+  expect(await dialogNames(page)).toEqual(['Text color'])
+})
+
+for (const colorScheme of ['light', 'dark'] as const) {
+  test(`in forced colors (${colorScheme}), the corner caret of a tool with choices is drawn in its button’s colors`, async ({ page }) => {
+    await page.emulateMedia({ forcedColors: 'active', colorScheme })
+    await openSample(page)
+    const color = (el: Locator) => el.evaluate((node) => getComputedStyle(node).color)
+    const shapes = page.getByRole('toolbar', { name: 'Tools' }).getByRole('button', { name: 'Shapes', exact: true })
+    // Next to the button, not in it: it doesn't follow the button's colors by itself.
+    const caret = shapes.locator('xpath=following-sibling::*[local-name()="svg"]')
+    expect(await color(caret)).toBe(await color(shapes))
+    // On: the button is drawn in the highlight colors (once its color has changed over).
+    await page.keyboard.press('r')
+    await expect(shapes).toHaveAttribute('aria-pressed', 'true')
+    await expect.poll(() => color(shapes)).toBe(await color(caret))
+    expect(await color(caret)).not.toBe(await color(page.getByRole('toolbar', { name: 'Tools' }).getByRole('button', { name: 'Pan', exact: true })))
+  })
+}

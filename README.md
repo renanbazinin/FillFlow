@@ -7,14 +7,17 @@ Fill & sign any PDF right in your browser — free, no sign-up, and private: you
 ## Features
 
 - **Fillable forms, detected automatically.** Text fields, checkboxes, radio groups, dropdowns, list boxes and comb fields are filled right on the page, or from a side panel with progress and "next empty field" navigation. Values are written back into the PDF's real form fields (optionally flattened).
-- **Fill anything else, too.** Click to type anywhere, tick ✓ / ✗ / •, insert today's date, highlight, white-out, draw boxes, ellipses, lines or freehand ink.
-- **Sign in seconds.** Draw (pressure-sensitive), type (five handwriting styles) or upload a signature or initials. Saved signatures are one click away next time, and clicking a form's signature field signs it in place.
+- **Fill anything else, too.** Click to type anywhere, tick ✓ / ✗ / •, insert today's date in the format you pick, highlight, white-out, draw boxes, ellipses, lines or freehand ink. Text never runs off the page: a box that grows at the page edge stays on it.
+- **Sign in seconds.** Draw (pressure-sensitive), type (five handwriting styles, each with a Hebrew handwriting face) or upload a signature or initials. Saved signatures are one click away next time, and clicking a form's signature field signs it in place.
 - **Real editing.** Select, multi-select, drag (even across pages), resize, smart alignment guides, duplicate, copy/paste, lock, undo/redo, keyboard shortcuts, and a context toolbar for fonts, sizes, colors, alignment and spacing.
+- **Hebrew and right-to-left text.** Hebrew typed into a new text box grows leftwards from where you click, so it fills the cells of a Hebrew form; the caret lands where you click, even in mixed Hebrew and English; pasted Hebrew lines up on the right; dates default to day first for Hebrew readers and in Israel. In the downloaded PDF, Hebrew copies out as typed, with its points and brackets, and file names keep ״ and ׳.
 - **What you see is what you download.** On-screen text uses the same font files and the same layout code as the export, so positions match exactly — including rotated pages, cropped pages and Hebrew/RTL text.
 - **Download, share or print.** Name the file, optionally flatten the form, then download it, send it through the system share sheet (where the browser supports it) or print it. The dialog warns you before anything would be lost: fields whose values can't be written, or a copy that won't keep the original's password.
 - **Handles awkward files.** Password-protected PDFs open after you enter the password, slightly damaged files still open and export, and pure XFA forms get a clear explanation instead of a blank panel.
-- **Picks up where you left off.** Work is auto-saved locally (IndexedDB) with a recent-documents list. Opening the same PDF again brings your work back, and a second tab can't silently overwrite it.
-- **Comfortable everywhere.** Zoom (pinch, Ctrl/⌘+wheel, fit width/page), page thumbnails, light & dark themes, a touch-friendly layout on phones, and full keyboard support (press `?` for the shortcuts).
+- **Picks up where you left off.** Work is auto-saved locally (IndexedDB) with a recent-documents list. Opening the same PDF again brings your work back, and a second tab can't silently overwrite it. If the browser blocks storage, the app says so and keeps working.
+- **Keeps going offline.** The PDF engine is fetched in the background once the page has loaded, so documents still open and fill if the connection drops.
+- **Comfortable everywhere.** Zoom (pinch, Ctrl/⌘+wheel, fit width/page), page thumbnails, light & dark themes, a touch-friendly layout on phones with finger-sized controls, and Windows high-contrast support.
+- **Keyboard and screen readers.** Every tool works from the keyboard (Enter adds the active tool's item in the middle of the view; press `?` for all shortcuts), and controls are labelled for screen readers.
 
 ## Development
 

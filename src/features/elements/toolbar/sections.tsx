@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import {
   BringToFront,
   Copy,
@@ -15,18 +15,33 @@ import {
 } from 'lucide-react'
 import { IconButton } from '../../../components/ui/button'
 import { Segmented, type SegmentedOption } from '../../../components/ui/controls'
-import { Menu, MenuContent, MenuItem, MenuLabel, MenuRadioGroup, MenuRadioItem, MenuSeparator, MenuTrigger, Popover, PopoverContent, PopoverTrigger } from '../../../components/ui/menu'
+import {
+  Menu,
+  MenuContent,
+  MenuItem,
+  MenuLabel,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuSeparator,
+  MenuTrigger,
+  Popover,
+  PopoverAnchor,
+  PopoverContent,
+  PopoverTrigger,
+} from '../../../components/ui/menu'
 import { Tooltip } from '../../../components/ui/tooltip'
 import { HIGHLIGHT_COLOR, INK_COLORS, MAX_FONT_SIZE, MIN_FONT_SIZE } from '../../../model/elements'
 import { cssFontFamily, FONT_IDS, FONTS, fontDef, loadFont } from '../../../model/fonts'
 import type { Element, FontId, ImageElement, InkElement, MarkElement, MarkShape, ShapeElement, TextAlign, TextElement } from '../../../model/types'
 import { useEditor } from '../../../store/editor'
-import { modKeyLabel } from '../../../lib/utils/misc'
+import { cn, modKeyLabel } from '../../../lib/utils/misc'
 import { MarkGlyph } from '../render/ElementContent'
 import { deleteSelection, duplicateSelection, reorderSelection, toggleLockSelection } from '../state/commands'
 import { editText } from '../state/textEdit'
 import { preventFocusWhileEditing } from './focus'
 import { ColorButton, OpacityButton, SizeField, SliderRow, ToolbarSeparator, TriggerButton } from './parts'
+import { POPOVER_FIT, useAwayPopover, usePopoverSide } from './popoverSide'
+import { useTapMenu } from './tapMenu'
 import {
   setImageOpacity,
   setInkColor,
@@ -73,18 +88,20 @@ function FontPicker({ value }: { value: FontId }) {
   }, [])
   // The font the text is drawn in: an id this build doesn't know gets the default one.
   const font = fontDef(value)
+  const menu = useTapMenu()
+  const side = usePopoverSide()
   return (
     <>
-      <Segmented size="sm" className="max-sm:hidden" value={font.id} onValueChange={(fontId) => setTextStyle({ fontId })} options={FONT_OPTIONS} />
-      <Menu>
+      <Segmented size="sm" label="Font" className="max-sm:hidden" value={font.id} onValueChange={(fontId) => setTextStyle({ fontId })} options={FONT_OPTIONS} />
+      <Menu {...menu.root}>
         <Tooltip content="Font">
-          <MenuTrigger asChild>
+          <MenuTrigger asChild {...menu.trigger}>
             <TriggerButton label={`Font: ${font.label}`} className="px-2 text-[13px] font-medium text-fg sm:hidden">
               <span style={{ fontFamily: cssFontFamily(font.id) }}>{font.label}</span>
             </TriggerButton>
           </MenuTrigger>
         </Tooltip>
-        <MenuContent align="start" className="min-w-40" onCloseAutoFocus={preventFocusWhileEditing}>
+        <MenuContent side={side} align="start" className="min-w-40" onCloseAutoFocus={preventFocusWhileEditing}>
           <MenuLabel>Font</MenuLabel>
           <MenuRadioGroup value={font.id} onValueChange={(v) => setTextStyle({ fontId: v as FontId })}>
             {FONT_IDS.map((id) => (
@@ -100,19 +117,38 @@ function FontPicker({ value }: { value: FontId }) {
 }
 
 function SpacingButton({ text }: { text: TextElement }) {
+  const trigger = useRef<HTMLButtonElement>(null)
+  const content = useRef<HTMLDivElement>(null)
+  const away = useAwayPopover(trigger, content)
   return (
-    <Popover>
+    <Popover {...away.root}>
+      <PopoverAnchor virtualRef={away.virtualRef} />
       <Tooltip content="Alignment & spacing">
         <PopoverTrigger asChild>
-          <TriggerButton label="Alignment and spacing">
+          <TriggerButton ref={trigger} label="Alignment and spacing">
             <SlidersHorizontal className="size-4" />
           </TriggerButton>
         </PopoverTrigger>
       </Tooltip>
-      <PopoverContent side="bottom" align="end" className="grid w-64 gap-4" onOpenAutoFocus={preventFocusWhileEditing} onCloseAutoFocus={preventFocusWhileEditing}>
+      <PopoverContent
+        ref={content}
+        side={away.side}
+        align="end"
+        aria-label="Alignment and spacing"
+        className={cn('grid w-64 gap-4', POPOVER_FIT)}
+        onOpenAutoFocus={preventFocusWhileEditing}
+        onCloseAutoFocus={preventFocusWhileEditing}
+      >
         <div className="grid gap-2 sm:hidden">
           <span className="text-[13px] font-medium text-fg-muted">Alignment</span>
-          <Segmented size="sm" className="w-full [&>*]:flex-1" value={text.align} onValueChange={(align) => setTextStyle({ align })} options={ALIGN_OPTIONS} />
+          <Segmented
+            size="sm"
+            label="Text alignment"
+            className="w-full [&>*]:flex-1"
+            value={text.align}
+            onValueChange={(align) => setTextStyle({ align })}
+            options={ALIGN_OPTIONS}
+          />
         </div>
         <SliderRow
           label="Letter spacing"
@@ -139,7 +175,6 @@ function SpacingButton({ text }: { text: TextElement }) {
 
 export function TextControls({ texts }: { texts: TextElement[] }) {
   const first = texts[0]
-  const editingId = useEditor((s) => s.editingId)
   const bold = texts.every((t) => t.bold)
   return (
     <>
@@ -162,11 +197,15 @@ export function TextControls({ texts }: { texts: TextElement[] }) {
       />
       <ColorButton label="Text color" variant="text" value={first.color} onChange={(c) => c && setTextStyle({ color: c }, 'style:text-color')} />
       <ToolbarSeparator className="max-sm:hidden" />
-      <Segmented size="sm" className="max-sm:hidden" value={first.align} onValueChange={(align) => setTextStyle({ align })} options={ALIGN_OPTIONS} />
+      <Segmented
+        size="sm"
+        label="Text alignment"
+        className="max-sm:hidden"
+        value={first.align}
+        onValueChange={(align) => setTextStyle({ align })}
+        options={ALIGN_OPTIONS}
+      />
       <SpacingButton text={first} />
-      {texts.length === 1 && editingId !== first.id && (
-        <IconButton size="icon-sm" className="pointer-fine:hidden" label="Edit text" icon={<PencilLine />} onClick={() => editText(first.id)} />
-      )}
     </>
   )
 }
@@ -177,7 +216,7 @@ export function MarkControls({ marks }: { marks: MarkElement[] }) {
   const first = marks[0]
   return (
     <>
-      <Segmented size="sm" value={first.shape} onValueChange={setMarkShape} options={MARK_OPTIONS} />
+      <Segmented size="sm" label="Mark shape" value={first.shape} onValueChange={setMarkShape} options={MARK_OPTIONS} />
       <ColorButton label="Color" value={first.color} onChange={(c) => c && setMarkColor(c)} />
       <SizeField label="Size" value={round1(first.width)} min={6} max={96} locked={marks.every((m) => m.locked)} onChange={setMarkSize} />
     </>
@@ -232,11 +271,17 @@ export function ImageControls({ images }: { images: ImageElement[] }) {
 
 // --- always ------------------------------------------------------------------
 
+/** The actions, kept in view when the style controls scroll (narrow screens): Edit text comes first. */
 export function CommonActions({ selected }: { selected: Element[] }) {
+  const editingId = useEditor((s) => s.editingId)
+  const menu = useTapMenu()
+  const side = usePopoverSide()
   const allLocked = selected.every((e) => e.locked)
   const lockLabel = allLocked ? 'Unlock' : 'Lock'
+  const text = selected.length === 1 && selected[0].kind === 'text' && selected[0].id !== editingId ? selected[0] : null
   return (
     <>
+      {text && <IconButton size="icon-sm" label="Edit text" shortcut="Enter" icon={<PencilLine />} onClick={() => editText(text.id)} />}
       <IconButton size="icon-sm" className="max-sm:hidden" label="Duplicate" shortcut={`${modKeyLabel}+D`} icon={<Copy />} onClick={duplicateSelection} />
       <IconButton
         size="icon-sm"
@@ -247,15 +292,15 @@ export function CommonActions({ selected }: { selected: Element[] }) {
         active={allLocked}
         onClick={toggleLockSelection}
       />
-      <Menu>
+      <Menu {...menu.root}>
         <Tooltip content="More">
-          <MenuTrigger asChild>
+          <MenuTrigger asChild {...menu.trigger}>
             <TriggerButton label="More actions">
               <Ellipsis className="size-4" />
             </TriggerButton>
           </MenuTrigger>
         </Tooltip>
-        <MenuContent align="end" onCloseAutoFocus={preventFocusWhileEditing}>
+        <MenuContent side={side} align="end" onCloseAutoFocus={preventFocusWhileEditing}>
           <MenuItem icon={<BringToFront />} shortcut={`${modKeyLabel}+]`} onSelect={() => reorderSelection('front')}>
             Bring to front
           </MenuItem>

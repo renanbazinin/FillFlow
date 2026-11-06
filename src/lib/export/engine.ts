@@ -12,8 +12,9 @@ import {
 import type { Element, PageInfo } from '../../model/types'
 import { exportMatrix } from '../pdf/geometry'
 import { measureTextCanvas } from '../text/layout'
-import { bakeAnnotationsUnder } from './annotations'
+import { bakeAnnotationsUnder, flattenButtonsAndSignaturesUnder } from './annotations'
 import { protectOriginalContent } from './contentBalance'
+import { fieldsUnderItems } from './coverage'
 import { DocFonts } from './docFonts'
 import type { DrawContext } from './drawContext'
 import { imageOperators, inkOperators, markOperators, shapeOperators } from './drawShapes'
@@ -31,8 +32,9 @@ import type { ExportDeps, ExportInput, RecoveredInfo } from './types'
  *
  *  1. Load the original with pdf-lib (decrypting / repairing through pdf.js when needed).
  *  2. Make sure original page content can't leak graphics state into what we append, and bake
- *     the markup annotations that lie under elements into the page content.
- *  3. Write form values (forms engine), optionally flattening.
+ *     the look of the markup annotations that lie under elements into the page content.
+ *  3. Write form values (forms engine), optionally flattening; the fields under elements are
+ *     flattened either way, push buttons and signatures included.
  *  4. Draw each page's elements in paint order inside `q <exportMatrix> cm … Q`.
  *  5. Embed font subsets, stamp the producer, save.
  */
@@ -57,15 +59,20 @@ async function run(input: ExportInput, deps: ExportDeps): Promise<Uint8Array> {
   const byPage = groupByPage(input.elements, input.pages)
   const flatten = input.options.flattenForms
   const hasFields = input.formFields.length > 0
+  // Viewers paint form fields over the page content, so the fields under elements (a signature
+  // in its signature field…) are flattened even when the others stay fillable.
+  const flattenAlso = hasFields && !flatten ? fieldsUnderItems(input.formFields, input.elements) : []
 
   // Protect original content on every page we are about to draw on (incl. flattened widgets).
   const touched = new Set(byPage.keys())
-  if (hasFields && flatten) for (const f of input.formFields) for (const w of f.widgets) touched.add(w.page)
+  const also = new Set(flattenAlso)
+  for (const f of input.formFields) if (flatten || also.has(f.name)) for (const w of f.widgets) touched.add(w.page)
   const pages = doc.getPages()
   for (const index of touched) if (pages[index]) protectOriginalContent(doc, pages[index])
 
   // The editor shows the page's markup annotations under the elements; viewers would paint them
-  // on top. The ones under an element become page content, before the forms and the elements.
+  // on top. The look of the ones under an element becomes page content (their comments stay),
+  // before the forms and the elements.
   for (const [index, elements] of byPage) {
     try {
       bakeAnnotationsUnder(doc, pages[index], input.pages[index], elements)
@@ -81,6 +88,7 @@ async function run(input: ExportInput, deps: ExportDeps): Promise<Uint8Array> {
     try {
       const { unwritten } = await applyFormValues(doc, input.formFields, input.formValues, {
         flatten,
+        flattenAlso,
         getUnicodeFont: fonts.getUnicodeFont,
         pages: input.pages,
         rewritten,
@@ -94,6 +102,13 @@ async function run(input: ExportInput, deps: ExportDeps): Promise<Uint8Array> {
       throw new ExportError('forms', undefined, { cause: err })
     }
     throwIfAborted(signal)
+  }
+  // Push buttons and signed signatures aren't among the fields above (a file may have no others),
+  // but the editor shows them in the page too, under the elements: those under one are flattened.
+  try {
+    flattenButtonsAndSignaturesUnder(doc, input.pages, byPage)
+  } catch (err) {
+    console.warn('[export] could not flatten the buttons and signatures under placed items', err)
   }
 
   const images = new DocImages(doc, deps.convertImage)

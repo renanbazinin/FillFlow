@@ -14,7 +14,11 @@ let engineLoad: Promise<ExportEngine> | null = null
 
 export function preloadExportEngine(): Promise<ExportEngine> {
   engineLoad ??= import('../../lib/export/exportPdf').then(
-    (m) => (engine = m),
+    (m) => {
+      engine = m
+      m.preloadDefaultFont()
+      return m
+    },
     (err: unknown) => {
       engineLoad = null // a later attempt may succeed (e.g. after reconnecting)
       throw err

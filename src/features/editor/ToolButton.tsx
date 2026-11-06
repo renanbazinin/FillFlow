@@ -41,3 +41,23 @@ export function ToolButton({ tool, active, badge, showLabel, tooltipSide = 'top'
     </Tooltip>
   )
 }
+
+/**
+ * Corner caret for a tool button that opens a choice (shapes, date formats). Goes next to the
+ * button, inside a `relative inline-flex` wrapper. Outside the button, it doesn't follow the
+ * button's text color: in forced colors mode, it takes the system color that text is drawn in.
+ */
+export function ChoiceCaret({ active }: { active?: boolean }) {
+  return (
+    <svg
+      aria-hidden
+      viewBox="0 0 6 6"
+      className={cn(
+        'pointer-events-none absolute bottom-[7px] right-[7px] size-[5px]',
+        active ? 'text-accent-fg forced-colors:text-[HighlightText]' : 'text-fg-subtle forced-colors:text-[ButtonText]',
+      )}
+    >
+      <path d="M6 0V6H0Z" fill="currentColor" />
+    </svg>
+  )
+}

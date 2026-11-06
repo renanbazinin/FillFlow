@@ -26,6 +26,17 @@ export async function exportPdf(input: ExportInput, deps: Partial<ExportDeps> = 
   })
 }
 
+/**
+ * Fetches the default text face (typed text, and form values written in Unicode) ahead of the
+ * first download and keeps it in memory, so that a download made offline later still has it: the
+ * browser's cache can't be relied on offline.
+ */
+export function preloadDefaultFont(): void {
+  loadFontBytes('sans', false).catch(() => {
+    /* offline or failed: the download fetches it again when it runs */
+  })
+}
+
 export type ExportHooks = Pick<ExportDeps, 'onProgress' | 'onUnwrittenFields' | 'signal'>
 
 /** Exports the document currently open in the editor. */

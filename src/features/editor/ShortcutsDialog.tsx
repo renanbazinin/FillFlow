@@ -21,13 +21,20 @@ export function ShortcutsDialog() {
           Press <Kbd className="mx-0.5 align-[1px]">?</Kbd> any time to see these again.
         </>
       }
-      // Focus the (scrollable) body rather than ringing the close button.
+      // Focus the (scrollable) list rather than ringing the close button. The list is a Tab stop of
+      // its own: Tab and Shift+Tab move between it and the close button, and the arrow keys scroll it.
       onOpenAutoFocus={(e) => {
         e.preventDefault()
         bodyRef.current?.focus()
       }}
     >
-      <div ref={bodyRef} tabIndex={-1} className="grid gap-x-8 gap-y-6 pb-1 pt-1 outline-none md:grid-cols-2 lg:grid-cols-3">
+      <div
+        ref={bodyRef}
+        tabIndex={0}
+        role="region"
+        aria-label="Shortcut list"
+        className="grid gap-x-8 gap-y-6 rounded-md pb-1 pt-1 focus-visible:outline-offset-4 md:grid-cols-2 lg:grid-cols-3"
+      >
         <Group group={tools} />
         <Group group={editing} />
         <div className="space-y-6">

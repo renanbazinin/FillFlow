@@ -8,9 +8,11 @@ import {
   forgetDocument,
   forgetStaleSessions,
   forgetUnlistedSessions,
+  hasSession,
   hasUnlistedSessions,
   listRecentDocuments,
   loadDocumentBytes,
+  patchRecentDocument,
   removeRecentDocument,
   type RecentDocument,
 } from '../../lib/storage/db'
@@ -21,8 +23,8 @@ import { displayName } from './pdfFiles'
 import { pluralize, recentMetaLine } from './recentMeta'
 
 /**
- * Recently opened documents (stored only in this browser). When there are none, renders nothing,
- * or a line offering to delete the work still saved for documents that dropped off the list.
+ * Recently opened documents (stored only in this browser), followed by a line about the work still
+ * saved for documents that dropped off the list, if any, which offers to delete it.
  */
 export function RecentDocuments({ className }: { className?: string }) {
   const [docs, setDocs] = useState<RecentDocument[] | null>(null)
@@ -128,8 +130,8 @@ export function RecentDocuments({ className }: { className?: string }) {
 
   const deleteOlderWork = async () => {
     const ok = await confirm({
-      title: 'Delete work from older documents?',
-      description: 'What you filled in, typed or signed on documents that are no longer listed will be deleted from this device. This can’t be undone.',
+      title: 'Delete your work on documents no longer listed?',
+      description: 'What you filled in, typed or signed on them will be deleted from this device. This can’t be undone.',
       confirmLabel: 'Delete',
       danger: true,
     })
@@ -138,7 +140,7 @@ export function RecentDocuments({ className }: { className?: string }) {
       await forgetUnlistedSessions()
       focusAfterRemoval.current = 0
       setOlderWork(false)
-      toast.success('Work from older documents deleted')
+      toast.success('Work deleted from this device')
     } catch {
       toast.error('Couldn’t delete the work')
     }
@@ -147,6 +149,26 @@ export function RecentDocuments({ className }: { className?: string }) {
   if (docs === null && !showSkeleton) return null
   if (docs !== null && docs.length === 0) {
     return olderWork ? <OlderWorkNotice className={className} onDelete={() => void deleteOlderWork()} /> : null
+  }
+
+  /**
+   * The file of a listed document is gone: it stays listed for its work (see
+   * `RecentDocument.fileMissing`), or goes when it has none.
+   */
+  const fileMissing = (doc: RecentDocument) => {
+    const drop = () => setDocs((list) => list?.filter((d) => d.id !== doc.id) ?? null)
+    void (async () => {
+      if (!(await hasSession(doc.id))) {
+        await removeRecentDocument(doc.id)
+        drop()
+      } else if (await patchRecentDocument(doc.id, { fileMissing: true })) {
+        setDocs((list) => list?.map((d) => (d.id === doc.id ? { ...d, fileMissing: true } : d)) ?? null)
+      } else {
+        // No longer listed at all (removed, or dropped off the list, in another tab).
+        drop()
+        setOlderWork(await hasUnlistedSessions())
+      }
+    })().catch((err: unknown) => console.warn('[recents] could not update a document whose file is gone', err))
   }
 
   return (
@@ -167,23 +189,11 @@ export function RecentDocuments({ className }: { className?: string }) {
       <ul ref={listRef} className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4">
         {docs
           ? docs.map((doc, i) => (
-              <RecentCard
-                key={doc.id}
-                doc={doc}
-                index={i}
-                onRemove={() => void remove(doc)}
-                onMissing={() => {
-                  // The saved work stays: opening the same file from disk restores it.
-                  void removeRecentDocument(doc.id)
-                    .then(hasUnlistedSessions)
-                    .then(setOlderWork)
-                    .catch(() => {})
-                  setDocs((list) => list?.filter((d) => d.id !== doc.id) ?? null)
-                }}
-              />
+              <RecentCard key={doc.id} doc={doc} index={i} onRemove={() => void remove(doc)} onMissing={() => fileMissing(doc)} />
             ))
           : Array.from({ length: 4 }, (_, i) => <SkeletonCard key={i} />)}
       </ul>
+      {olderWork && <OlderWorkNotice className="mt-6" onDelete={() => void deleteOlderWork()} />}
     </section>
   )
 }
@@ -197,7 +207,7 @@ function RecentCard({
   doc: RecentDocument
   index: number
   onRemove: () => void
-  /** The file's bytes are gone (storage evicted): drop the stale card. */
+  /** The file's bytes aren't stored (there was no room for them, or they were evicted or removed in another tab). */
   onMissing: () => void
 }) {
   const name = displayName(doc.name)
@@ -232,7 +242,16 @@ function RecentCard({
         <div className="truncate text-left text-[13.5px] font-medium text-fg" title={doc.name} dir="auto">
           {name}
         </div>
-        <div className="mt-0.5 truncate text-[12px] text-fg-subtle">{recentMetaLine(doc.pageCount, doc)}</div>
+        {doc.fileMissing ? (
+          <div
+            className="mt-0.5 truncate text-[12px] text-warning"
+            title="Its file isn’t stored on this device. Open the same file again to continue."
+          >
+            {pluralize(doc.pageCount, 'page')} · file not stored
+          </div>
+        ) : (
+          <div className="mt-0.5 truncate text-[12px] text-fg-subtle">{recentMetaLine(doc.pageCount, doc)}</div>
+        )}
       </div>
 
       {/* Stretched button: the whole card opens the document. */}
@@ -250,12 +269,12 @@ function RecentCard({
           <button
             type="button"
             aria-label={`More options for ${name}`}
-            className="absolute right-2 top-2 z-10 inline-flex size-8 items-center justify-center rounded-lg border border-line bg-surface/95 text-fg-muted opacity-0 shadow-xs backdrop-blur transition-[opacity,color,background-color] duration-150 hover:bg-surface-3 hover:text-fg focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100 pointer-coarse:opacity-100"
+            className="absolute right-2 top-2 z-10 inline-flex size-8 items-center justify-center rounded-lg border border-line bg-surface/95 text-fg-muted opacity-0 shadow-xs backdrop-blur transition-[opacity,color,background-color] duration-150 hover:bg-surface-3 hover:text-fg focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100 pointer-coarse:size-10 pointer-coarse:opacity-100"
           >
             <Ellipsis className="size-4" />
           </button>
         </MenuTrigger>
-        <MenuContent align="end" className="min-w-56 [&_[role^=menuitem]]:pointer-coarse:h-11" {...closeHandlers}>
+        <MenuContent align="end" className="min-w-56" {...closeHandlers}>
           <MenuItem icon={<FolderOpen />} onSelect={() => void open()}>
             Open
           </MenuItem>
@@ -269,11 +288,11 @@ function RecentCard({
   )
 }
 
-/** In place of an empty list: the work on documents that dropped off it can still be deleted. */
+/** The work on documents that dropped off the list is kept for a while: it can be continued, or deleted. */
 function OlderWorkNotice({ className, onDelete }: { className?: string; onDelete: () => void }) {
   return (
-    <p className={cn('text-center text-[13px] text-fg-subtle', className)}>
-      Work from older documents is still saved on this device.{' '}
+    <p className={cn('text-center text-[13px] text-fg-subtle text-pretty', className)}>
+      Your work on documents no longer listed is still saved on this device. Open the same file again to continue.{' '}
       <button type="button" onClick={onDelete} className="font-medium text-fg-muted underline-offset-4 hover:text-fg hover:underline">
         Delete it
       </button>

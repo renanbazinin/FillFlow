@@ -1,5 +1,5 @@
 import '../testing/env'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Element, InkElement, MarkElement, PageInfo, ShapeElement, TextElement } from '../../../model/types'
 
 vi.mock('../../../lib/pdf/pdfjs', () => ({
@@ -14,7 +14,18 @@ vi.mock('sonner', () => ({ toast: vi.fn() }))
 
 const { useEditor } = await import('../../../store/editor')
 const { createTextElement, DEFAULT_STYLES } = await import('../../../model/elements')
-const { startNewText, editText, finishTextEdit, finishActiveTextEdit, registerTextarea, hasTextarea, setEditedText, takePendingCaret } = await import('./textEdit')
+const {
+  startNewText,
+  editText,
+  finishTextEdit,
+  finishActiveTextEdit,
+  registerTextarea,
+  hasTextarea,
+  setEditedText,
+  takePendingCaret,
+  undoTextEdit,
+  redoTextEdit,
+} = await import('./textEdit')
 const { deleteElements, deleteSelection, nudgeSelection, revealElement, selectAllOnPage, setLocked, toggleLockSelection } = await import('./commands')
 const { registerViewer } = await import('../../viewer/viewerApi')
 const { copySelection, pasteItems, clipboardMarker, isClipboardMarker, systemClipboardIsNewer, pastePlainText, writeClipboardMarker } = await import('./clipboard')
@@ -119,6 +130,35 @@ describe('text editing sessions', () => {
     finishActiveTextEdit()
   })
 
+  it('keeps the point a new block was started at when its alignment is picked before typing, and remembers it', () => {
+    const text = (id: string) => s().elements.find((e) => e.id === id) as TextElement
+    const el = createTextElement(0, { x: 200, y: 10 }, s().styles.text)
+    startNewText(el)
+    styles.setTextStyle({ align: 'right' })
+    // The empty block (its caret) ends where it was started, and it grows leftwards from there.
+    expect(text(el.id).x + text(el.id).width).toBeCloseTo(200)
+    setEditedText(el.id, 'Hello')
+    expect(text(el.id).x + text(el.id).width).toBeCloseTo(200)
+    finishActiveTextEdit()
+
+    const centered = createTextElement(0, { x: 200, y: 60 }, s().styles.text)
+    startNewText(centered)
+    styles.setTextStyle({ align: 'center' })
+    setEditedText(centered.id, 'שלום עולם')
+    expect(text(centered.id).x + text(centered.id).width / 2).toBeCloseTo(200)
+    finishActiveTextEdit()
+
+    // The next new block starts with the alignment picked last, its anchor where it is started.
+    styles.setTextStyle({ align: 'right' })
+    const next = createTextElement(0, { x: 300, y: 110 }, s().styles.text)
+    expect(next.align).toBe('right')
+    startNewText(next)
+    expect(text(next.id).x + text(next.id).width).toBeCloseTo(300)
+    setEditedText(next.id, '12345')
+    expect(text(next.id).x + text(next.id).width).toBeCloseTo(300)
+    finishActiveTextEdit()
+  })
+
   it('removes an existing block emptied while editing (undoable)', () => {
     const el = { ...createTextElement(0, { x: 10, y: 10 }, s().styles.text, 'abc') }
     s().addElement(el)
@@ -208,6 +248,229 @@ describe('text editing sessions', () => {
     registerTextarea(el.id, null)
     expect(hasTextarea(el.id)).toBe(false)
     finishActiveTextEdit()
+  })
+})
+
+describe('undo and redo while typing', () => {
+  const text = (id: string) => s().elements.find((e) => e.id === id) as TextElement | undefined
+  /** Types `steps` one change at a time, `gap` ms apart, from `from` ms on. */
+  const type = (id: string, steps: string[], from: number, gap = 100) =>
+    steps.forEach((t, i) => {
+      vi.setSystemTime(from + i * gap)
+      setEditedText(id, t)
+    })
+  const burst = (word: string, before = '') => [...word].map((_, i) => before + word.slice(0, i + 1))
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(0)
+  })
+  afterEach(() => {
+    finishActiveTextEdit()
+    vi.useRealTimers()
+  })
+
+  it('takes back a new block’s typing a burst at a time, keeps typing in it, and redoes', () => {
+    const el = createTextElement(0, { x: 200, y: 10 }, s().styles.text)
+    startNewText(el)
+    type(el.id, burst('Hello'), 1000)
+    // A pause starts the next burst.
+    type(el.id, burst(' world', 'Hello'), 4000)
+    expect(undoTextEdit(el.id)).toBe(true)
+    expect(text(el.id)).toMatchObject({ text: 'Hello', x: 200 })
+    expect(undoTextEdit(el.id)).toBe(true)
+    expect(text(el.id)?.text).toBe('')
+    // Nothing from before it was started: the box stays, empty, still being typed into.
+    expect(undoTextEdit(el.id)).toBe(false)
+    expect(s().editingId).toBe(el.id)
+    expect(redoTextEdit(el.id)).toBe(true)
+    expect(text(el.id)?.text).toBe('Hello')
+    expect(redoTextEdit(el.id)).toBe(true)
+    expect(text(el.id)?.text).toBe('Hello world')
+    expect(redoTextEdit(el.id)).toBe(false)
+    // Committed, it is still one undo step.
+    finishActiveTextEdit()
+    s().undo()
+    expect(s().elements).toHaveLength(0)
+  })
+
+  it('makes a paste a step of its own, and typing again ends redo', () => {
+    const el = createTextElement(0, { x: 200, y: 10 }, s().styles.text)
+    startNewText(el)
+    type(el.id, burst('Name: '), 0)
+    vi.setSystemTime(700)
+    setEditedText(el.id, 'Name: Dana Cohen', false)
+    type(el.id, ['Name: Dana Cohen.'], 800)
+    undoTextEdit(el.id)
+    expect(text(el.id)?.text).toBe('Name: Dana Cohen')
+    undoTextEdit(el.id)
+    expect(text(el.id)?.text).toBe('Name: ')
+    type(el.id, ['Name: D'], 900)
+    expect(redoTextEdit(el.id)).toBe(false)
+    undoTextEdit(el.id)
+    expect(text(el.id)?.text).toBe('Name: ')
+  })
+
+  it('puts back how a new block stood before its typing: Hebrew that right-aligned it, lines that pushed it up', () => {
+    const el = createTextElement(0, { x: 200, y: 10 }, s().styles.text)
+    startNewText(el)
+    type(el.id, burst('שלום'), 0)
+    expect(text(el.id)).toMatchObject({ align: 'right' })
+    undoTextEdit(el.id)
+    expect(text(el.id)).toMatchObject({ text: '', align: 'left', x: 200 })
+    redoTextEdit(el.id)
+    expect(text(el.id)).toMatchObject({ text: 'שלום', align: 'right' })
+    expect(text(el.id)!.x + text(el.id)!.width).toBeCloseTo(200)
+    finishActiveTextEdit()
+
+    const low = createTextElement(0, { x: 100, y: 780 }, s().styles.text)
+    startNewText(low)
+    const y = text(low.id)!.y
+    type(low.id, ['a', 'a\nb', 'a\nb\nc'], 0)
+    expect(text(low.id)!.y).toBeLessThan(y)
+    undoTextEdit(low.id)
+    expect(text(low.id)).toMatchObject({ text: '', y })
+  })
+
+  it('takes back an existing block’s typing step by step, never what came before the edit', () => {
+    s().addElement(mark('m'))
+    const el = { ...createTextElement(0, { x: 200, y: 100 }, s().styles.text, 'Hello'), id: 'hello' }
+    s().addElement(el)
+    editText(el.id)
+    expect(undoTextEdit(el.id)).toBe(false)
+    type(el.id, burst(' world', 'Hello'), 0)
+    type(el.id, ['Hello world!'], 3000)
+    expect(undoTextEdit(el.id)).toBe(true)
+    expect(text(el.id)?.text).toBe('Hello world')
+    expect(undoTextEdit(el.id)).toBe(true)
+    expect(text(el.id)?.text).toBe('Hello')
+    expect(undoTextEdit(el.id)).toBe(false)
+    expect(s().elements.map((e) => e.id)).toEqual(['m', 'hello'])
+    expect(s().editingId).toBe(el.id)
+    expect(redoTextEdit(el.id)).toBe(true)
+    expect(redoTextEdit(el.id)).toBe(true)
+    expect(text(el.id)?.text).toBe('Hello world!')
+    expect(redoTextEdit(el.id)).toBe(false)
+    expect(s().editingId).toBe(el.id)
+    // Afterwards, the editor's undo goes through the same steps.
+    finishActiveTextEdit()
+    s().undo()
+    expect(text(el.id)?.text).toBe('Hello world')
+    s().undo()
+    expect(text(el.id)?.text).toBe('Hello')
+  })
+
+  it('makes what is typed into a block edited again a step of its own, however soon', () => {
+    const el = { ...createTextElement(0, { x: 200, y: 100 }, s().styles.text, 'Hi'), id: 'hi' }
+    s().addElement(el)
+    editText(el.id)
+    type(el.id, ['Hi!'], 0)
+    finishActiveTextEdit()
+    editText(el.id)
+    type(el.id, ['Hi!?'], 300)
+    expect(undoTextEdit(el.id)).toBe(true)
+    expect(text(el.id)?.text).toBe('Hi!')
+    expect(undoTextEdit(el.id)).toBe(false)
+  })
+
+  it('keeps a redo of a new block’s typing once it is left empty by undo', () => {
+    s().addElement(mark('m'))
+    const before = s().past.length
+    const el = createTextElement(0, { x: 200, y: 10 }, s().styles.text)
+    startNewText(el)
+    type(el.id, burst('Hello'), 0)
+    undoTextEdit(el.id)
+    finishActiveTextEdit()
+    expect(s().elements.map((e) => e.kind)).toEqual(['mark'])
+    expect(s().past.length).toBe(before)
+    s().redo()
+    expect(text(el.id)).toMatchObject({ text: 'Hello', x: 200 })
+    expect(s().selection).toEqual([el.id])
+    s().undo()
+    expect(text(el.id)).toBeUndefined()
+    s().undo()
+    expect(s().elements).toHaveLength(0)
+  })
+
+  it('puts the caret where the text changed', () => {
+    const el = { ...createTextElement(0, { x: 200, y: 100 }, s().styles.text, 'Hello world'), id: 'caret' }
+    s().addElement(el)
+    const node = { get value() { return text('caret')?.text ?? '' }, focus: vi.fn(), setSelectionRange: vi.fn() }
+    registerTextarea(el.id, node as never)
+    try {
+      editText(el.id)
+      type(el.id, ['Hello, world', 'Hello, big world'], 0)
+      undoTextEdit(el.id)
+      expect(node.setSelectionRange).toHaveBeenLastCalledWith(5, 5)
+      redoTextEdit(el.id)
+      expect(node.setSelectionRange).toHaveBeenLastCalledWith(10, 10)
+    } finally {
+      registerTextarea(el.id, null)
+    }
+  })
+})
+
+describe('text that grows', () => {
+  const text = (id: string) => s().elements.find((e) => e.id === id) as TextElement
+
+  it('stays on its page as it is typed, whichever side it grows from', () => {
+    // Typed at the right end of the 600pt page: once it reaches the edge, it grows leftwards.
+    const email = createTextElement(0, { x: 536, y: 100 }, s().styles.text)
+    startNewText(email)
+    setEditedText(email.id, 'israel.cohen@example.com')
+    expect(text(email.id)).toMatchObject({ align: 'left', x: 600 - 144, width: 144 })
+    finishActiveTextEdit()
+
+    // Hebrew started near the left edge grows leftwards up to it, then rightwards.
+    const name = createTextElement(0, { x: 40, y: 200 }, s().styles.text)
+    startNewText(name)
+    setEditedText(name.id, 'חברת דוגמה בע״מ')
+    expect(text(name.id)).toMatchObject({ align: 'right', x: 0, width: 90 })
+    setEditedText(name.id, 'חברת דוגמה בע״מ, סניף ראשי')
+    expect(text(name.id)).toMatchObject({ x: 0 })
+    finishActiveTextEdit()
+    s().undo()
+    expect(s().elements.find((e) => e.id === name.id)).toBeUndefined()
+
+    // Lines added at the bottom of the page push it up.
+    const low = createTextElement(0, { x: 100, y: 780 }, s().styles.text)
+    startNewText(low)
+    setEditedText(low.id, 'Bottom line 1\nBottom line 2\nBottom line 3')
+    expect(text(low.id).y + text(low.id).height).toBeCloseTo(800)
+    finishActiveTextEdit()
+  })
+
+  it('stays on its page when restyled, or measured again once its font loads', () => {
+    const el = createTextElement(0, { x: 500, y: 300 }, s().styles.text, 'Size grows')
+    s().addElement(el)
+    styles.setTextStyle({ fontSize: 40 }, 'style:font-size')
+    expect(text(el.id)).toMatchObject({ x: 600 - 200, width: 200 })
+    styles.setTextStyle({ letterSpacing: 10 })
+    expect(text(el.id).x + text(el.id).width).toBeCloseTo(600)
+
+    // Measured with a narrower fallback font before its own font loaded.
+    s().addElement({ ...createTextElement(0, { x: 570, y: 400 }, DEFAULT_STYLES.text, 'abcdef'), id: 'early', width: 20 })
+    s().relayoutText()
+    expect(text('early')).toMatchObject({ x: 564, width: 36 })
+  })
+
+  it('keeps one too wide for the page on the side it grows from', () => {
+    const left = createTextElement(0, { x: 10, y: 100 }, s().styles.text, 'x')
+    const right = { ...createTextElement(0, { x: 10, y: 200 }, s().styles.text, 'x'), align: 'right' as const }
+    s().addElements([left, right])
+    s().updateElements({ [left.id]: { text: 'x'.repeat(150) }, [right.id]: { text: 'x'.repeat(150) } })
+    expect(text(left.id)).toMatchObject({ x: 0, width: 900 })
+    expect(text(right.id)).toMatchObject({ x: 600 - 900, width: 900 })
+  })
+
+  it('lets one that already stuck out stay as it is, but never go further', () => {
+    // Saved by an older version: 14pt past the right edge.
+    const old = { ...createTextElement(0, { x: 560, y: 500 }, s().styles.text, 'stuck out'), id: 'old' }
+    s().addElement(old)
+    s().updateElement('old', { color: '#1d4ed8' })
+    expect(text('old')).toMatchObject({ x: 560, width: 54 })
+    s().updateElement('old', { text: 'stuck out!' })
+    expect(text('old')).toMatchObject({ x: 554, width: 60 })
   })
 })
 
@@ -358,6 +621,91 @@ describe('clipboard', () => {
     }
   })
 
+  it('puts the text of copied text items on the system clipboard, in reading order', () => {
+    const surname = { ...createTextElement(0, { x: 400, y: 100 }, s().styles.text, 'כהן'), id: 'surname' }
+    const name = { ...createTextElement(0, { x: 300, y: 101 }, s().styles.text, 'ישראל'), id: 'name' }
+    const address = { ...createTextElement(0, { x: 100, y: 200 }, s().styles.text, 'רחוב הרצל 12\nתל אביב-יפו'), id: 'address' }
+    s().addElements([address, name, mark('m'), surname])
+    s().select(['address', 'name', 'm', 'surname'])
+    copySelection()
+    // A row of right-to-left text is read from the right.
+    const text = clipboardMarker()!
+    expect(text).toBe('כהן\nישראל\nרחוב הרצל 12\nתל אביב-יפו')
+    // Pasted back here, it's still the items (also with the line breaks Windows writes)…
+    expect(systemClipboardIsNewer(text, false)).toBe(false)
+    expect(systemClipboardIsNewer(text.replace(/\n/g, '\r\n'), false)).toBe(false)
+    expect(systemClipboardIsNewer('כהן', false)).toBe(true)
+    // …and anywhere else, it's text.
+    expect(isClipboardMarker(text)).toBe(false)
+
+    // Nothing copied has text: the clipboard gets the items' marker.
+    s().select(['m'])
+    copySelection()
+    expect(isClipboardMarker(clipboardMarker()!)).toBe(true)
+  })
+
+  describe('the text of several copied boxes', () => {
+    const box = (id: string, x: number, y: number, text: string, page = 0): TextElement => ({
+      ...createTextElement(page, { x, y }, s().styles.text, text),
+      id,
+    })
+    /** Every order of `items`. */
+    const orders = <T>(items: T[]): T[][] =>
+      items.length < 2 ? [items] : items.flatMap((first, i) => orders(items.filter((_, j) => j !== i)).map((rest) => [first, ...rest]))
+    /** What copying `selected` puts on the system clipboard, with `items` placed in this order. */
+    const copied = (items: Element[], selected = items) => {
+      s().removeElements(s().elements.map((e) => e.id))
+      s().addElements(items)
+      s().select(selected.map((e) => e.id))
+      copySelection()
+      return clipboardMarker()
+    }
+
+    it('reads a right-to-left row from the right, numbers included, whatever order the boxes are in', () => {
+      // Form 101 rows, right to left: street | number | city, and ID | surname | first name.
+      const address = [box('street', 420, 300, 'רחוב הרצל'), box('number', 330, 302, '12'), box('city', 150, 299, 'תל אביב-יפו')]
+      for (const order of orders(address)) expect(copied(order)).toBe('רחוב הרצל\n12\nתל אביב-יפו')
+      const names = [box('id', 450, 200, '123456782'), box('surname', 330, 201, 'כהן'), box('name', 200, 199, 'ישראל')]
+      for (const order of orders(names)) expect(copied(order)).toBe('123456782\nכהן\nישראל')
+      // Rows top to bottom, pages in order.
+      const note = box('note', 100, 50, 'הערה', 1)
+      const all = '123456782\nכהן\nישראל\nרחוב הרצל\n12\nתל אביב-יפו\nהערה'
+      expect(copied([note, ...address, ...names])).toBe(all)
+      expect(copied([address[1], names[0], note, address[2], names[2], address[0], names[1]])).toBe(all)
+    })
+
+    it('reads a row without right-to-left text the way most of the text on its page reads', () => {
+      const contact = [box('phone', 400, 300, '03-1234567'), box('mobile', 250, 300, '054-1234567'), box('email', 50, 300, 'israel@example.com')]
+      // In a Hebrew form, from the right…
+      const hebrew = [box('surname', 400, 100, 'כהן'), box('name', 250, 100, 'ישראל')]
+      expect(copied([...hebrew, ...contact], contact)).toBe('03-1234567\n054-1234567\nisrael@example.com')
+      // …and in an English one, from the left.
+      const english = [box('first', 50, 100, 'Jane'), box('last', 250, 100, 'Doe')]
+      expect(copied([...english, ...contact], contact)).toBe('israel@example.com\n054-1234567\n03-1234567')
+    })
+
+    it('puts a two-line box on the row of the boxes beside its first line', () => {
+      const street = box('street', 400, 301, 'רחוב הרצל 12\nדירה 4')
+      const city = box('city', 200, 300, 'תל אביב-יפו')
+      for (const order of orders([street, city])) expect(copied(order)).toBe('רחוב הרצל 12\nדירה 4\nתל אביב-יפו')
+    })
+  })
+
+  it('writes the copied text from the context menu too', async () => {
+    const writeText = vi.fn(() => Promise.resolve())
+    vi.stubGlobal('navigator', { clipboard: { writeText } })
+    try {
+      s().addElement(createTextElement(0, { x: 100, y: 100 }, s().styles.text, 'Jane Doe'))
+      copySelection()
+      writeClipboardMarker()
+      expect(writeText).toHaveBeenCalledWith('Jane Doe')
+      await vi.waitFor(() => expect(systemClipboardIsNewer('Jane', false)).toBe(true))
+      expect(systemClipboardIsNewer('Jane Doe', false)).toBe(false)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('recognizes item markers from any tab', () => {
     expect(isClipboardMarker('fillflow-items:cf877ef3-1c2d-4e5f-9a8b-0123456789ab')).toBe(true)
     expect(isClipboardMarker('  fillflow-items:abc\n')).toBe(true)
@@ -377,6 +725,32 @@ describe('clipboard', () => {
     // Hebrew lines up on the right, as it is read.
     expect(pastePlainText('ישראל כהן\nרחוב הרצל 12')).toBe(true)
     expect((s().elements[1] as TextElement).align).toBe('right')
+  })
+
+  it('breaks pasted lines too long for the page between words, so all of it is on the page', () => {
+    s().setCurrentPage(0)
+    const words = Array.from({ length: 40 }, (_, i) => `word${i}`).join(' ')
+    expect(pastePlainText(words)).toBe(true)
+    const t = s().elements[0] as TextElement
+    expect(t.text.split('\n').length).toBeGreaterThan(1)
+    expect(t.text.replace(/\n/g, ' ')).toBe(words)
+    // Within the page, less a margin each side.
+    expect(t.width).toBeLessThanOrEqual(600 - 72)
+    expect(t.x).toBeGreaterThanOrEqual(0)
+    expect(t.x + t.width).toBeLessThanOrEqual(600)
+    expect(toast).not.toHaveBeenCalled()
+
+    // Taller than the page: the top is on the page, and the user hears what happens to the rest.
+    expect(pastePlainText(Array.from({ length: 80 }, (_, i) => `line ${i}`).join('\n'))).toBe(true)
+    expect(s().elements[1]).toMatchObject({ y: 0 })
+    expect(toast).toHaveBeenCalledWith('The pasted text doesn’t fit on the page', expect.anything())
+  })
+
+  it('pastes Hebrew right-aligned unless another alignment was picked for new text', () => {
+    s().setCurrentPage(0)
+    styles.setTextStyle({ align: 'center' })
+    pastePlainText('ישראל כהן\nרחוב הרצל 12')
+    expect((s().elements[0] as TextElement).align).toBe('center')
   })
 })
 

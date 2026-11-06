@@ -8,6 +8,7 @@ import {
   capPixelRatio,
   clampPoint,
   containsFraction,
+  coveredFromBelow,
   distanceToViewport,
   expandFraction,
   fractionToCss,
@@ -140,6 +141,33 @@ describe('revealDelta', () => {
   })
   it('aligns the start of an oversized target', () => {
     expect(revealDelta(100, 2000, 0, 800, 48)).toBe(52)
+  })
+  it('aligns its end instead when asked, where right-to-left text sits', () => {
+    expect(revealDelta(100, 2000, 0, 800, 48, true)).toBe(1248)
+    expect(revealDelta(-1500, 700, 0, 800, 48, true)).toBe(-52)
+    // Only when it doesn't fit: one that does is revealed as ever.
+    expect(revealDelta(700, 790, 0, 800, 48, true)).toBe(38)
+  })
+  it('centres a target that fits in the view but not between the margins', () => {
+    // A 51px field in a 56px strip with 14px margins (a short screen, above the tool dock): all of it shows.
+    expect(revealDelta(150, 201, 56, 112, 14)).toBe(91.5)
+    expect(revealDelta(0, 51, 56, 112, 14, true)).toBe(-58.5)
+    // Already centred: it stays.
+    expect(revealDelta(58.5, 109.5, 56, 112, 14)).toBe(0)
+  })
+})
+
+describe('coveredFromBelow', () => {
+  const view = { left: 0, top: 56, right: 844, bottom: 190 }
+  it('is how far up the view a bar floating over its bottom reaches, plus a gap', () => {
+    expect(coveredFromBelow(view, { left: 200, top: 120, right: 640, bottom: 174 }, 8)).toBe(78)
+  })
+  it('is 0 for a hidden bar, or one below or beside the view', () => {
+    expect(coveredFromBelow(view, { left: 0, top: 0, right: 0, bottom: 0 }, 8)).toBe(0)
+    // Under the pages on a phone (its top may round to just above their bottom edge).
+    expect(coveredFromBelow(view, { left: 0, top: 190, right: 844, bottom: 250 }, 8)).toBe(0)
+    expect(coveredFromBelow(view, { left: 0, top: 189.5, right: 844, bottom: 250 }, 8)).toBe(0)
+    expect(coveredFromBelow(view, { left: 900, top: 120, right: 1000, bottom: 174 }, 8)).toBe(0)
   })
 })
 

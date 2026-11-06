@@ -22,7 +22,20 @@ export interface TrueTypeSubset {
   glyphIds: number[]
 }
 
+/**
+ * A glyph made for the subset: glyph `id` drawn moved by (dx, dy) font units (a composite glyph
+ * referencing it, or a plain copy when it isn't moved), or no outline at all when `id` is null.
+ * `advance` is its advance width.
+ */
+export interface PlacedGlyph {
+  id: number | null
+  dx: number
+  dy: number
+  advance: number
+}
+
 const ARG_1_AND_2_ARE_WORDS = 0x0001
+const ARGS_ARE_XY_VALUES = 0x0002
 const WE_HAVE_A_SCALE = 0x0008
 const MORE_COMPONENTS = 0x0020
 const WE_HAVE_AN_X_AND_Y_SCALE = 0x0040
@@ -41,9 +54,10 @@ function readTables(view: DataView): Map<string, TableRecord> {
 
 /**
  * @param font TrueType font file (glyf outlines).
- * @param glyphIds original glyph ids in the desired order; index 0 should be 0 (.notdef).
+ * @param glyphIds original glyph ids (or glyphs made for the subset) in the desired order; index 0
+ *   should be 0 (.notdef).
  */
-export function subsetTrueType(font: Uint8Array, glyphIds: number[]): TrueTypeSubset {
+export function subsetTrueType(font: Uint8Array, glyphIds: (number | PlacedGlyph)[]): TrueTypeSubset {
   const view = new DataView(font.buffer, font.byteOffset, font.byteLength)
   const tables = readTables(view)
   const need = (tag: string) => {
@@ -79,15 +93,38 @@ export function subsetTrueType(font: Uint8Array, glyphIds: number[]): TrueTypeSu
   }
 
   // Assign new ids, pulling in composite components as they are discovered.
-  const order = glyphIds.length && glyphIds[0] === 0 ? [...glyphIds] : [0, ...glyphIds.filter((g) => g !== 0)]
+  const wanted = glyphIds.length && glyphIds[0] === 0 ? glyphIds : [0, ...glyphIds.filter((g) => g !== 0)]
+  const placed = new Map<number, PlacedGlyph>()
+  const order = wanted.map((g, i) => {
+    if (typeof g === 'number') return g
+    placed.set(i, g)
+    return g.id ?? 0
+  })
   const newId = new Map<number, number>()
   order.forEach((g, i) => {
-    if (!newId.has(g)) newId.set(g, i)
+    if (!placed.has(i) && !newId.has(g)) newId.set(g, i)
   })
+  const subsetId = (gid: number) => {
+    let mapped = newId.get(gid)
+    if (mapped === undefined) {
+      mapped = order.length
+      order.push(gid)
+      newId.set(gid, mapped)
+    }
+    return mapped
+  }
+  const isComposite = (data: Uint8Array) => data.length >= 10 && ((data[0] << 8) | data[1]) & 0x8000
   const glyphs: Uint8Array[] = []
+  let moved = false
+  let movedComposite = false
   for (let i = 0; i < order.length; i++) {
-    const src = glyphData(order[i])
-    if (src.length >= 10 && ((src[0] << 8) | src[1]) & 0x8000) {
+    const at = placed.get(i)
+    const src = at?.id === null ? new Uint8Array(0) : glyphData(order[i])
+    if (at && (at.dx || at.dy) && src.length >= 10) {
+      moved = true
+      movedComposite ||= !!isComposite(src)
+      glyphs.push(movedGlyph(src, subsetId(order[i]), at.dx, at.dy))
+    } else if (isComposite(src)) {
       // Composite glyph: copy and remap component glyph indices.
       const data = src.slice()
       const dv = new DataView(data.buffer)
@@ -95,13 +132,7 @@ export function subsetTrueType(font: Uint8Array, glyphIds: number[]): TrueTypeSu
       for (;;) {
         if (p + 4 > data.length) break
         const flags = dv.getUint16(p)
-        const component = dv.getUint16(p + 2)
-        let mapped = newId.get(component)
-        if (mapped === undefined) {
-          mapped = order.length
-          order.push(component)
-          newId.set(component, mapped)
-        }
+        const mapped = subsetId(dv.getUint16(p + 2))
         dv.setUint16(p + 2, mapped)
         p += 4 + (flags & ARG_1_AND_2_ARE_WORDS ? 4 : 2)
         if (flags & WE_HAVE_A_SCALE) p += 2
@@ -129,9 +160,27 @@ export function subsetTrueType(font: Uint8Array, glyphIds: number[]): TrueTypeSu
   })
   locaOut.setUint32(n * 4, offset)
 
+  const hheaOut = font.slice(hhea.offset, hhea.offset + hhea.length)
+  const hheaView = new DataView(hheaOut.buffer)
+  hheaView.setUint16(34, n)
+
   const hmtxOut = new DataView(new ArrayBuffer(n * 4))
   order.forEach((g, i) => {
-    const [advance, lsb] = metrics(g)
+    let [advance, lsb] = metrics(g)
+    const at = placed.get(i)
+    if (at) {
+      // A placed glyph's metrics are its own; the font's horizontal header has to cover them.
+      advance = Math.min(0xffff, Math.max(0, Math.round(at.advance)))
+      hheaView.setUint16(10, Math.max(hheaView.getUint16(10), advance))
+      const box = glyphs[i].length >= 10 ? new DataView(glyphs[i].buffer, glyphs[i].byteOffset, 10) : null
+      lsb = box?.getInt16(2) ?? 0
+      if (box) {
+        const xMax = box.getInt16(6)
+        hheaView.setInt16(12, Math.min(hheaView.getInt16(12), lsb))
+        hheaView.setInt16(14, Math.min(hheaView.getInt16(14), advance - xMax))
+        hheaView.setInt16(16, Math.max(hheaView.getInt16(16), xMax))
+      }
+    }
     hmtxOut.setUint16(i * 4, advance)
     hmtxOut.setInt16(i * 4 + 2, lsb)
   })
@@ -141,11 +190,17 @@ export function subsetTrueType(font: Uint8Array, glyphIds: number[]): TrueTypeSu
   headView.setUint32(8, 0) // checkSumAdjustment, fixed below
   headView.setInt16(50, 1) // indexToLocFormat: long
 
-  const hheaOut = font.slice(hhea.offset, hhea.offset + hhea.length)
-  new DataView(hheaOut.buffer).setUint16(34, n)
-
   const maxpOut = font.slice(maxp.offset, maxp.offset + maxp.length)
-  new DataView(maxpOut.buffer).setUint16(4, n)
+  const maxpView = new DataView(maxpOut.buffer)
+  maxpView.setUint16(4, n)
+  if (moved && maxp.length >= 32) {
+    // Moved glyphs are composites one level above their component.
+    const atLeast = (at: number, value: number) => maxpView.setUint16(at, Math.max(maxpView.getUint16(at), value))
+    atLeast(10, maxpView.getUint16(6)) // maxCompositePoints ≥ maxPoints
+    atLeast(12, maxpView.getUint16(8)) // maxCompositeContours ≥ maxContours
+    atLeast(28, 1) // maxComponentElements
+    atLeast(30, movedComposite ? maxpView.getUint16(30) + 1 : 1) // maxComponentDepth
+  }
 
   const out: [string, Uint8Array][] = [
     ['head', headOut],
@@ -171,6 +226,23 @@ export function subsetTrueType(font: Uint8Array, glyphIds: number[]): TrueTypeSu
   const headPos = tableOffset(data, 'head')
   new DataView(data.buffer).setUint32(headPos + 8, adjustment)
   return { data, glyphIds: order }
+}
+
+/** A composite glyph drawing glyph `component` of the subset (outline `src`) moved by (dx, dy). */
+function movedGlyph(src: Uint8Array, component: number, dx: number, dy: number): Uint8Array {
+  const from = new DataView(src.buffer, src.byteOffset, 10)
+  const data = new Uint8Array(18)
+  const dv = new DataView(data.buffer)
+  dv.setInt16(0, -1) // numberOfContours: composite
+  dv.setInt16(2, from.getInt16(2) + dx)
+  dv.setInt16(4, from.getInt16(4) + dy)
+  dv.setInt16(6, from.getInt16(6) + dx)
+  dv.setInt16(8, from.getInt16(8) + dy)
+  dv.setUint16(10, ARG_1_AND_2_ARE_WORDS | ARGS_ARE_XY_VALUES)
+  dv.setUint16(12, component)
+  dv.setInt16(14, dx)
+  dv.setInt16(16, dy)
+  return data
 }
 
 function pad4(n: number): number {

@@ -23,15 +23,22 @@ import {
   setStrokingRgbColor,
   stroke,
 } from 'pdf-lib'
-import { HIGHLIGHT_COLOR, MARK_PATHS, MARK_VIEWBOX } from '../../model/elements'
+import { HIGHLIGHT_COLOR, MARK_PATHS, MARK_VIEWBOX, elementLabel } from '../../model/elements'
 import type { ImageElement, InkElement, MarkElement, ShapeElement } from '../../model/types'
 import { parseColor } from './color'
 import type { DrawContext } from './drawContext'
 import { imageMatrix } from './images'
 import { r } from './num'
+import type { ContentTag } from './pageResources'
 
 /** Bézier circle constant. */
 const KAPPA = 0.5522847498307936
+
+/** Marks and pictures, in a tagged PDF: described by the names the app gives them ("Checkmark", "Signature"…). */
+const figure = (el: MarkElement | ImageElement): ContentTag => ({ role: 'Figure', alt: elementLabel(el), lang: 'en' })
+
+/** Shapes, highlights, whiteout and drawings, which screen readers skip. */
+const ARTIFACT: ContentTag = { role: 'Artifact' }
 
 /** Marks: the same 24×24 outlines the editor's SVG uses (viewBox meet: centred, uniform scale). */
 export function markOperators(el: MarkElement, ctx: DrawContext): PDFOperator[] {
@@ -43,7 +50,7 @@ export function markOperators(el: MarkElement, ctx: DrawContext): PDFOperator[] 
   const c = parseColor(el.color)
   const gs = c.a < 1 ? ctx.res.graphicsState({ fill: c.a }) : null
   // drawSvgPath maps SVG (x, y-down) to (x0 + x·s, y0 − y·s): anchor it at the box's top-left.
-  return drawSvgPath(MARK_PATHS[el.shape], {
+  const ops = drawSvgPath(MARK_PATHS[el.shape], {
     x: r(left),
     y: r(ctx.pageHeight - top),
     scale: s,
@@ -52,6 +59,7 @@ export function markOperators(el: MarkElement, ctx: DrawContext): PDFOperator[] 
     borderWidth: 0,
     graphicsState: gs ?? undefined,
   })
+  return ctx.res.tagged(figure(el), ops)
 }
 
 export async function imageOperators(el: ImageElement, ctx: DrawContext): Promise<PDFOperator[]> {
@@ -64,13 +72,13 @@ export async function imageOperators(el: ImageElement, ctx: DrawContext): Promis
   if (!embedded) return []
   const gs = el.opacity < 1 ? ctx.res.graphicsState({ fill: el.opacity, stroke: el.opacity }) : null
   const m = imageMatrix(embedded.orientation, el.x, ctx.pageHeight - el.y - el.height, el.width, el.height)
-  return [
+  return ctx.res.tagged(figure(el), [
     pushGraphicsState(),
     ...(gs ? [setGraphicsState(gs)] : []),
     concatTransformationMatrix(...(m.map(r) as [number, number, number, number, number, number])),
     drawObject(ctx.res.xObject(embedded.image.ref)),
     popGraphicsState(),
-  ]
+  ])
 }
 
 function isHighlight(el: ShapeElement): boolean {
@@ -147,11 +155,16 @@ export function shapeOperators(el: ShapeElement, ctx: DrawContext): PDFOperator[
       Group: { Type: 'Group', S: 'Transparency' },
     })
     const gs = ctx.res.graphicsState({ fill: alpha, stroke: alpha, blend })
-    return [pushGraphicsState(), ...(gs ? [setGraphicsState(gs)] : []), drawObject(ctx.res.xObject(ctx.doc.context.register(group))), popGraphicsState()]
+    return ctx.res.tagged(ARTIFACT, [
+      pushGraphicsState(),
+      ...(gs ? [setGraphicsState(gs)] : []),
+      drawObject(ctx.res.xObject(ctx.doc.context.register(group))),
+      popGraphicsState(),
+    ])
   }
 
   const gs = ctx.res.graphicsState({ fill: alpha, stroke: alpha, blend })
-  return [pushGraphicsState(), ...(gs ? [setGraphicsState(gs)] : []), ...paint, popGraphicsState()]
+  return ctx.res.tagged(ARTIFACT, [pushGraphicsState(), ...(gs ? [setGraphicsState(gs)] : []), ...paint, popGraphicsState()])
 }
 
 /** Freehand ink: straight segments through the points, round caps and joins; lone points are dots. */
@@ -190,5 +203,5 @@ export function inkOperators(el: InkElement, ctx: DrawContext): PDFOperator[] {
   }
   if (dots.length) ops.push(setFillingRgbColor(c.r, c.g, c.b), ...dots, fill())
   ops.push(popGraphicsState())
-  return ops
+  return ctx.res.tagged(ARTIFACT, ops)
 }

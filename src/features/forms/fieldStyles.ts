@@ -5,7 +5,8 @@ import type { Rect } from '../../model/types'
 
 /**
  * On-page field visuals. Pages are always white paper, so these use the fixed on-page colors
- * (bg-field, field-border, selection…) that don't change with the app theme.
+ * (bg-field, field-border, selection…) that don't change with the app theme, nor with forced
+ * colors (the page opts out of them: see index.css).
  */
 
 export interface FieldState {

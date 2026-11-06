@@ -3,11 +3,13 @@ import { toast } from 'sonner'
 import { Plus } from 'lucide-react'
 import { Button } from '../../components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/menu'
+import { dismissPassingToasts } from '../../components/ui/toasts'
 import type { SavedSignature } from '../../lib/storage/db'
 import { cn } from '../../lib/utils/misc'
 import { TOOL_BY_ID } from '../../model/tools'
 import { useEditor } from '../../store/editor'
 import { ToolButton } from '../editor/ToolButton'
+import { viewer } from '../viewer/viewerApi'
 import { armPlacement, deleteSavedSignature, placeSavedSignature, releaseTool, useToolActivation } from './actions'
 import { importImageAsset } from './decode'
 import { savedFor, useSavedSignatures, useSignatureLibrary, type SignatureRole } from './library'
@@ -43,6 +45,8 @@ export function SignatureToolButton({
   const confirming = useRef(false)
   /** The popover closed to hand over to placement or the dialog: don't refocus the button. */
   const handedOff = useRef(false)
+  /** A saved one was picked from the keyboard: focus goes on to the pages, where Enter places it. */
+  const keyed = useRef(false)
   /** The last activation came from a mouse / touch press on the button. */
   const pressed = useRef(false)
   const noun = role === 'signature' ? 'signature' : 'initials'
@@ -60,9 +64,9 @@ export function SignatureToolButton({
           return
         }
         // The list opens where passing toasts sit, and any left up would cover its tiles: clear them all.
-        // The errors that stay until acted on (Reload) have a stack of their own under the top bar, and
-        // stay. A passing autosave failure still shows in the title's save status.
-        for (const t of toast.getToasts()) if (!('type' in t && t.type === 'error' && t.duration === Infinity)) toast.dismiss(t.id)
+        // The messages that stay until acted on (Reload) have a stack of their own under the top bar,
+        // and stay. A passing autosave failure still shows in the title's save status.
+        dismissPassingToasts()
         setOpen(true)
       })
   }, [role])
@@ -78,8 +82,9 @@ export function SignatureToolButton({
     releaseTool(role)
   }
 
-  const use = (item: SavedSignature) => {
+  const use = (item: SavedSignature, byKeyboard: boolean) => {
     handedOff.current = true
+    keyed.current = byKeyboard
     setOpen(false)
     placeSavedSignature(item)
   }
@@ -138,7 +143,10 @@ export function SignatureToolButton({
         onInteractOutside={keepOpen}
         onCloseAutoFocus={(e) => {
           if (handedOff.current) e.preventDefault()
+          // Back on the dock button, Enter would open this list again.
+          if (keyed.current && useEditor.getState().placingAssetId !== null) viewer.getScrollContainer()?.focus({ preventScroll: true })
           handedOff.current = false
+          keyed.current = false
         }}
         className="w-[min(calc(100vw-16px),344px)] p-0"
       >
@@ -157,7 +165,7 @@ export function SignatureToolButton({
               <SavedTile
                 key={item.id}
                 item={item}
-                onUse={() => use(item)}
+                onUse={(e) => use(item, e.detail === 0)}
                 onDelete={() => void remove(item)}
                 className="h-[72px]"
               />
@@ -191,11 +199,14 @@ export function ImageToolButton({ showLabel, tooltipSide = 'top', className }: D
   const buttonRef = useRef<HTMLButtonElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const pressed = useRef(false)
+  /** The button was pressed from the keyboard: once a picture is chosen, focus goes on to the pages. */
+  const keyed = useRef(false)
 
-  const openPicker = useCallback((fromShortcut: boolean) => {
+  const openPicker = useCallback((fromShortcut: boolean, byKeyboard = false) => {
     const input = inputRef.current
     if (!input) return
     input.value = ''
+    keyed.current = byKeyboard
     // The closing picker refocuses the clicked button, which would pop its tooltip over the
     // placement hint. Keyboard users keep their focus.
     if (!fromShortcut && pressed.current) buttonRef.current?.blur()
@@ -237,6 +248,10 @@ export function ImageToolButton({ showLabel, tooltipSide = 'top', className }: D
       const asset = await importImageAsset(file)
       const id = useEditor.getState().addAsset(asset)
       armPlacement('image', id)
+      // Back on the button, Enter would open the picker again; on the pages, it places the picture.
+      // (Unless focus has moved on meanwhile.)
+      const focused = document.activeElement
+      if (keyed.current && (focused === buttonRef.current || focused === document.body)) viewer.getScrollContainer()?.focus({ preventScroll: true })
     } catch {
       releaseTool('image')
       toast.error("This image couldn't be opened", { description: 'Try a PNG, JPEG, WebP or GIF file.' })
@@ -259,7 +274,8 @@ export function ImageToolButton({ showLabel, tooltipSide = 'top', className }: D
         className={className}
         onPointerDown={() => (pressed.current = true)}
         onKeyDown={() => (pressed.current = false)}
-        onClick={() => openPicker(false)}
+        // Pressing Enter or Space on a button fires a click with no click count.
+        onClick={(e) => openPicker(false, e.detail === 0)}
       />
       <input ref={inputRef} type="file" accept="image/*" tabIndex={-1} aria-hidden className="sr-only" onChange={onChange} />
     </>

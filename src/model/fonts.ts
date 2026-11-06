@@ -124,3 +124,16 @@ export function isFontLoaded(fontId: FontId, bold: boolean): boolean {
 export function loadAllFonts(): Promise<void> {
   return Promise.all(FONT_IDS.flatMap((id) => [loadFont(id, false), loadFont(id, true)])).then(() => undefined)
 }
+
+// The face that typed text and form fields start in (the default text style's) is loaded once the
+// page has settled rather than when first used: a page that loaded then lays out text and form
+// values in it offline too. Only while online, as a face that fails to load isn't tried again (see
+// `loadFont`).
+if (typeof window !== 'undefined' && typeof FontFace === 'function') {
+  const preload = () => {
+    if (navigator.onLine) void loadFont('sans', false)
+    else window.addEventListener('online', preload, { once: true })
+  }
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(preload, { timeout: 3000 })
+  else setTimeout(preload, 1000)
+}

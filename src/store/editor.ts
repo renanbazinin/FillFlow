@@ -1,6 +1,15 @@
 import { create } from 'zustand'
 import { subscribeWithSelector } from 'zustand/middleware'
-import { DATE_FORMATS, DEFAULT_STYLES, defaultDateFormat, MAX_FONT_SIZE, MIN_FONT_SIZE, withTextLayout } from '../model/elements'
+import {
+  DATE_FORMATS,
+  DEFAULT_STYLES,
+  defaultDateFormat,
+  keepTextInPage,
+  MAX_FONT_SIZE,
+  MIN_FONT_SIZE,
+  TEXT_ANCHOR,
+  withTextLayout,
+} from '../model/elements'
 import { FONT_IDS, loadFont } from '../model/fonts'
 import type {
   Asset,
@@ -13,12 +22,21 @@ import type {
   FormValues,
   PageInfo,
   StyleDefaults,
+  TextAlign,
   ToolId,
 } from '../model/types'
 import { defaultFormValues, extractFormFields, getFormDocumentInfo } from '../lib/pdf/formFields'
 import { storedValue } from '../lib/pdf/forms/values'
-import { looksLikePdf, openPdf, PasswordRequiredError, readPageInfos, stopLoading, type PDFDocumentProxy } from '../lib/pdf/pdfjs'
-import { loadDocumentBytes, loadSession, rememberDocument } from '../lib/storage/db'
+import {
+  looksLikePdf,
+  openPdf,
+  PasswordRequiredError,
+  readPageInfos,
+  stopLoading,
+  WorkerUnavailableError,
+  type PDFDocumentProxy,
+} from '../lib/pdf/pdfjs'
+import { hasSession, loadDocumentBytes, loadSession, rememberDocument, StorageUnavailableError } from '../lib/storage/db'
 import { clearMeasureCache } from '../lib/text/layout'
 import { createId } from '../lib/utils/id'
 import { clamp, sha256Hex } from '../lib/utils/misc'
@@ -33,7 +51,8 @@ export const MAX_SCALE = 5 * PT_TO_PX
 export const zoomPercent = (scale: number) => Math.round((scale / PT_TO_PX) * 100)
 
 const HISTORY_LIMIT = 200
-const COALESCE_MS = 1200
+/** Updates with the same `coalesce` key this close together (ms) make one undo step: a burst of typing. */
+export const COALESCE_MS = 1200
 
 export interface LoadedDocument {
   /** SHA-256 of the original bytes — stable key for sessions & recents. */
@@ -46,6 +65,10 @@ export interface LoadedDocument {
   formFields: FormField[]
   /** Its saved work couldn't be read when it opened, so it opened without it. */
   sessionLoadFailed?: boolean
+  /** Nothing can be stored on this device (storage is blocked or missing): its work won't be saved. */
+  storageUnavailable?: boolean
+  /** Settles once the file is stored on this device for the recents list; rejects when it couldn't be. */
+  stored?: Promise<void>
 }
 
 export type LoadState =
@@ -57,7 +80,16 @@ export type LoadState =
       unlocking?: boolean
     }
   | { status: 'password'; fileName: string; incorrect: boolean }
-  | { status: 'error'; fileName: string; message: string }
+  | {
+      status: 'error'
+      fileName: string
+      message: string
+      /**
+       * Not the file's fault: FillFlow couldn't download what opening files needs, so the same
+       * file can be tried again (`retryOpen`); or a recent document's file is no longer stored.
+       */
+      reason?: 'unavailable' | 'missing'
+    }
 
 export type DialogId = 'signature' | 'initials' | 'export' | 'shortcuts'
 
@@ -127,6 +159,8 @@ export interface EditorActions {
   /** Re-try a password-protected open; `null` cancels. */
   submitPassword(password: string | null): Promise<void>
   openRecent(id: string, name: string): Promise<boolean>
+  /** Opens again the file whose open just failed through no fault of its own (see LoadState). */
+  retryOpen(): Promise<boolean>
   /** Gives up on the open in progress (or the password prompt): the open document, if any, stays. */
   cancelOpen(): void
   closeDocument(): void
@@ -176,19 +210,31 @@ export interface EditorActions {
 export type EditorStore = EditorState & EditorActions
 
 const STYLE_STORAGE_KEY = 'fillflow:styles'
+/** The date format picked in the Date tool's list. Saved on its own, and only once picked (see setStyle). */
+const DATE_FORMAT_STORAGE_KEY = 'fillflow:dateFormat'
+
+function readStored(key: string): string | null {
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return null // storage unavailable
+  }
+}
 
 function loadStyles(): StyleDefaults {
   let saved: unknown = null
   try {
-    const raw = localStorage.getItem(STYLE_STORAGE_KEY)
+    const raw = readStored(STYLE_STORAGE_KEY)
     saved = raw ? JSON.parse(raw) : null
   } catch {
-    /* storage unavailable or unreadable */
+    /* unreadable */
   }
-  return parseStyles(saved)
+  return parseStyles(saved, readStored(DATE_FORMAT_STORAGE_KEY))
 }
 
 type Loose = Record<string, unknown>
+
+const TEXT_ALIGNS: TextAlign[] = ['left', 'center', 'right']
 
 const loose = (v: unknown): Loose => (v && typeof v === 'object' ? (v as Loose) : {})
 const isColor = (v: unknown): v is string => typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v)
@@ -196,9 +242,12 @@ const isSize = (v: unknown): v is number => typeof v === 'number' && Number.isFi
 
 /**
  * Style defaults as saved by any build (or edited by hand): each field is checked and falls
- * back to its default, so one bad value can't break placing items or opening documents.
+ * back to its default, so one bad value can't break placing items or opening documents. The date
+ * format is `dateFormat`, the one picked in the Date tool (saved on its own), else the locale's.
+ * A date format inside the saved styles is ignored: no build that saved one there could pick one,
+ * so it is only the default of the day it was saved (often month first for an English browser).
  */
-export function parseStyles(saved: unknown): StyleDefaults {
+export function parseStyles(saved: unknown, dateFormat?: unknown): StyleDefaults {
   const s = loose(saved)
   const text = loose(s.text)
   const mark = loose(s.mark)
@@ -211,6 +260,7 @@ export function parseStyles(saved: unknown): StyleDefaults {
       fontSize: isSize(text.fontSize) ? clamp(text.fontSize, MIN_FONT_SIZE, MAX_FONT_SIZE) : d.text.fontSize,
       color: isColor(text.color) ? text.color : d.text.color,
       bold: typeof text.bold === 'boolean' ? text.bold : d.text.bold,
+      align: TEXT_ALIGNS.includes(text.align as TextAlign) ? (text.align as TextAlign) : d.text.align,
     },
     mark: {
       color: isColor(mark.color) ? mark.color : d.mark.color,
@@ -225,19 +275,28 @@ export function parseStyles(saved: unknown): StyleDefaults {
       color: isColor(ink.color) ? ink.color : d.ink.color,
       strokeWidth: isSize(ink.strokeWidth) ? ink.strokeWidth : d.ink.strokeWidth,
     },
-    dateFormat: DATE_FORMATS.includes(s.dateFormat as DateFormat) ? (s.dateFormat as DateFormat) : defaultDateFormat(),
+    dateFormat: DATE_FORMATS.includes(dateFormat as DateFormat) ? (dateFormat as DateFormat) : defaultDateFormat(),
   }
 }
 
 const TEXT_LAYOUT_KEYS = ['text', 'fontId', 'bold', 'fontSize', 'lineHeight', 'letterSpacing', 'align'] as const
 
-/** Applies a patch; text elements are re-measured when a layout-affecting prop changes. */
-function applyPatch(el: Element, patch: ElementPatch): Element {
+/**
+ * Applies a patch. A text element whose layout it changes is re-measured (unless the patch sizes
+ * it) and kept inside its page (`keepTextInPage`), so typing or restyling never runs it off the
+ * page: every change to a text's layout comes through here.
+ */
+function applyPatch(el: Element, patch: ElementPatch, pages?: readonly PageInfo[]): Element {
   const next = { ...el, ...patch } as Element
-  if (next.kind === 'text' && TEXT_LAYOUT_KEYS.some((k) => k in patch) && !('width' in patch && 'height' in patch)) {
-    return withTextLayout(next)
+  if (next.kind !== 'text' || el.kind !== 'text' || !TEXT_LAYOUT_KEYS.some((k) => k in patch)) return next
+  // A block with no text yet (one just started) keeps the point it was started at, where its
+  // caret is, as the anchor of a new alignment: right-aligned, it grows leftwards from there.
+  if (next.align !== el.align && !next.text.trim() && !('x' in patch)) {
+    next.x = el.x + el.width * (TEXT_ANCHOR[el.align] - TEXT_ANCHOR[next.align])
   }
-  return next
+  const laid = 'width' in patch && 'height' in patch ? next : withTextLayout(next)
+  const page = pages?.[laid.page]
+  return page ? keepTextInPage(laid, el, page) : laid
 }
 
 /** Equal by value: the same keys, each value identical (arrays compared item by item). */
@@ -264,7 +323,37 @@ function sameContent(a: Content, b: Content): boolean {
   return sameFields(a.formValues, b.formValues)
 }
 
-/** Pending input while waiting for a password. */
+/** An open that failed for a reason the user is told as is. */
+class OpenError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'OpenError'
+  }
+}
+
+type LoadError = Omit<Extract<LoadState, { status: 'error' }>, 'status' | 'fileName'>
+
+/** What the user is told about an open that failed (the details go to the console). */
+function describeOpenFailure(err: unknown): LoadError {
+  // pdf.js couldn't start its worker after all, and won't for the rest of the page's life.
+  const workerFailed = err instanceof Error && err.message.startsWith('Setting up fake worker failed')
+  if (err instanceof WorkerUnavailableError || workerFailed) {
+    const offline = typeof navigator !== 'undefined' && navigator.onLine === false
+    return {
+      reason: 'unavailable',
+      message: offline
+        ? 'You’re offline, and FillFlow needs to finish downloading before it can open files. Reconnect and try again.'
+        : err instanceof WorkerUnavailableError && err.network
+          ? 'FillFlow needs to finish downloading before it can open files. Check your connection and try again.'
+          : 'FillFlow couldn’t download what it needs to open files. Reload the page and try again.',
+    }
+  }
+  if (err instanceof OpenError) return { message: err.message }
+  if (err instanceof Error && err.name === 'InvalidPDFException') return { message: 'This PDF is damaged or not a valid PDF file.' }
+  return { message: 'This PDF couldn’t be read. It may be damaged, or use features FillFlow doesn’t support.' }
+}
+
+/** Pending input while waiting for a password, or to try again (see `retryOpen`). */
 let pendingOpen: { name: string; bytes: Uint8Array } | null = null
 /** Bumped by every open, cancel and close: an open started under an older token never applies. */
 let openToken = 0
@@ -357,7 +446,7 @@ export const useEditor = create<EditorStore>()(
       let opening: Promise<PDFDocumentProxy> | null = null
       let pdf: PDFDocumentProxy | null = null
       try {
-        if (!looksLikePdf(bytes)) throw new Error("This file doesn't look like a PDF.")
+        if (!looksLikePdf(bytes)) throw new OpenError('This file doesn’t look like a PDF.')
         opening = openPdf(bytes, password, signal)
         const [id, opened] = await Promise.all([sha256Hex(bytes), opening])
         pdf = opened
@@ -375,10 +464,14 @@ export const useEditor = create<EditorStore>()(
           if (token === openToken) console.warn('[forms] could not read form fields', err)
           return [] as FormField[]
         })
-        // undefined: the saved work couldn't be read, so the document opens without it.
+        // undefined: the saved work couldn't be read, so the document opens without it. Storage
+        // that can't be used at all holds no work to miss: the document says so instead.
+        let storageUnavailable = false
         const session = await loadSession(id).catch((err: unknown) => {
           console.warn('[storage] could not read the saved work', err)
-          return undefined
+          if (!(err instanceof StorageUnavailableError)) return undefined
+          storageUnavailable = true
+          return null
         })
         const elements = session?.elements ?? []
         // Load the fonts this document uses before measuring any text.
@@ -401,10 +494,18 @@ export const useEditor = create<EditorStore>()(
         gestureStart = null
         lastCoalesce = null
         pendingOpen = null
+        // Kept for the recents list; autosave tells the user when the file couldn't be.
+        const stored = rememberDocument({ id, name, size: bytes.byteLength, pageCount: pages.length }, bytes)
+        stored.catch((err: unknown) => console.warn('[storage] could not remember document', err))
         set({
-          doc: { id, name, bytes, pdf, pages, formFields, sessionLoadFailed: session === undefined },
+          doc: { id, name, bytes, pdf, pages, formFields, sessionLoadFailed: session === undefined, storageUnavailable, stored },
           load: { status: 'idle' },
-          elements: elements.map((e) => (e.kind === 'text' ? withTextLayout(e) : e)),
+          // Measured again with the fonts loaded, kept on its page as when typed into (relayoutText).
+          elements: elements.map((e) => {
+            if (e.kind !== 'text') return e
+            const page = pages[e.page]
+            return page ? keepTextInPage(withTextLayout(e), e, page) : withTextLayout(e)
+          }),
           formValues: { ...defaultFormValues(formFields), ...session?.formValues },
           assets: session?.assets ?? {},
           past: [],
@@ -415,9 +516,6 @@ export const useEditor = create<EditorStore>()(
           rightPanelTab: hasFormTab ? 'form' : 'items',
           rightPanelOpen: hasFormTab && typeof window !== 'undefined' && window.innerWidth >= 1280,
         })
-        void rememberDocument({ id, name, size: bytes.byteLength, pageCount: pages.length }, bytes).catch((err) =>
-          console.warn('[storage] could not remember document', err),
-        )
         return true
       } catch (err) {
         // Whatever failed, the parsed document (its worker and its copy of the bytes) goes too,
@@ -430,15 +528,12 @@ export const useEditor = create<EditorStore>()(
           set({ load: { status: 'password', fileName: name, incorrect: err.incorrect } })
           return false
         }
-        pendingOpen = null
-        console.error('[open] failed', err)
-        const message =
-          err instanceof Error && err.name === 'InvalidPDFException'
-            ? 'This PDF is damaged or not a valid PDF file.'
-            : err instanceof Error
-              ? err.message
-              : 'Could not open this file.'
-        set({ load: { status: 'error', fileName: name, message } })
+        const failure = describeOpenFailure(err)
+        // Not the file's fault: it is kept, to be tried again as is.
+        pendingOpen = failure.reason === 'unavailable' ? { name, bytes } : null
+        if (failure.reason === 'unavailable') console.warn('[open] failed', err)
+        else console.error('[open] failed', err)
+        set({ load: { status: 'error', fileName: name, ...failure } })
         return false
       }
     }
@@ -496,11 +591,24 @@ export const useEditor = create<EditorStore>()(
           }
           if (token !== openToken) return false
           if (!bytes) {
-            set({ load: { status: 'error', fileName: name, message: 'This document is no longer stored on this device.' } })
+            // (It couldn't be stored, or is gone.) Its work is kept all the same when it was saved:
+            // opening the same file again continues it.
+            const workKept = await hasSession(id).catch(() => false)
+            if (token !== openToken) return false
+            const message = workKept
+              ? 'It isn’t stored on this device, but your work on it is. Choose the same file to pick up where you left off.'
+              : 'It isn’t stored on this device. Choose it again to open it.'
+            set({ load: { status: 'error', fileName: name, message, reason: 'missing' } })
             return false
           }
           return finishOpen(token, signal, name, bytes)
         })
+      },
+
+      retryOpen() {
+        const p = pendingOpen
+        if (!p || get().load.status !== 'error') return Promise.resolve(false)
+        return get().openDocument(p)
       },
 
       cancelOpen() {
@@ -548,18 +656,19 @@ export const useEditor = create<EditorStore>()(
       },
 
       updateElement(id, patch, opts) {
-        const { elements } = get()
+        const { elements, doc } = get()
         const i = elements.findIndex((e) => e.id === id)
         if (i < 0) return
         const next = elements.slice()
-        next[i] = applyPatch(elements[i], patch)
+        next[i] = applyPatch(elements[i], patch, doc?.pages)
         commit({ elements: next }, opts)
       },
 
       updateElements(patches, opts) {
         const ids = Object.keys(patches)
         if (!ids.length) return
-        const next = get().elements.map((e) => (patches[e.id] ? applyPatch(e, patches[e.id]) : e))
+        const { elements, doc } = get()
+        const next = elements.map((e) => (patches[e.id] ? applyPatch(e, patches[e.id], doc?.pages) : e))
         commit({ elements: next }, opts)
       },
 
@@ -619,11 +728,12 @@ export const useEditor = create<EditorStore>()(
       },
 
       relayoutText() {
-        const { elements } = get()
+        const { elements, doc } = get()
         let changed = false
         const next = elements.map((e) => {
           if (e.kind !== 'text') return e
-          const r = withTextLayout(e)
+          const page = doc?.pages[e.page]
+          const r = page ? keepTextInPage(withTextLayout(e), e, page) : withTextLayout(e)
           if (Math.abs(r.width - e.width) > 0.01 || Math.abs(r.height - e.height) > 0.01) changed = true
           return r
         })
@@ -710,6 +820,9 @@ export const useEditor = create<EditorStore>()(
       },
 
       setEditing(id) {
+        // What is typed next is an undo step of its own, never part of the latest one (the same
+        // text typed into just before), so undo while typing stops where this edit began.
+        lastCoalesce = null
         set(id ? { editingId: id, selection: [id] } : { editingId: null })
       },
 
@@ -737,7 +850,10 @@ export const useEditor = create<EditorStore>()(
         const next = { ...styles, [key]: value } as StyleDefaults
         set({ styles: next })
         try {
-          localStorage.setItem(STYLE_STORAGE_KEY, JSON.stringify(next))
+          // The date format is saved only when picked (here, from the Date tool's list), on its
+          // own; until then it follows the locale. The other styles never carry it.
+          if (key === 'dateFormat') localStorage.setItem(DATE_FORMAT_STORAGE_KEY, next.dateFormat)
+          else localStorage.setItem(STYLE_STORAGE_KEY, JSON.stringify({ ...next, dateFormat: undefined }))
         } catch {
           /* storage unavailable */
         }

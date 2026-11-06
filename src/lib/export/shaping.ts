@@ -31,6 +31,34 @@ export const SHAPING_FEATURES: TypeFeatures = {
 /** fontkit's runtime `layout` takes script/language/direction too (missing from its typings). */
 type LayoutFn = (text: string, features: TypeFeatures, script?: string, language?: string, direction?: 'ltr' | 'rtl') => GlyphRun
 
+/** fontkit's matcher behind every contextual lookup (OTProcessor#match). */
+type MatchFn = (this: unknown, index: number, sequence: unknown[], fn: unknown, matched?: unknown) => unknown
+
+let backtrackFixed = false
+
+/**
+ * fontkit (1.1.1) compares the backtrack of a chaining contextual lookup with the glyphs before
+ * the current one farthest first, but OpenType lists it nearest first, as HarfBuzz (the editor's
+ * shaper) reads it. Tinos and Cousine position a point after a pointed letter with such lookups,
+ * so the export moved the tsere of בְרֵא off where the screen draws it. All fonts share the
+ * matcher, so it is fixed once: a backtrack is the only sequence matched backwards from the
+ * current glyph, starting as many glyphs back as it is long.
+ */
+function matchBacktrackNearestFirst(font: FkFont): void {
+  if (backtrackFixed) return
+  const engine = (font as unknown as { _layoutEngine?: { engine?: { GPOSProcessor?: object; GSUBProcessor?: object } } })._layoutEngine?.engine
+  let proto: object | null = engine?.GPOSProcessor ?? engine?.GSUBProcessor ?? null
+  while (proto && !Object.hasOwn(proto, 'match')) proto = Object.getPrototypeOf(proto) as object | null
+  if (!proto) return
+  const target = proto as { match: MatchFn }
+  const match = target.match
+  target.match = function (index, sequence, fn, matched) {
+    const backtrack = index < 0 && -index === sequence.length
+    return match.call(this, index, backtrack ? [...sequence].reverse() : sequence, fn, matched)
+  }
+  backtrackFixed = true
+}
+
 /** Text as it is actually painted: ignorables removed; tab, form feed and CR become spaces (as in canvas). */
 export function paintableText(text: string): string {
   let out = ''
@@ -102,6 +130,14 @@ export interface ShapedText {
   positions: GlyphPosition[]
   /** Grapheme cluster (index in logical order) of each glyph: letter spacing goes after a whole cluster. */
   clusters: number[]
+  /**
+   * Characters each glyph stands for, as typed: its code points, except that a mirrored bracket
+   * stands for the bracket typed (the ")" glyph drawn for a right-to-left "("), and a Hebrew
+   * presentation form for its letter and points (see spellOutPresentationForms). Copying gives these.
+   */
+  chars: string[]
+  /** The grapheme clusters as typed (logical order, with the typed brackets, presentation forms spelled out); `clusters` indexes them. */
+  typed: string[]
   /** Total advance in font units. */
   advance: number
 }
@@ -127,41 +163,97 @@ function composingPointsFirst(text: string): string {
 }
 
 /**
- * The grapheme cluster each glyph belongs to. fontkit records the code points behind every glyph,
- * and in logical order the glyphs consume the text's code points in turn.
+ * Hebrew presentation forms (שׁ U+FB2A, וֹ U+FB4B…) spelled out as the letter and points they stand
+ * for. pdf.js (Firefox's viewer) spells them out before it puts right-to-left text back in order,
+ * which then puts the points before their letter (שׁ copied as "ׁש"); spelled out in the PDF, they
+ * are put back in order with the rest.
  */
-function glyphClusters(text: string, glyphs: Glyph[], direction: Direction): number[] {
-  const clusterOf: number[] = []
+export function spellOutPresentationForms(text: string): string {
+  return text.replace(/[\uFB1D-\uFB4F]/g, (ch) => ch.normalize('NFD'))
+}
+
+/** How many code points `codePoints` decompose into (NFD). */
+function decomposedLength(codePoints: number[]): number {
+  let n = 0
+  for (const _ of String.fromCodePoint(...codePoints).normalize('NFD')) n++
+  return n
+}
+
+/**
+ * The grapheme cluster each glyph belongs to and the characters it stands for. fontkit records the
+ * code points behind every glyph, and in logical order the glyphs consume the text's code points
+ * in turn; `typed` is the same text before mirroring.
+ *
+ * fontkit shares one glyph object per glyph id, which keeps the code points of its first use, in
+ * this text or any other (parsed fonts are shared across exports). So code points are counted
+ * decomposed (NFD), where שׁ typed as one character (U+FB2A) or as ש and its dot comes to the same;
+ * the .notdef glyph stands for one missing character each time whatever it says; and when the
+ * counts still don't add up, the characters fall back to the glyphs' own.
+ */
+function glyphSources(text: string, typed: string, glyphs: Glyph[], direction: Direction): Pick<ShapedText, 'clusters' | 'chars'> {
+  // The typed text's decomposed code points, each with its cluster and the typed character it is from.
+  const typedChars = [...typed]
+  const units: { cluster: number; char: number; cp: string }[] = []
+  let c = 0
   graphemes(text).forEach((cluster, i) => {
-    for (const _ of cluster) clusterOf.push(i)
+    for (const ch of cluster) {
+      for (const cp of (typedChars[c] ?? ch).normalize('NFD')) units.push({ cluster: i, char: c, cp })
+      c++
+    }
   })
-  const out = new Array<number>(glyphs.length)
+  const startsChar = (k: number) => k <= 0 || k >= units.length || units[k].char !== units[k - 1].char
+  /** What units [from, to) stand for: whole characters as typed (presentation forms spelled out), or else these code points. */
+  const span = (from: number, to: number) => {
+    to = Math.min(to, units.length)
+    if (from >= to) return ''
+    if (!startsChar(from) || !startsChar(to)) return units.slice(from, to).map((u) => u.cp).join('')
+    return spellOutPresentationForms(typedChars.slice(units[from].char, units[to - 1].char + 1).join(''))
+  }
+  const clusters = new Array<number>(glyphs.length)
+  const chars = new Array<string>(glyphs.length)
   let consumed = 0
   let cluster = 0
   for (let n = 0; n < glyphs.length; n++) {
     const i = direction === 'rtl' ? glyphs.length - 1 - n : n
-    const count = glyphs[i].codePoints.length
+    let count = 1
+    if (glyphs[i].id !== 0) count = decomposedLength(glyphs[i].codePoints)
+    else while (!startsChar(consumed + count)) count++
     // A glyph without code points (an extra glyph a character was split into) joins the previous one.
-    if (count) cluster = clusterOf[Math.min(consumed, clusterOf.length - 1)]
+    if (count) cluster = units[Math.min(consumed, units.length - 1)].cluster
+    clusters[i] = cluster
+    chars[i] = span(consumed, consumed + count)
     consumed += count
-    out[i] = cluster
   }
-  return out
+  if (consumed !== units.length) glyphs.forEach((g, i) => (chars[i] = g.id === 0 ? '' : spellOutPresentationForms(String.fromCodePoint(...g.codePoints))))
+  return { clusters, chars }
 }
 
-/** Shapes one run of text (logical order) with an explicit direction; glyphs come back in visual order. */
-export function shapeText(font: FkFont, text: string, direction: Direction): ShapedText {
+/**
+ * Shapes one run of text (logical order) with an explicit direction; glyphs come back in visual
+ * order. `typed` is the run before RTL mirroring, when `text` has it applied.
+ */
+export function shapeText(font: FkFont, text: string, direction: Direction, typed = text): ShapedText {
   const clean = composingPointsFirst(paintableText(text))
-  if (!clean) return { glyphs: [], positions: [], clusters: [], advance: 0 }
+  if (!clean) return { glyphs: [], positions: [], clusters: [], chars: [], typed: [], advance: 0 }
+  matchBacktrackNearestFirst(font)
   const run = (font.layout as unknown as LayoutFn).call(font, clean, SHAPING_FEATURES, undefined, undefined, direction)
   let advance = 0
   for (const p of run.positions) advance += p.xAdvance
-  return { glyphs: run.glyphs, positions: run.positions, clusters: glyphClusters(clean, run.glyphs, direction), advance }
+  // Mirroring swaps single characters and points only move within their cluster, so the typed
+  // text lines up with the shaped one, cluster by cluster.
+  const shown = paintableText(typed)
+  const sources = glyphSources(clean, typed === text ? clean : composingPointsFirst(shown), run.glyphs, direction)
+  return { glyphs: run.glyphs, positions: run.positions, ...sources, typed: graphemes(spellOutPresentationForms(shown)), advance }
 }
 
-/** Bidi-reorders and shapes a line. */
+/**
+ * Bidi-reorders and shapes a line. A bracket drawn mirrored in right-to-left text copies as the
+ * bracket typed, as in Word's PDFs: right in Acrobat and Edge, pdf.js (Firefox) and poppler,
+ * which only reverse right-to-left text, but reversed in Chrome's viewer and xpdf, which also
+ * mirror it back. No mapping suits both; `r.text` as the typed run would suit the latter.
+ */
 export function shapeLine(font: FkFont, line: string, base?: Direction): ShapedRun[] {
-  return visualRuns(line, base).map((r) => ({ ...r, ...shapeText(font, r.text, r.rtl ? 'rtl' : 'ltr') }))
+  return visualRuns(line, base).map((r) => ({ ...r, ...shapeText(font, r.text, r.rtl ? 'rtl' : 'ltr', line.slice(r.start, r.end)) }))
 }
 
 /** True when some visible character of `text` has no glyph in `font`. */

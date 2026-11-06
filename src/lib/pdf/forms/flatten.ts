@@ -1,17 +1,22 @@
 import {
   PDFArray,
+  PDFBool,
   PDFDict,
   PDFName,
   PDFNumber,
   PDFRef,
   PDFStream,
+  beginMarkedContent,
   concatTransformationMatrix,
   drawObject,
+  endMarkedContent,
   popGraphicsState,
   pushGraphicsState,
   type PDFDocument,
   type PDFField,
   type PDFForm,
+  type PDFObject,
+  type PDFOperator,
   type PDFPage,
   type PDFWidgetAnnotation,
 } from 'pdf-lib'
@@ -25,10 +30,26 @@ import { PDF_OFF, PageIndex, nameForLog, widgetEntries, widgetPresence, type Wid
  * Page content shows on screen and on paper alike, so widgets that do both are drawn, and a
  * field with a print-only widget stays a field, so that the widget keeps printing. Screen-only
  * widgets ("Print" or "Clear form" buttons, on-screen hints) are removed, unless the caller
- * wants a field's drawn anyway (a value the user typed belongs in the copy).
+ * wants a field's drawn anyway (a value the user typed belongs in the copy). A widget in a layer
+ * (optional content) stays in that layer: one that is off stays hidden. In a tagged PDF, what is
+ * drawn is marked as an artifact.
  */
 
 type Matrix = [number, number, number, number, number, number]
+
+const OC = PDFName.of('OC')
+
+/**
+ * `ops`, which bake an appearance into page content, marked as an artifact when the document is a
+ * tagged PDF (catalog /MarkInfo /Marked true and a /StructTreeRoot): there, all page content is
+ * either part of the logical structure or marked as an artifact, which assistive technology skips.
+ * Other documents get `ops` as they are.
+ */
+export function markedAsArtifact(doc: PDFDocument, ops: PDFOperator[]): PDFOperator[] {
+  const markInfo = doc.catalog.lookup(PDFName.of('MarkInfo'))
+  const tagged = markInfo instanceof PDFDict && markInfo.lookup(PDFName.of('Marked')) === PDFBool.True && doc.catalog.has(PDFName.of('StructTreeRoot'))
+  return tagged ? [beginMarkedContent('Artifact'), ...ops, endMarkedContent()] : ops
+}
 
 function numbers(obj: unknown, length: number): number[] | null {
   if (!(obj instanceof PDFArray) || obj.size() !== length) return null
@@ -53,14 +74,21 @@ function currentAppearance(doc: PDFDocument, field: PDFField, widget: PDFWidgetA
   return null
 }
 
-/** PDF 32000-1 §12.5.5: maps the appearance's transformed BBox onto the annotation /Rect. */
-function placement(doc: PDFDocument, apRef: PDFRef, widget: PDFWidgetAnnotation): Matrix | null {
-  const stream = doc.context.lookup(apRef)
-  if (!(stream instanceof PDFStream)) return null
+function matrixOf(stream: PDFStream): Matrix {
+  return (numbers(stream.dict.lookup(PDFName.of('Matrix')), 6) ?? [1, 0, 0, 1, 0, 0]) as Matrix
+}
+
+/** How far an appearance's /Matrix turns it: 0, 90, 180 or 270 (counterclockwise, the nearest). */
+export function appearanceTurn(stream: PDFStream): number {
+  const [a, b] = matrixOf(stream)
+  return (Math.round(Math.atan2(b, a) / (Math.PI / 2)) * 90 + 360) % 360
+}
+
+/** The box [x0, y0, x1, y1] an appearance's BBox covers once its /Matrix is applied. */
+export function appearanceBox(stream: PDFStream): [number, number, number, number] | null {
   const bbox = numbers(stream.dict.lookup(PDFName.of('BBox')), 4)
-  const rect = numbers(widget.dict.lookup(PDFName.of('Rect')), 4)
-  if (!bbox || !rect) return null
-  const [a, b, c, d, e, f] = (numbers(stream.dict.lookup(PDFName.of('Matrix')), 6) ?? [1, 0, 0, 1, 0, 0]) as Matrix
+  if (!bbox) return null
+  const [a, b, c, d, e, f] = matrixOf(stream)
   const corners = [
     [bbox[0], bbox[1]],
     [bbox[2], bbox[1]],
@@ -69,10 +97,19 @@ function placement(doc: PDFDocument, apRef: PDFRef, widget: PDFWidgetAnnotation)
   ].map(([x, y]) => [a * x + c * y + e, b * x + d * y + f])
   const xs = corners.map((p) => p[0])
   const ys = corners.map((p) => p[1])
-  const tx0 = Math.min(...xs)
-  const ty0 = Math.min(...ys)
-  const tw = Math.max(...xs) - tx0
-  const th = Math.max(...ys) - ty0
+  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]
+}
+
+/** PDF 32000-1 §12.5.5: maps the appearance's transformed BBox onto the annotation /Rect. */
+function placement(doc: PDFDocument, apRef: PDFRef, widget: PDFWidgetAnnotation): Matrix | null {
+  const stream = doc.context.lookup(apRef)
+  if (!(stream instanceof PDFStream)) return null
+  const box = appearanceBox(stream)
+  const rect = numbers(widget.dict.lookup(PDFName.of('Rect')), 4)
+  if (!box || !rect) return null
+  const [tx0, ty0] = box
+  const tw = box[2] - tx0
+  const th = box[3] - ty0
   const rx = Math.min(rect[0], rect[2])
   const ry = Math.min(rect[1], rect[3])
   const rw = Math.abs(rect[2] - rect[0])
@@ -81,6 +118,16 @@ function placement(doc: PDFDocument, apRef: PDFRef, widget: PDFWidgetAnnotation)
   const sx = rw / tw
   const sy = rh / th
   return [sx, 0, 0, sy, rx - tx0 * sx, ry - ty0 * sy]
+}
+
+/**
+ * The appearance wrapped in a form XObject of the widget's optional content (layer), so that once
+ * baked it keeps the visibility the widget had: hidden while its layer is off (§8.11.3.3).
+ */
+function inLayer(doc: PDFDocument, apRef: PDFRef, oc: PDFObject): PDFRef {
+  // (Only called for an appearance whose box placement() could read.)
+  const box = appearanceBox(doc.context.lookup(apRef, PDFStream)) ?? [0, 0, 0, 0]
+  return doc.context.register(doc.context.formXObject([drawObject('A')], { BBox: box, Resources: { XObject: { A: apRef } }, OC: oc }))
 }
 
 /** Removes a field, its widgets and their /Annots entries. */
@@ -121,11 +168,13 @@ export function flattenFields(
         const page = pages.pageOf(entry)
         const ap = page ? currentAppearance(doc, field, entry.widget) : null
         const m = ap ? placement(doc, ap, entry.widget) : null
-        if (page && ap && m) draws.push({ page, ap, m })
+        // A malformed /OC is ignored, as viewers ignore it.
+        const oc = entry.widget.dict.lookup(OC) instanceof PDFDict ? entry.widget.dict.get(OC) : undefined
+        if (page && ap && m) draws.push({ page, ap: oc ? inLayer(doc, ap, oc) : ap, m })
       }
       for (const { page, ap, m } of draws) {
         const name = page.node.newXObject('FlatWidget', ap)
-        page.pushOperators(pushGraphicsState(), concatTransformationMatrix(...m), drawObject(name), popGraphicsState())
+        page.pushOperators(...markedAsArtifact(doc, [pushGraphicsState(), concatTransformationMatrix(...m), drawObject(name), popGraphicsState()]))
       }
       removeField(doc, form, field, entries, pages)
     } catch (err) {

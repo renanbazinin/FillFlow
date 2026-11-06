@@ -6,10 +6,14 @@ type Hooks = { signal?: AbortSignal; onProgress?: (p: unknown) => void; onUnwrit
 
 /** A controllable stand-in for the real exporter: each call returns a deferred result. */
 const calls: { flatten: boolean; signal?: AbortSignal; hooks: Hooks; resolve: (b: Uint8Array) => void; reject: (e: unknown) => void }[] = []
+let fontPreloads = 0
 vi.mock('../../lib/export/exportPdf', async () => {
   const errors = await import('../../lib/export/errors')
   return {
     ExportError: errors.ExportError,
+    preloadDefaultFont: () => {
+      fontPreloads++
+    },
     exportCurrentDocument: vi.fn(
       (options: { flattenForms: boolean }, hooks: Hooks) =>
         new Promise<Uint8Array>((resolve, reject) => {
@@ -34,6 +38,11 @@ describe('export job', () => {
     resetExport()
     calls.length = 0
     useEditor.setState({ doc: fakeDoc, revision: 1 })
+  })
+
+  it('keeps the default text face in memory once the engine has loaded, for downloads made offline', async () => {
+    await preloadExportEngine()
+    expect(fontPreloads).toBe(1)
   })
 
   it('reuses the running export for the same document state and options', async () => {

@@ -2,12 +2,13 @@ import type { PageInfo, Point, Rect } from '../../model/types'
 import { PT_TO_PX, useEditor } from '../../store/editor'
 import { clamp, isEditableTarget } from '../../lib/utils/misc'
 import { prefersReducedMotion } from '../../lib/utils/motion'
-import type { PagePoint, ViewerHandle } from './viewerApi'
+import type { PagePoint, ScrollToRectOptions, ViewerHandle } from './viewerApi'
 import { DOCK_OVERLAP, PAD_BOTTOM, PAD_TOP, SCROLL_TOP_MARGIN, ZOOM_SETTLE_MS, horizontalPadding } from './constants'
 import { clampScale, computeFitScale, pinchScale, stepZoom, wheelDeltaPx, wheelZoomLog } from './zoom'
 import {
   anchorScrollDelta,
   clampPoint,
+  coveredFromBelow,
   distanceToViewport,
   nearestSpanIndex,
   revealDelta,
@@ -59,6 +60,21 @@ function modalOpen(): boolean {
 
 function touchDistance(a: Touch, b: Touch): number {
   return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
+}
+
+/** The tool dock (editor/ToolDock): it floats over the bottom of the pages on larger screens. */
+const TOOL_DOCK = '[role="toolbar"][aria-label="Tools"]'
+/** Room kept between what is revealed and the tool dock. */
+const DOCK_GAP = 8
+
+/**
+ * How much of the bottom of `view` the tool dock covers, measured as it is now: all of its height
+ * where it floats over the pages (on a short screen, much of them), nothing while it makes way
+ * (hidden while typing on one) or where it sits below them (phones).
+ */
+function dockCover(view: ClientRect): number {
+  const dock = document.querySelector(TOOL_DOCK)
+  return dock ? coveredFromBelow(view, dock.getBoundingClientRect(), DOCK_GAP) : DOCK_OVERLAP
 }
 
 /**
@@ -408,7 +424,12 @@ export class ViewerController implements ViewerHandle {
     c.scrollBy({ left: dx, top: dy, behavior })
   }
 
-  scrollToRect(page: number, rect: Rect, opts?: { behavior?: ScrollBehavior; margin?: number }): void {
+  /**
+   * Scrolls so `rect` on `page` is visible with some margin, clear of the tool dock. `inlineEnd`: a
+   * rect wider than the view has its right edge lined up rather than its left one (where the text of
+   * a right-to-left or right-aligned field sits).
+   */
+  scrollToRect(page: number, rect: Rect, opts?: ScrollToRectOptions): void {
     const c = this.container
     const frame = this.frames[page]
     if (!c || !frame) return
@@ -421,7 +442,7 @@ export class ViewerController implements ViewerHandle {
     const v = this.visibleRect(true)
     const margin = Math.max(0, opts?.margin ?? 48)
     const dy = revealDelta(top, bottom, v.top, v.bottom, Math.min(margin, (v.bottom - v.top) / 4))
-    const dx = revealDelta(left, right, v.left, v.right, Math.min(margin, (v.right - v.left) / 4))
+    const dx = revealDelta(left, right, v.left, v.right, Math.min(margin, (v.right - v.left) / 4), opts?.inlineEnd)
     if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return
     c.scrollBy({ left: dx, top: dy, behavior: opts?.behavior ?? this.autoBehavior(dy) })
   }
@@ -544,20 +565,18 @@ export class ViewerController implements ViewerHandle {
   // Geometry helpers (DOM)
   // -------------------------------------------------------------------------
 
-  /** The scroll container's visible box in client coordinates (scrollbars excluded). */
+  /**
+   * The scroll container's visible box in client coordinates (scrollbars excluded). `excludeDock`:
+   * without the strip the tool dock covers, as it is now (see `dockCover`).
+   */
   private visibleRect(excludeDock: boolean): ClientRect {
     const c = this.container
     if (!c) return { left: 0, top: 0, right: 0, bottom: 0 }
     const r = c.getBoundingClientRect()
     const left = r.left + c.clientLeft
     const top = r.top + c.clientTop
-    const bottom = top + c.clientHeight
-    return {
-      left,
-      top,
-      right: left + c.clientWidth,
-      bottom: excludeDock ? bottom - Math.min(DOCK_OVERLAP, c.clientHeight * 0.25) : bottom,
-    }
+    const view = { left, top, right: left + c.clientWidth, bottom: top + c.clientHeight }
+    return excludeDock ? { ...view, bottom: Math.max(top, view.bottom - dockCover(view)) } : view
   }
 
   private framesReady(): boolean {

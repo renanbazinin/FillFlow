@@ -64,7 +64,8 @@ interface ElementBase {
 /**
  * A block of text. Lines break only at explicit newlines (no soft wrap), and the
  * box is always sized to the text: width = widest line, height = lines * lineHeight * fontSize.
- * Use `lib/text/layout.ts` to (re)compute width/height after any text/style change.
+ * Use `lib/text/layout.ts` to (re)compute width/height after any text/style change; the store
+ * then keeps a growing box inside its page (`keepTextInPage` in `model/elements.ts`).
  */
 export interface TextElement extends ElementBase {
   kind: 'text'
@@ -247,7 +248,7 @@ export type DateFormat = 'dd/MM/yyyy' | 'MM/dd/yyyy' | 'yyyy-MM-dd' | 'd MMM yyy
 
 /** Styles applied to newly created elements; the context toolbar also updates these. */
 export interface StyleDefaults {
-  text: { fontId: FontId; fontSize: number; color: string; bold: boolean }
+  text: { fontId: FontId; fontSize: number; color: string; bold: boolean; align: TextAlign }
   mark: { color: string; size: number }
   shape: { strokeColor: string; fillColor: string | null; strokeWidth: number }
   ink: { color: string; strokeWidth: number }

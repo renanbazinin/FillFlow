@@ -9,7 +9,8 @@ export function itemPaintBox(el: Element): Rect {
   return { x: el.x - pad, y: el.y - pad, width: el.width + 2 * pad, height: el.height + 2 * pad }
 }
 
-function overlaps(a: Rect, b: Rect): boolean {
+/** Whether two rects really overlap (more than edges touching). */
+export function overlaps(a: Rect, b: Rect): boolean {
   const w = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x)
   const h = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y)
   return w > MIN_OVERLAP && h > MIN_OVERLAP

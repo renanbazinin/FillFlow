@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import type { FormField } from '../../model/types'
+import { bidiIsolate } from '../../lib/utils/misc'
+import type { Element, FormField } from '../../model/types'
 import {
   countChangedFields,
   countFilledFields,
+  coveredFieldLabels,
+  coveredFieldsNote,
   defaultBaseName,
   finalFileName,
   formatFileSize,
@@ -11,6 +14,7 @@ import {
   plural,
   progressLabel,
   quotedList,
+  typedFileName,
   unwrittenFieldLabels,
 } from './exportFile'
 
@@ -42,6 +46,113 @@ describe('file names', () => {
     expect(finalFileName('', 'contract.pdf')).toBe('contract-filled.pdf')
     expect(finalFileName(' .pdf ', 'contract.pdf')).toBe('contract-filled.pdf')
     expect(finalFileName('///', 'contract.pdf')).toBe('contract-filled.pdf')
+  })
+
+  it('keeps Hebrew abbreviations typed with ASCII quotes, in their own marks', () => {
+    // Hebrew keyboards type the gershayim of בע"מ as " (which no file can have), the geresh as '.
+    expect(finalFileName('טופס 101 – חברת דוגמה בע"מ (עותק)', 'x.pdf')).toBe('טופס 101 – חברת דוגמה בע״מ (עותק).pdf')
+    expect(finalFileName(`ז'בוטינסקי ת"א 2026/27`, 'x.pdf')).toBe('ז׳בוטינסקי ת״א 2026-27.pdf')
+    expect(finalFileName('טופס 101 - ת"א - ז"ל - ע"י', 'x.pdf')).toBe('טופס 101 - ת״א - ז״ל - ע״י.pdf')
+    expect(finalFileName(`ג'ורג' מס' 2`, 'x.pdf')).toBe('ג׳ורג׳ מס׳ 2.pdf')
+    // The real marks stay as they are.
+    expect(finalFileName('חברה בע״מ ז׳בוטינסקי', 'x.pdf')).toBe('חברה בע״מ ז׳בוטינסקי.pdf')
+    // Quotes around a word aren't abbreviations: " can't stay, ' can.
+    expect(finalFileName(`'טיוטה' "סופי"`, 'x.pdf')).toBe(`'טיוטה' -סופי.pdf`)
+    expect(finalFileName(`Say "hi" it's`, 'x.pdf')).toBe(`Say -hi- it's.pdf`)
+  })
+
+  it('keeps single quotes around Hebrew words and phrases as typed', () => {
+    // A ' at the start of a word opens a quote, which the next ' at the end of a word closes.
+    expect(finalFileName(`טופס 'הצהרת בריאות'`, 'x.pdf')).toBe(`טופס 'הצהרת בריאות'.pdf`)
+    expect(finalFileName(`טופס ('טיוטה')`, 'x.pdf')).toBe(`טופס ('טיוטה').pdf`)
+    expect(finalFileName(`טופס_101_'טיוטה'`, 'x.pdf')).toBe(`טופס_101_'טיוטה'.pdf`)
+    expect(finalFileName(`'א','ב'`, 'x.pdf')).toBe(`'א','ב'.pdf`)
+    // Inside a Hebrew word a ' is a geresh all the same.
+    expect(finalFileName(`'ז'בוטינסקי'`, 'x.pdf')).toBe(`'ז׳בוטינסקי'.pdf`)
+    // At the end of one, once a quote was opened, it may be the one that closes it: it stays.
+    expect(finalFileName(`'רח' הרצל'`, 'x.pdf')).toBe(`'רח' הרצל'.pdf`)
+    expect(finalFileName(`'ג'ורג' כהן'`, 'x.pdf')).toBe(`'ג׳ורג' כהן'.pdf`)
+    expect(finalFileName(`'טופס 101' מס' 2`, 'x.pdf')).toBe(`'טופס 101' מס' 2.pdf`)
+    // An apostrophe inside a word doesn't close one.
+    expect(finalFileName(`'it's טיוטה'`, 'x.pdf')).toBe(`'it's טיוטה'.pdf`)
+  })
+
+  it('drops invisible characters and turns "~" into "-", as browsers would save them otherwise', () => {
+    const RLM = String.fromCharCode(0x200f)
+    expect(finalFileName(`טופס${RLM} 101`, 'x.pdf')).toBe('טופס 101.pdf')
+    expect(finalFileName('draft~2', 'x.pdf')).toBe('draft-2.pdf')
+    // Control characters (also those pasted from mis-decoded text) and noncharacters.
+    expect(finalFileName(`it${String.fromCharCode(0x92)}s${String.fromCharCode(0xfdd0)}`, 'x.pdf')).toBe('it-s.pdf')
+    expect(finalFileName('a -/ b', 'x.pdf')).toBe('a - b.pdf')
+  })
+
+  it('suggests a default that is the name the file gets', () => {
+    expect(defaultBaseName('טופס 101 - חברת דוגמה בע"מ.pdf')).toBe('טופס 101 - חברת דוגמה בע״מ-filled')
+    expect(defaultBaseName('Q1: report?.pdf')).toBe('Q1- report-filled')
+    expect(finalFileName('', 'טופס 101 - חברת דוגמה בע"מ.pdf')).toBe('טופס 101 - חברת דוגמה בע״מ-filled.pdf')
+  })
+})
+
+describe('typedFileName', () => {
+  const typed = (value: string, caret = value.length) => typedFileName(value, caret, caret)
+  /** Types `text` at `caret` a character at a time, cleaned after each one as the field does. */
+  const typeAt = (value: string, caret: number, text: string) => {
+    let field = { value, start: caret, end: caret }
+    for (const c of text) {
+      const at = field.end
+      field = typedFileName(field.value.slice(0, at) + c + field.value.slice(at), at + c.length, at + c.length)
+    }
+    return field
+  }
+
+  it('shows the characters the file gets as they are typed, keeping the caret in place', () => {
+    expect(typed('2026/')).toEqual({ value: '2026-', start: 5, end: 5 })
+    expect(typed('a-?b', 3)).toEqual({ value: 'a-b', start: 2, end: 2 })
+    expect(typed(`ז'ב`)).toEqual({ value: 'ז׳ב', start: 3, end: 3 })
+    expect(typed(`a${String.fromCharCode(0x200f)}b`, 2)).toEqual({ value: 'ab', start: 1, end: 1 })
+    expect(typedFileName('a?b?c', 1, 4)).toEqual({ value: 'a-b-c', start: 1, end: 4 })
+    // Spaces and dots at the ends are left alone while typing.
+    expect(typed('report. ').value).toBe('report. ')
+  })
+
+  it('lets a " typed after a Hebrew letter wait for the next letter', () => {
+    expect(typed('בע"').value).toBe('בע"')
+    expect(typed('בע"מ').value).toBe('בע״מ')
+    // Typed in the middle of the name, before " (עותק)".
+    expect(typed('בע" (עותק)', 3).value).toBe('בע" (עותק)')
+    expect(typed('בע"מ (עותק)', 4).value).toBe('בע״מ (עותק)')
+    // Anywhere else it becomes what it will be.
+    expect(typed('בע" (עותק)').value).toBe('בע- (עותק)')
+    expect(typed('Say "').value).toBe('Say -')
+  })
+
+  it('keeps a quote typed around Hebrew words, and a geresh typed inside one', () => {
+    expect(typed(`טופס '`).value).toBe(`טופס '`)
+    expect(typed(`טופס 'הצהרת בריאות'`).value).toBe(`טופס 'הצהרת בריאות'`)
+    expect(typed(`טופס ('טיוטה'`).value).toBe(`טופס ('טיוטה'`)
+    // Closing the quote, until the next letter shows it's inside a word.
+    expect(typed(`'ז'`).value).toBe(`'ז'`)
+    expect(typed(`'ז'ב`)).toEqual({ value: `'ז׳ב`, start: 4, end: 4 })
+    // A geresh too waits for what follows it.
+    expect(typed(`ז'`)).toEqual({ value: `ז'`, start: 2, end: 2 })
+    expect(typeAt('', 0, `ג'ורג' מס' 2`).value).toBe('ג׳ורג׳ מס׳ 2')
+  })
+
+  it('lets a quote typed in front of a name wait for what is typed after it', () => {
+    // The letter already after the caret doesn't make a closing quote a geresh or a gershayim.
+    expect(typeAt('טופס 101', 0, `'טיוטה' `)).toEqual({ value: `'טיוטה' טופס 101`, start: 8, end: 8 })
+    expect(typeAt('טופס 101', 0, `"סופי" `)).toEqual({ value: '-סופי- טופס 101', start: 7, end: 7 })
+    // The same as when they're typed in order.
+    expect(typeAt('', 0, `'טיוטה' טופס 101`).value).toBe(`'טיוטה' טופס 101`)
+    expect(typeAt('', 0, `"סופי" טופס 101`).value).toBe('-סופי- טופס 101')
+    // And as the file gets them.
+    expect(finalFileName(`'טיוטה' טופס 101`, 'x.pdf')).toBe(`'טיוטה' טופס 101.pdf`)
+    expect(finalFileName(`"סופי" טופס 101`, 'x.pdf')).toBe('סופי- טופס 101.pdf')
+  })
+
+  it('keeps a quoted phrase with a geresh at the end of a word in it as typed', () => {
+    expect(typeAt('', 0, `'רח' הרצל'`).value).toBe(`'רח' הרצל'`)
+    expect(typeAt('', 0, `'ג'ורג' כהן'`).value).toBe(`'ג׳ורג' כהן'`)
   })
 })
 
@@ -162,6 +273,31 @@ describe('fields the export could not write', () => {
     expect(quotedList(['Name', 'City'])).toBe('“Name” and “City”')
     expect(quotedList(['A', 'B', 'C'])).toBe('“A”, “B” and “C”')
     expect(quotedList(['A', 'B', 'C', 'D', 'E'])).toBe('“A”, “B”, “C” and 2 more')
+  })
+
+  it('keeps right-to-left names apart, so their order and quotes hold in the sentence', () => {
+    expect(quotedList(['שם', 'עיר', 'City'])).toBe(`“${bidiIsolate('שם')}”, “${bidiIsolate('עיר')}” and “City”`)
+  })
+})
+
+describe('fields under placed items', () => {
+  const at = (f: FormField, x: number, y: number, width = 160, height = 20): FormField => ({ ...f, widgets: [{ id: `${f.name}-w`, page: 0, rect: { x, y, width, height } }] })
+  const fields = [
+    { ...at(field('applicant.full_name', 'text'), 100, 100), label: 'Full name' },
+    at(field('sig', 'signature'), 100, 200, 160, 40),
+    at(field('city', 'text'), 100, 300),
+  ]
+  const mark = (x: number, y: number): Element => ({ id: `m${x}-${y}`, kind: 'mark', page: 0, x, y, width: 14, height: 14, shape: 'check', color: '#111827' })
+
+  it('lists them by label, in form order', () => {
+    expect(coveredFieldLabels(fields, [mark(150, 210), mark(150, 103)])).toEqual(['Full name', 'Sig'])
+    expect(coveredFieldLabels(fields, [mark(400, 103)])).toEqual([])
+    expect(coveredFieldLabels(fields, [])).toEqual([])
+  })
+
+  it('says they will be flattened even so', () => {
+    expect(coveredFieldsNote(['Signature'])).toBe('“Signature” will still be flattened so what you placed on it stays visible.')
+    expect(coveredFieldsNote(['Full name', 'Signature'])).toBe('“Full name” and “Signature” will still be flattened so what you placed on them stays visible.')
   })
 })
 

@@ -3,7 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { expect, test, type Page } from '@playwright/test'
 import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFString, PDFTextField, type PDFForm, type PDFPage } from 'pdf-lib'
 import { encryptPdf } from '../src/lib/export/testing/fixtures'
-import { formField, gotoHome, openPdf, showPage, trackPageErrors } from './support/app'
+import { SAMPLE_PDF, formField, gotoHome, openPdf, pdfPage, showPage, trackPageErrors } from './support/app'
 import { readPageText } from './support/pdf'
 
 // Form-filling cases from review: what the user sees on screen is what the exported file holds.
@@ -395,6 +395,99 @@ test('a secured form keeps the choices of list box copies whose parent its field
   for (const [name, value] of Object.entries(values)) await expect(onPage(page, name).locator('select')).toHaveValues(value)
   const again = (await downloadFillable(page)).getForm()
   for (const [name, value] of Object.entries(values)) expect(again.getOptionList(name).getSelected()).toEqual(value)
+  expect(errors).toEqual([])
+})
+
+test('a signature in its signature field stays signed in a download that keeps the form fillable', async ({ page }) => {
+  const errors = trackPageErrors(page)
+  await gotoHome(page)
+  await openPdf(page, SAMPLE_PDF)
+  await showPage(page, 0)
+  await onPage(page, 'Full name').locator('input').fill('Dana Levi')
+  await page.getByRole('button', { name: 'Signature: sign here' }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByRole('tab', { name: 'Type' }).click()
+  await dialog.getByLabel('Your full name').fill('Dana Levi')
+  await dialog.getByRole('button', { name: 'Use signature' }).click()
+  await expect(dialog).toBeHidden()
+  await expect(page.getByRole('button', { name: 'Signature: signed — sign again' })).toBeVisible()
+
+  // The empty signature field would cover the signature in other viewers: it is flattened.
+  const bytes = await downloadWith(page, false)
+  const form = (await PDFDocument.load(bytes)).getForm()
+  expect(form.getFieldMaybe('Signature')).toBeUndefined()
+  expect(form.getTextField('Full name').getText()).toBe('Dana Levi')
+
+  // Opened again, nothing asks to sign over the signature.
+  await open(page, 'signed-fillable.pdf', bytes)
+  await expect(onPage(page, 'Full name').locator('input')).toHaveValue('Dana Levi')
+  await expect(page.locator('[data-form-field="Signature"]')).toHaveCount(0)
+  expect(errors).toEqual([])
+})
+
+test('right-to-left values copy from a flattened download as they were typed', async ({ page }) => {
+  const errors = trackPageErrors(page)
+  const bytes = await formPdf((form, pdfPage) => {
+    form.createTextField('Note').addToPage(pdfPage, { x: 60, y: 700, width: 300, height: 24 })
+    form.createTextField('Greeting').addToPage(pdfPage, { x: 60, y: 650, width: 300, height: 24 })
+    const notes = form.createTextField('Notes')
+    notes.enableMultiline()
+    notes.addToPage(pdfPage, { x: 60, y: 540, width: 300, height: 80 })
+    // Auto-sized, as most forms are: pdf-lib bakes sizes of its own into /DA, and would again on save.
+    for (const field of form.getFields()) {
+      field.acroField.setDefaultAppearance('0 g /Helv 0 Tf')
+      form.markFieldAsClean(field.ref)
+    }
+  })
+  await open(page, 'rtl-values.pdf', bytes)
+  await onPage(page, 'Note').locator('input').fill('(לא חובה)')
+  await onPage(page, 'Greeting').locator('input').fill('שָׁלוֹם (לא חובה)')
+  await onPage(page, 'Notes').locator('textarea').fill('דָּוִד כֹּהֵן (מנהל)\n(הערה) שָׁלוֹם')
+
+  // pdf.js (Firefox's viewer) copies each line as typed: brackets as typed, points after their letter.
+  const flat = await downloadWith(page, true)
+  expect((await readPageText(flat, 0)).map((t) => t.str)).toEqual(['(לא חובה)', 'שָׁלוֹם (לא חובה)', 'דָּוִד כֹּהֵן (מנהל)', '(הערה) שָׁלוֹם'])
+  expect(errors).toEqual([])
+})
+
+test("the sample's Country box is one drop-down, from edge to edge", async ({ page }) => {
+  const errors = trackPageErrors(page)
+  await gotoHome(page)
+  await openPdf(page, SAMPLE_PDF)
+  await showPage(page, 0)
+  const country = onPage(page, 'Country')
+  await country.scrollIntoViewIfNeeded()
+  const box = await country.boundingBox()
+  const pageBox = await (await pdfPage(page, 0)).boundingBox()
+  expect(box && pageBox).toBeTruthy()
+  // In points of the A4 page: the box the page draws runs from 48 to 289.64.
+  const pt = pageBox!.width / 595.28
+  expect((box!.x - pageBox!.x) / pt).toBeCloseTo(48, 0)
+  expect((box!.x + box!.width - pageBox!.x) / pt).toBeCloseTo(289.64, 0)
+  // Its right end, where the page used to draw an arrow of its own, opens the list too (clicked
+  // once the toast over the tool dock that counts the fields no longer covers it).
+  await country.click({ position: { x: (276.6 - 48) * pt, y: box!.height / 2 } })
+  await expect(country.locator('select')).toBeFocused()
+  await page.keyboard.press('Escape')
+  expect(errors).toEqual([])
+})
+
+test('fields that keep their label on the field, not on its widgets, are named by it', async ({ page }) => {
+  const errors = trackPageErrors(page)
+  const bytes = await formPdf((form, p) => {
+    // As pdf-lib writes every field, and Acrobat radio groups: the widgets are separate kids.
+    const agree = form.createRadioGroup('grp_c')
+    agree.addOptionToPage('yes', p, { x: 50, y: 700, width: 14, height: 14 })
+    agree.addOptionToPage('no', p, { x: 100, y: 700, width: 14, height: 14 })
+    agree.acroField.dict.set(PDFName.of('TU'), PDFHexString.fromText('Do you agree?'))
+    const name = form.createTextField('fld_a')
+    name.addToPage(p, { x: 50, y: 650, width: 200, height: 20 })
+    name.acroField.dict.set(PDFName.of('TU'), PDFHexString.fromText('שם פרטי'))
+  })
+  await open(page, 'labels-on-fields.pdf', bytes)
+  await expect(onPage(page, 'fld_a').locator('input')).toHaveAttribute('aria-label', 'שם פרטי')
+  await expect(onPage(page, 'grp_c')).toHaveCount(2)
+  await expect(onPage(page, 'grp_c').first()).toHaveAttribute('aria-label', 'Do you agree?: yes')
   expect(errors).toEqual([])
 })
 

@@ -45,6 +45,7 @@ export function setTextStyle(patch: TextStylePatch, coalesce?: string): void {
   if (patch.fontSize !== undefined) defaults.fontSize = patch.fontSize
   if (patch.bold !== undefined) defaults.bold = patch.bold
   if (patch.color !== undefined) defaults.color = patch.color
+  if (patch.align !== undefined) defaults.align = patch.align
   if (Object.keys(defaults).length) useEditor.getState().setStyle('text', defaults)
 }
 

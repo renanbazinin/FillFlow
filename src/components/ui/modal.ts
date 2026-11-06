@@ -1,4 +1,4 @@
-import { toast } from 'sonner'
+import { dismissPassingToasts } from './toasts'
 
 /*
  * Behaviour shared by our modals (Dialog, Sheet and ConfirmHost). They open from app state, not
@@ -7,14 +7,23 @@ import { toast } from 'sonner'
  * caller's own handlers.
  */
 
+/**
+ * Matches an open overlay that owns the keyboard: a dialog (popovers and sheets are dialogs too),
+ * an alert dialog or a menu. App-wide keys, paste and drops leave the page alone while one is up.
+ */
+export const OPEN_OVERLAY = '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"], [role="menu"][data-state="open"]'
+
 /** What had focus when a modal opened, keyed by the modal's content element. */
 const openers = new WeakMap<EventTarget, HTMLElement>()
 
-/** On open: remember the opener and clear passing toasts. */
+/**
+ * On open: remember the opener, and clear the passing toasts, which float above modals and would
+ * cover them (errors stay up, as do the messages that stay until acted on).
+ */
 export function onModalOpen(e: Event): void {
   const opener = focusOwner()
   if (e.target && opener) openers.set(e.target, opener)
-  dismissPassingToasts()
+  dismissPassingToasts({ keepErrors: true })
 }
 
 /** What has focus; for a menu item (it goes away with its menu), the button that opened the menu. */
@@ -43,11 +52,4 @@ export function onModalClose(e: Event): void {
 /** A press on a toast (they float above modals) is meant for the toast, not to dismiss the modal. */
 export function isToastTarget(e: Event): boolean {
   return e.target instanceof Element && e.target.closest('[data-sonner-toast]') !== null
-}
-
-/** Toasts float above modals and would cover them: clear the passing ones. Errors stay up. */
-function dismissPassingToasts(): void {
-  for (const t of toast.getToasts()) {
-    if (!('type' in t && t.type === 'error')) toast.dismiss(t.id)
-  }
 }

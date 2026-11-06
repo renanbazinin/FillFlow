@@ -9,9 +9,11 @@ import type {
   MarkElement,
   MarkShape,
   Point,
+  Rect,
   ShapeElement,
   ShapeType,
   StyleDefaults,
+  TextAlign,
   TextElement,
 } from './types'
 
@@ -37,7 +39,7 @@ export const MARK_PATHS: Record<MarkShape, string> = {
 export const INK_COLORS = ['#111827', '#1d4ed8', '#c81e1e', '#047857', '#7c3aed', '#ffffff'] as const
 
 export const DEFAULT_STYLES: StyleDefaults = {
-  text: { fontId: 'sans', fontSize: 12, color: '#111827', bold: false },
+  text: { fontId: 'sans', fontSize: 12, color: '#111827', bold: false, align: 'left' },
   mark: { color: '#111827', size: 14 },
   shape: { strokeColor: '#c81e1e', fillColor: null, strokeWidth: 1.5 },
   ink: { color: '#1d4ed8', strokeWidth: 2 },
@@ -76,7 +78,7 @@ export function createTextElement(
     lineHeight: TEXT_LINE_HEIGHT,
     letterSpacing: 0,
   }
-  const layout = layoutTextBlock(text, base, 'left', measure)
+  const layout = layoutTextBlock(text, base, style.align, measure)
   return {
     id: createId(),
     kind: 'text',
@@ -87,10 +89,13 @@ export function createTextElement(
     height: layout.height,
     text,
     color: style.color,
-    align: 'left',
+    align: style.align,
     ...base,
   }
 }
+
+/** Where a text block is anchored across its width, by alignment: the part that stays put as it grows. */
+export const TEXT_ANCHOR: Record<TextAlign, number> = { left: 0, center: 0.5, right: 1 }
 
 /** Re-measures a text element after a text/style change, keeping its anchor edge for the alignment. */
 export function withTextLayout(el: TextElement, measure?: TextMeasurer): TextElement {
@@ -99,6 +104,25 @@ export function withTextLayout(el: TextElement, measure?: TextMeasurer): TextEle
   if (el.align === 'center') x = el.x + (el.width - layout.width) / 2
   else if (el.align === 'right') x = el.x + el.width - layout.width
   return { ...el, x, width: layout.width, height: layout.height }
+}
+
+/**
+ * Keeps a text block that was laid out again (typed into, restyled) inside its page, as moving
+ * and resizing do: it moves away from an edge it grows into, and sticks out past an edge only as
+ * far as it already did (`before`). A block too big for the page keeps its top and the side it
+ * grows from (by its alignment) on the page; the rest is cut at the page edge, on screen as in
+ * the export.
+ */
+export function keepTextInPage(el: TextElement, before: Rect, page: { width: number; height: number }): TextElement {
+  const x = fitSpan(el.x, el.width, Math.min(0, before.x), Math.max(page.width, before.x + before.width), TEXT_ANCHOR[el.align])
+  const y = fitSpan(el.y, el.height, Math.min(0, before.y), Math.max(page.height, before.y + before.height), 0)
+  return x === el.x && y === el.y ? el : { ...el, x, y }
+}
+
+/** Start of a span of `size` moved inside [min, max]; a longer one keeps its anchor (0 start, 1 end) on the bound. */
+function fitSpan(start: number, size: number, min: number, max: number, anchor: number): number {
+  if (size > max - min) return min + (max - min - size) * anchor
+  return Math.min(Math.max(start, min), max - size)
 }
 
 /** `center` is the mark's center point. */
@@ -208,9 +232,29 @@ export function formatDate(date: Date, format: DateFormat): string {
 
 export const DATE_FORMATS: DateFormat[] = ['dd/MM/yyyy', 'MM/dd/yyyy', 'yyyy-MM-dd', 'dd.MM.yyyy', 'd MMM yyyy', 'MMMM d, yyyy']
 
-/** Locale-appropriate default date format. */
-export function defaultDateFormat(locale = typeof navigator !== 'undefined' ? navigator.language : 'en-GB'): DateFormat {
-  return /^en-US|^en-PH|^fil/i.test(locale) ? 'MM/dd/yyyy' : 'dd/MM/yyyy'
+/** The browser's languages, most preferred first. */
+function browserLanguages(): readonly string[] {
+  if (typeof navigator === 'undefined') return ['en-GB']
+  return navigator.languages?.length ? navigator.languages : [navigator.language ?? '']
+}
+
+/** The device's time zone (IANA name), or '' when it can't be told. */
+function localTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone ?? ''
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * Locale-appropriate default date format: month first only for US-style English and Filipino
+ * browsers, and not for people who also read Hebrew or Arabic, or who are in Israel. Many there
+ * run their browser in US English (Chrome reports its own language) but write dates day first.
+ */
+export function defaultDateFormat(languages: readonly string[] = browserLanguages(), timeZone: string = localTimeZone()): DateFormat {
+  if (languages.some((l) => /^(he|iw|ar)\b/i.test(l)) || /^(Asia\/(Jerusalem|Tel_Aviv|Hebron|Gaza)|Israel)$/.test(timeZone)) return 'dd/MM/yyyy'
+  return /^(en-US|en-PH|fil)\b/i.test(languages[0] ?? '') ? 'MM/dd/yyyy' : 'dd/MM/yyyy'
 }
 
 /** Short human label for lists ("“John Smith”", "Checkmark", "Signature"…). */

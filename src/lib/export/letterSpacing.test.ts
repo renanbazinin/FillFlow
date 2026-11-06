@@ -53,7 +53,7 @@ describe('exportPdf: letter spacing', () => {
     const b = inkBox(after.raster, 0, 110, 500, 40)!
     expect(b.x).toBeCloseTo(a.x, 1)
     expect(b.width).toBeCloseTo(a.width, 1)
-    // Spacing is part of the glyph positioning; character spacing (Tc) is never set.
+    // Spacing is part of the glyphs' widths; character spacing (Tc) is never set.
     expect(after.ops).not.toContain(pdfjs.OPS.setCharSpacing)
   })
 

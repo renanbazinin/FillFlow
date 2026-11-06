@@ -10,6 +10,7 @@ import { ItemsEmptyState } from './items/ItemsEmptyState'
 import { ItemThumb } from './items/ItemThumb'
 import { groupByPage, rangeIds } from './items/groups'
 import { closePanelOnSmallScreens } from './items/panel'
+import { usePdfDirections } from './items/pdfDirection'
 import { deleteElements, revealElement, setLocked } from './state/commands'
 import { editText, finishActiveTextEdit } from './state/textEdit'
 import { clearHovered, setHovered } from './state/ui'
@@ -17,30 +18,37 @@ import { clearHovered, setHovered } from './state/ui'
 /**
  * Right-panel "Items" tab: everything placed on the document, grouped by page in reading order.
  * Click selects and scrolls to an item (Shift/Ctrl/⌘ extend), hovering highlights it on the
- * page, double-clicking a text item edits it.
+ * page, double-clicking a text item edits it (from the keyboard: Enter once it's selected, or F2).
  */
 export function ItemsPanel() {
   const elements = useEditor((s) => s.elements)
   const selection = useEditor((s) => s.selection)
-  const groups = useMemo(() => groupByPage(elements), [elements])
+  const pdf = useEditor((s) => s.doc?.pdf ?? null)
+  const pages = useMemo(() => [...new Set(elements.map((e) => e.page))].sort((a, b) => a - b), [elements])
+  // Which way each page reads (a Hebrew form right to left) by the PDF's own text, as it's read.
+  const pdfDirections = usePdfDirections(pdf, pages)
+  const groups = useMemo(() => groupByPage(elements, pdfDirections), [elements, pdfDirections])
   const selected = useMemo(() => new Set(selection), [selection])
   const anchor = useRef<string | null>(null)
 
   // Stable callbacks keep the memoized rows from re-rendering while items move.
-  const pick = useCallback((el: Element, e: MouseEvent) => {
-    finishActiveTextEdit()
-    const s = useEditor.getState()
-    if (e.shiftKey && anchor.current) {
-      const order = groupByPage(s.elements).flatMap((g) => g.items.map((x) => x.id))
-      s.select(rangeIds(order, anchor.current, el.id))
-    } else if (e.metaKey || e.ctrlKey) s.select([el.id], 'toggle')
-    else s.select([el.id])
-    anchor.current = el.id
-    if (!e.shiftKey && !e.metaKey && !e.ctrlKey) {
-      revealElement(el)
-      closePanelOnSmallScreens()
-    }
-  }, [])
+  const pick = useCallback(
+    (el: Element, e: MouseEvent) => {
+      finishActiveTextEdit()
+      const s = useEditor.getState()
+      if (e.shiftKey && anchor.current) {
+        const order = groupByPage(s.elements, pdfDirections).flatMap((g) => g.items.map((x) => x.id))
+        s.select(rangeIds(order, anchor.current, el.id))
+      } else if (e.metaKey || e.ctrlKey) s.select([el.id], 'toggle')
+      else s.select([el.id])
+      anchor.current = el.id
+      if (!e.shiftKey && !e.metaKey && !e.ctrlKey) {
+        revealElement(el)
+        closePanelOnSmallScreens()
+      }
+    },
+    [pdfDirections],
+  )
 
   const edit = useCallback((el: Element) => {
     if (el.kind !== 'text') return
@@ -152,7 +160,7 @@ const ItemRow = memo(function ItemRow({
     <li
       data-item-id={el.id}
       className={cn(
-        'group relative flex h-10 items-center rounded-lg transition-colors',
+        'group relative flex h-10 items-center rounded-lg transition-colors pointer-coarse:h-12',
         selected ? 'bg-accent-soft' : 'hover:bg-surface-3',
       )}
       onPointerEnter={(e) => e.pointerType !== 'touch' && setHovered(el.id)}
@@ -165,6 +173,14 @@ const ItemRow = memo(function ItemRow({
         title={el.kind === 'text' ? 'Click to select · double-click to edit' : undefined}
         onClick={(e) => onPick(el, e)}
         onDoubleClick={() => onEdit(el)}
+        onKeyDown={(e) => {
+          if (el.kind !== 'text' || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return
+          // The first Enter selects (a click); the next one edits, like Enter on the page.
+          if (e.key === 'F2' || (e.key === 'Enter' && selected)) {
+            e.preventDefault()
+            onEdit(el)
+          }
+        }}
         onFocus={() => setHovered(el.id)}
         onBlur={() => clearHovered(el.id)}
         className="flex h-full min-w-0 flex-1 items-center gap-2.5 rounded-lg pl-2 pr-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset"
@@ -175,7 +191,8 @@ const ItemRow = memo(function ItemRow({
         </span>
         {el.locked && <Lock aria-label="Locked" className="size-3.5 shrink-0 text-fg-subtle group-focus-within:hidden group-hover:hidden pointer-coarse:hidden" />}
       </button>
-      <div className="hidden shrink-0 items-center gap-0.5 pr-1 group-focus-within:flex group-hover:flex pointer-coarse:flex">
+      {/* Always shown on touch, spaced so a slightly-off tap on one can't land on the other. */}
+      <div className="hidden shrink-0 items-center gap-0.5 pr-1 group-focus-within:flex group-hover:flex pointer-coarse:flex pointer-coarse:gap-2">
         <IconButton
           size="icon-xs"
           label={el.locked ? 'Unlock' : 'Lock'}

@@ -4,6 +4,7 @@ import {
   PDFHexString,
   PDFName,
   PDFNumber,
+  PDFRef,
   PDFStream,
   StandardFonts,
   adjustDimsForRotation,
@@ -39,7 +40,8 @@ import {
   type PDFWidgetAnnotation,
 } from 'pdf-lib'
 import type { TextAlign } from '../../../model/types'
-import { baseDirection, bidiParagraph, visualOrder, type Direction } from './bidi'
+import { encodeTyped } from '../../export/subsetFont'
+import { baseDirection, bidiParagraph, visualOrder, type Direction, type VisualLine } from './bidi'
 import {
   FIELD_LINE_HEIGHT,
   combLayout,
@@ -70,11 +72,19 @@ export interface FontTools {
   font: PDFFont
   /** Advance width of `text` at `size`, summing per-character advances (no kerning). */
   width(text: string, size: number): number
-  /** Encodes visual-order text one code point at a time (so fontkit never reorders it). */
-  encode(text: string): PDFHexString
+  /**
+   * Encodes one run in visual order (a line, a list label or a comb cell) so that it draws
+   * `run.shown` as it is (fontkit never reorders it) and copies as `run.typed`.
+   */
+  encode(run: VisualLine): PDFHexString
 }
 
-function fontTools(font: PDFFont): FontTools {
+/**
+ * `asTyped`: the Unicode font, which encodes whole runs with encodeTyped: brackets drawn mirrored
+ * copy as typed, and each right-to-left letter goes after its points (it needs their cluster). The
+ * standard fonts (WinAnsi, never right-to-left) encode one code point at a time.
+ */
+function fontTools(font: PDFFont, asTyped = false): FontTools {
   const widths = new Map<string, number>()
   const codes = new Map<string, string>()
   const charWidth = (ch: string) => {
@@ -96,9 +106,10 @@ function fontTools(font: PDFFont): FontTools {
       for (const ch of text) w += charWidth(ch)
       return w * size
     },
-    encode(text) {
+    encode({ shown, typed }) {
+      if (asTyped) return encodeTyped(font, shown, typed)
       let hex = ''
-      for (const ch of text) {
+      for (const ch of shown) {
         let code = codes.get(ch)
         if (code === undefined) {
           try {
@@ -211,8 +222,8 @@ function backgroundAndBorder(b: BorderInfo, w: number, h: number): PDFOperator[]
   return ops
 }
 
-interface Run {
-  text: string
+/** A line, list label or comb cell in visual order, and where it is drawn. */
+interface Run extends VisualLine {
   x: number
   /** Baseline, from the bottom of the frame. */
   y: number
@@ -228,10 +239,10 @@ function textBlock(tools: FontTools, size: number, color: Color, runs: Run[], w:
     endPath(),
     ...extra,
   ]
-  const drawn = runs.filter((r) => r.text)
+  const drawn = runs.filter((r) => r.shown)
   if (drawn.length) {
     ops.push(beginText(), setFontAndSize(tools.font.name, size), setFillingColor(color))
-    for (const r of drawn) ops.push(setTextMatrix(1, 0, 0, 1, r.x, r.y), showText(tools.encode(r.text)))
+    for (const r of drawn) ops.push(setTextMatrix(1, 0, 0, 1, r.x, r.y), showText(tools.encode(r)))
     ops.push(endText())
   }
   ops.push(popGraphicsState(), endMarkedContent())
@@ -285,7 +296,7 @@ export class AppearanceFonts {
 
   async for(texts: string[], mono = false): Promise<FontTools> {
     if (texts.every((t) => this.isWinAnsi(t))) return this.standard(mono)
-    return (this.unicode ??= this.getUnicodeFont().then(fontTools))
+    return (this.unicode ??= this.getUnicodeFont().then((font) => fontTools(font, true)))
   }
 }
 
@@ -302,6 +313,21 @@ export function textRotation(widget: PDFWidgetAnnotation, pageRotation: Rotation
   const { width, height } = widget.getRectangle()
   // On a quarter-turned page the viewer sees the box with its sides swapped.
   return Math.abs(height) >= Math.abs(width) ? pageRotation : 0
+}
+
+const MK = PDFName.of('MK')
+
+/**
+ * Sets the widget's /MK /R. Other widgets (other fields, pages rotated otherwise) may share its
+ * /MK by reference: the rotation then goes on a copy of its own, or theirs would be drawn turned.
+ */
+export function setWidgetRotation(widget: PDFWidgetAnnotation, rotation: Rotation): void {
+  const mk = widget.dict.get(MK)
+  if (mk instanceof PDFRef) {
+    const shared = widget.dict.context.lookup(mk)
+    if (shared instanceof PDFDict) widget.dict.set(MK, shared.clone())
+  }
+  widget.getOrCreateAppearanceCharacteristics().setRotation(rotation)
 }
 
 /** Writes `ops` (drawn in the upright frame) as the widget's normal appearance. */
@@ -324,7 +350,7 @@ function setAppearance(doc: PDFDocument, widget: PDFWidgetAnnotation, rotation: 
   // Keep /MK /R in sync so viewers that regenerate appearances also draw upright text.
   const mk = widget.getAppearanceCharacteristics()
   if ((mk?.getRotation() ?? 0) % 360 !== rotation) {
-    if (mk || rotation) widget.getOrCreateAppearanceCharacteristics().setRotation(rotation)
+    if (mk || rotation) setWidgetRotation(widget, rotation)
   }
 }
 
@@ -346,12 +372,16 @@ export async function writeTextAppearance(
   if (spec.comb && spec.maxLength) {
     const text = singleLineText(value).slice(0, spec.maxLength)
     const visual = visualOrder(text, 'ltr')
-    const cells = visual.match(/\P{M}\p{M}*/gu) ?? []
-    const tools = await fonts.for([visual], true)
+    // A cell per character and its marks; `typed` is aligned with `shown`, so it splits alike.
+    const cells: VisualLine[] = [...visual.shown.matchAll(/\P{M}\p{M}*/gu)].map((m) => ({
+      shown: m[0],
+      typed: visual.typed.slice(m.index, m.index + m[0].length),
+    }))
+    const tools = await fonts.for([visual.shown], true)
     setAppearance(doc, widget, rotation, [tools], (w, h) => {
       const { fontSize, cellWidth } = combLayout({ width: w, height: h, fontSize: spec.fontSize, maxLength: spec.maxLength! })
       const y = h - singleLineBaseline(h, fontSize)
-      const runs = cells.map((c, i) => ({ text: c, x: i * cellWidth + (cellWidth - tools.width(c, fontSize)) / 2, y }))
+      const runs = cells.map((c, i) => ({ ...c, x: i * cellWidth + (cellWidth - tools.width(c.shown, fontSize)) / 2, y }))
       return [...backgroundAndBorder(border, w, h), ...textBlock(tools, fontSize, color, runs, w, h, border.width)]
     })
     return
@@ -376,7 +406,7 @@ export async function writeTextAppearance(
         const y = h - multiLineBaseline(i, fontSize, pad)
         if (y < -fontSize) return
         const align = resolveAlign(spec.align, dirs[line.paragraph])
-        runs.push({ text: visual, x: alignedX(align, tools.width(visual, fontSize), w, pad), y })
+        runs.push({ ...visual, x: alignedX(align, tools.width(visual.shown, fontSize), w, pad), y })
       })
       return [...backgroundAndBorder(border, w, h), ...textBlock(tools, fontSize, color, runs, w, h, border.width)]
     })
@@ -387,11 +417,11 @@ export async function writeTextAppearance(
   const text = spec.password ? '*'.repeat([...raw].length) : raw
   const dir = baseDirection(text)
   const visual = visualOrder(text, dir)
-  const tools = await fonts.for([visual])
+  const tools = await fonts.for([visual.shown])
   setAppearance(doc, widget, rotation, [tools], (w, h) => {
     const fontSize = singleLineFontSize(text, { width: w, height: h, fontSize: spec.fontSize, padding: pad }, tools.width)
-    const x = alignedX(resolveAlign(spec.align, dir), tools.width(visual, fontSize), w, pad)
-    const runs = [{ text: visual, x, y: h - singleLineBaseline(h, fontSize) }]
+    const x = alignedX(resolveAlign(spec.align, dir), tools.width(visual.shown, fontSize), w, pad)
+    const runs = [{ ...visual, x, y: h - singleLineBaseline(h, fontSize) }]
     return [...backgroundAndBorder(border, w, h), ...textBlock(tools, fontSize, color, runs, w, h, border.width)]
   })
 }
@@ -440,7 +470,7 @@ export async function writeListAppearance(
       }
       const dir = baseDirection(labels[i])
       const visual = visualOrder(labels[i], dir)
-      runs.push({ text: visual, x: alignedX(resolveAlign(undefined, dir), tools.width(visual, fontSize), w, pad), y: h - multiLineBaseline(row, fontSize, pad) })
+      runs.push({ ...visual, x: alignedX(resolveAlign(undefined, dir), tools.width(visual.shown, fontSize), w, pad), y: h - multiLineBaseline(row, fontSize, pad) })
     }
     return [...backgroundAndBorder(border, w, h), ...textBlock(tools, fontSize, color, runs, w, h, border.width, highlights)]
   })

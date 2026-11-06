@@ -11,6 +11,7 @@ import { FieldRow } from './panel/FieldRow'
 import { FilterDoneState, NoFieldsState, NoRequiredState, XfaNotice } from './panel/PanelStates'
 import { ProgressHeader } from './panel/ProgressHeader'
 import { formIsDirty, formProgress, nextEmptyField, visibleFieldNames, type FieldFilter } from './progress'
+import { useNativeHistoryGuard } from './useField'
 
 async function resetForm(fields: FormField[]) {
   const ok = await confirm({
@@ -35,6 +36,7 @@ function FieldList({ fields }: { fields: FormField[] }) {
   const progress = useEditor(useShallow((s) => formProgress(fields, s.formValues, s.elements)))
   const names = useEditor(useShallow((s) => visibleFieldNames(fields, filter, s.formValues, s.elements, s.activeFieldName)))
   const dirty = useEditor((s) => formIsDirty(fields, s.formValues))
+  useNativeHistoryGuard()
 
   useEffect(() => {
     if (activeName) lastActive.current = activeName

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { FormField, PageInfo } from '../../../model/types'
 import { defaultFormValues, extractFormFields, getFieldExtras, getFormDocumentInfo } from '../formFields'
-import { buildFormFields } from './extract'
+import { buildFormFields, hasStaleAppearance } from './extract'
 import { SAMPLE_ORDER, buildSampleForm, openWithPdfjs } from './testing'
 
 const PAGE: PageInfo = { index: 0, width: 612, height: 792, rotation: 0, view: [0, 0, 612, 792], userUnit: 1 }
@@ -140,6 +140,99 @@ describe('extractFormFields (pdf.js)', () => {
     await raw.loadingTask.destroy()
   })
 
+  it('leaves out fields in a layer that is off, as the page shows them', async () => {
+    const { PDFCheckBox, PDFDocument, PDFHexString, PDFName } = await import('pdf-lib')
+    const doc = await PDFDocument.create()
+    const page = doc.addPage([612, 792])
+    const form = doc.getForm()
+    const layer = (name: string) => doc.context.register(doc.context.obj({ Type: 'OCG', Name: PDFHexString.fromText(name) }))
+    const off = layer('Answer key')
+    const on = layer('Notes')
+    doc.catalog.set(PDFName.of('OCProperties'), doc.context.obj({ OCGs: [off, on], D: { OFF: [off], Order: [off, on] } }))
+    const fields = [
+      ['teacher.key', off],
+      ['teacher.graded', off],
+      ['note', on],
+      ['student.answer', undefined],
+      // Membership dictionaries: shown while any of their layers is on.
+      ['either', doc.context.obj({ Type: 'OCMD', OCGs: [off, on] })],
+      ['only_off', doc.context.obj({ Type: 'OCMD', OCGs: [off] })],
+    ] as const
+    fields.forEach(([name, oc], i) => {
+      const field = name === 'teacher.graded' ? form.createCheckBox(name) : form.createTextField(name)
+      field.addToPage(page, { x: 50, y: 700 - i * 40, width: 200, height: 20 })
+      if (field instanceof PDFCheckBox) field.check()
+      else field.setText(`Value of ${name}`)
+      if (oc) field.acroField.getWidgets()[0].dict.set(PDFName.of('OC'), oc)
+    })
+    const { pdf, raw, pages } = await openWithPdfjs(await doc.save())
+    expect((await extractFormFields(pdf, pages)).map((f) => f.name)).toEqual(['note', 'student.answer', 'either'])
+    await raw.loadingTask.destroy()
+  })
+
+  it('reads labels that fields keep on the field rather than on their widgets', async () => {
+    const { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFString } = await import('pdf-lib')
+    const { encryptPdf } = await import('../../export/testing/fixtures')
+    const doc = await PDFDocument.create()
+    const pages = [doc.addPage([612, 792]), doc.addPage([612, 792])]
+    const form = doc.getForm()
+    const label = (dict: import('pdf-lib').PDFDict, text: string) => dict.set(PDFName.of('TU'), PDFHexString.fromText(text))
+    const at = (y: number, x = 50) => ({ x, y, width: 150, height: 20 })
+    // pdf-lib makes every field with separate widgets, as Acrobat makes radio groups and fields
+    // shown on several pages.
+    const name = form.createTextField('name')
+    for (const page of pages) name.addToPage(page, at(700))
+    label(name.acroField.dict, 'Full legal name')
+    const agree = form.createCheckBox('agree')
+    agree.addToPage(pages[0], { x: 50, y: 650, width: 14, height: 14 })
+    label(agree.acroField.dict, 'I agree to the terms')
+    const citizen = form.createRadioGroup('citizen')
+    for (const [i, option] of ['yes', 'no'].entries()) citizen.addOptionToPage(option, pages[0], { x: 50 + i * 50, y: 600, width: 14, height: 14 })
+    label(citizen.acroField.dict, 'Are you a citizen?')
+    const city = form.createDropdown('city')
+    city.addOptions(['Haifa', 'Eilat'])
+    city.addToPage(pages[0], at(550))
+    label(city.acroField.dict, 'עיר מגורים')
+    // A widget's own label wins.
+    const email = form.createTextField('email')
+    email.addToPage(pages[0], at(500))
+    label(email.acroField.dict, 'Email')
+    label(email.acroField.getWidgets()[0].dict, 'Email address')
+    // A group of fields: its label is not one of the fields in it.
+    const group = doc.context.register(doc.context.obj({ T: PDFString.of('applicant'), TU: PDFString.of('Applicant'), Kids: [] }))
+    const phone = doc.context.register(
+      doc.context.obj({ Type: 'Annot', Subtype: 'Widget', FT: 'Tx', T: PDFString.of('phone'), Parent: group, Rect: [50, 450, 200, 470], F: 4, P: pages[0].ref }),
+    )
+    doc.context.lookup(group, PDFDict).lookup(PDFName.of('Kids'), PDFArray).push(phone)
+    pages[0].node.addAnnot(phone)
+    form.acroForm.addField(group)
+    const bytes = await doc.save()
+
+    const labels = async (file: Uint8Array) => {
+      const { pdf, raw, pages: views } = await openWithPdfjs(file)
+      const fields = await extractFormFields(pdf, views)
+      await raw.loadingTask.destroy()
+      return fields.map((f) => [f.name, f.label ?? null])
+    }
+    expect(await labels(bytes)).toEqual([
+      ['name', 'Full legal name'],
+      ['agree', 'I agree to the terms'],
+      ['citizen', 'Are you a citizen?'],
+      ['city', 'עיר מגורים'],
+      ['email', 'Email address'],
+      ['applicant.phone', null],
+    ])
+    // Encrypted, the field's labels can't be read here: no garbled labels, the widget's own stays.
+    expect(await labels(await encryptPdf(bytes, { owner: 'owner' }))).toEqual([
+      ['name', null],
+      ['agree', null],
+      ['citizen', null],
+      ['city', null],
+      ['email', 'Email address'],
+      ['applicant.phone', null],
+    ])
+  })
+
   it('returns [] for a document without a form', async () => {
     const { PDFDocument } = await import('pdf-lib')
     const doc = await PDFDocument.create()
@@ -244,5 +337,50 @@ describe('buildFormFields', () => {
     )
     expect(f.fontSize).toBe(9)
     expect(getFieldExtras(f).textColor).toBe('#0000ff')
+  })
+
+  it("tells text fields whose own appearance doesn't show their value", () => {
+    // [value, the lines its appearance draws as pdf.js reads them back, other data]
+    const cases: [string, string[] | undefined, Record<string, unknown>?][] = [
+      ['Same', ['Same']],
+      ['A long value wrapped over lines', ['A long value', 'wrapped over lines']],
+      ['123456', ['1 2 3 4 5 6']],
+      // Read back in pdf.js' own order of a line that mixes directions; an invisible mark.
+      ['ת.ז. 123456789', ['123456789 .ת.ז']],
+      ['‏שלום עולם', ['שלום עולם']],
+      ['', undefined],
+      // Shown as typed by a password field, formatted by a script, or redrawn by every viewer.
+      ['secret', ['******'], { password: true }],
+      ['950', ['$950.00'], { actions: new Map([['Format', ['AFNumber_Format(2, 0, 0, 0, "$", true);']]]) }],
+      ['Needs drawing', undefined, { hasAppearance: false }],
+      // Stale:
+      ['$950.00', ['$100.00']],
+      ['John Smith', undefined],
+      ['רחוב הרצל 12, תל אביב', ['רחוב הרצל 21, תל אביב']],
+      ['ת.ז. 123456789', ['987654321 .ת.ז']],
+      ['שלום', ['םולש']],
+      ['€5', ['$5']],
+      // Runs out of order show the value only in a line that mixes directions.
+      ['03/04/2025', ['04/03/2025']],
+      ['Dana Levi', ['Levi Dana']],
+    ]
+    const fields = buildFormFields(
+      [
+        cases.map(([fieldValue, textContent, more], i) =>
+          widget({ id: `${i + 1}R`, fieldName: `f${i}`, fieldType: 'Tx', fieldValue, textContent, hasAppearance: true, rect: [50, 700 - i * 30, 250, 720 - i * 30], ...more }),
+        ),
+      ],
+      [PAGE],
+    )
+    expect(fields.filter(hasStaleAppearance).map((f) => f.defaultValue)).toEqual([
+      '$950.00',
+      'John Smith',
+      'רחוב הרצל 12, תל אביב',
+      'ת.ז. 123456789',
+      'שלום',
+      '€5',
+      '03/04/2025',
+      'Dana Levi',
+    ])
   })
 })

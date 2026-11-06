@@ -14,7 +14,8 @@ import { COMPACT_LAYOUT, useMediaQuery } from './useMediaQuery'
 export const TopBar = memo(function TopBar() {
   const compact = useMediaQuery(COMPACT_LAYOUT)
   return (
-    <header className="relative z-40 flex h-[calc(3.5rem+env(safe-area-inset-top))] shrink-0 items-center gap-1.5 border-b border-line bg-surface/85 pl-2 pr-2 pt-[env(safe-area-inset-top)] backdrop-blur-xl backdrop-saturate-150 sm:gap-2 sm:pl-2.5 sm:pr-3">
+    // The side gutters are at least the screen's safe areas (a phone held sideways: notch, corners).
+    <header className="relative z-40 flex h-[calc(3.5rem+env(safe-area-inset-top))] shrink-0 items-center gap-1.5 border-b border-line bg-surface/85 pl-safe-2 pr-safe-2 pt-[env(safe-area-inset-top)] backdrop-blur-xl backdrop-saturate-150 sm:gap-2 sm:pl-safe-2.5 sm:pr-safe-3">
       <Tooltip content="Back to home" side="bottom" align="start">
         <button
           type="button"

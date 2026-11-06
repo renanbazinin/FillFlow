@@ -1,8 +1,21 @@
 import { writeFile } from 'node:fs/promises'
 import { expect, test, type CDPSession, type Locator, type Page } from '@playwright/test'
 import { PDFDocument, StandardFonts } from 'pdf-lib'
-import { SAMPLE_PDF, clickPagePoint, expectEditing, fillFormField, expectFormFieldValue, gotoHome, openPdf, pdfPage, selectTool, showPage, trackPageErrors } from './support/app'
-import { readViewSizes } from './support/pdf'
+import {
+  SAMPLE_PDF,
+  clickPagePoint,
+  downloadPdf,
+  expectEditing,
+  fillFormField,
+  expectFormFieldValue,
+  gotoHome,
+  openPdf,
+  pdfPage,
+  selectTool,
+  showPage,
+  trackPageErrors,
+} from './support/app'
+import { pageText, readViewSizes } from './support/pdf'
 
 /**
  * Regression tests for placing, selecting and editing items: text editing sessions, selection
@@ -45,6 +58,28 @@ async function openSample(page: Page): Promise<void> {
       return same
     }, { intervals: [250] })
     .toBe(true)
+}
+
+/**
+ * Clicks a point near the bottom of the last page, which can't scroll up to the middle of the
+ * window as `clickPagePoint` wants it: the document is scrolled to its end, where the bottom of
+ * the page is clear of the tool dock.
+ */
+async function clickLastPageBottom(page: Page, index: number, pt: { x: number; y: number }, size: { width: number; height: number }): Promise<void> {
+  const canvas = (await showPage(page, index)).locator('canvas').first()
+  await page.mouse.move(720, 450)
+  let last = ''
+  await expect
+    .poll(async () => {
+      await page.mouse.wheel(0, 2000)
+      const now = `${Math.round((await canvas.boundingBox())?.y ?? 0)}`
+      const same = now === last
+      last = now
+      return same
+    }, { intervals: [250] })
+    .toBe(true)
+  const box = (await canvas.boundingBox())!
+  await page.mouse.click(box.x + (pt.x / size.width) * box.width, box.y + (pt.y / size.height) * box.height)
 }
 
 /** Wheel-scrolls the document until page `index` (0-based) reaches the upper part of the window. */
@@ -272,6 +307,112 @@ test.describe('the items clipboard', () => {
     await expect(other.locator('[data-element-id][data-kind="text"]', { hasText: 'fillflow-items' })).toHaveCount(0)
     expect(errors).toEqual([])
   })
+
+  test('copying a selected text box puts its text on the clipboard; here it pastes as the box again', async ({ page }) => {
+    const errors = trackPageErrors(page)
+    const sizes = await readViewSizes(SAMPLE_PDF)
+    await openSample(page)
+    await selectTool(page, 'Text', 'T')
+    await clickPagePoint(page, 1, { x: 300, y: 300 }, sizes[1])
+    await expectEditing(page)
+    await page.keyboard.type('כהן')
+    await page.keyboard.press('Escape')
+    // Selected, not being edited: Ctrl+C copies the item.
+    await expect(textEditor(page)).toHaveCount(0)
+    await page.evaluate(() =>
+      window.addEventListener('copy', (e) => Object.assign(window, { __copied: e.clipboardData?.getData('text/plain') })),
+    )
+    await page.keyboard.press('ControlOrMeta+c')
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __copied?: string }).__copied)).toBe('כהן')
+
+    // Pasted back in this tab it's the item again…
+    await paste(page, { text: 'כהן' })
+    await expect(page.locator('[data-element-id][data-kind="text"]', { hasText: 'כהן' })).toHaveCount(2)
+    // …and in another tab (or after a reload), the text: a new box (beside the saved work it opens with).
+    const other = await page.context().newPage()
+    await openSample(other)
+    const boxes = other.locator('[data-element-id][data-kind="text"]', { hasText: 'כהן' })
+    const count = await boxes.count()
+    await paste(other, { text: 'כהן' })
+    await expect(boxes).toHaveCount(count + 1)
+    expect(errors).toEqual([])
+  })
+})
+
+test('text that grows at a page edge stays on the page, and the download has all of it', async ({ page }) => {
+  const errors = trackPageErrors(page)
+  const sizes = await readViewSizes(SAMPLE_PDF)
+  await openSample(page)
+  const sheet = await pdfPage(page, 1)
+  const items = page.locator('[data-element-layer="1"] [data-element-id][data-kind="text"]')
+  /** Every text item on page 2 lies within the page on screen. */
+  const expectAllOnPage = async () => {
+    const frame = (await sheet.boundingBox())!
+    for (const box of await items.evaluateAll((els) => els.map((el) => el.getBoundingClientRect().toJSON() as DOMRect))) {
+      expect(box.x).toBeGreaterThanOrEqual(frame.x - 1)
+      expect(box.y).toBeGreaterThanOrEqual(frame.y - 1)
+      expect(box.x + box.width).toBeLessThanOrEqual(frame.x + frame.width + 1)
+      expect(box.y + box.height).toBeLessThanOrEqual(frame.y + frame.height + 1)
+    }
+  }
+
+  // A long answer typed on the right half of the page.
+  await selectTool(page, 'Text', 'T')
+  await clickPagePoint(page, 1, { x: 365, y: 232 }, sizes[1])
+  await expectEditing(page)
+  await page.keyboard.type('Brother-in-law (אח של בן הזוג), lives nearby on Herzl St. 12')
+  await page.keyboard.press('Escape')
+  // A bigger font near the right edge.
+  await selectTool(page, 'Text', 'T')
+  await clickPagePoint(page, 1, { x: 420, y: 300 }, sizes[1])
+  await expectEditing(page)
+  await page.keyboard.type('Size grows')
+  await page.keyboard.press('Escape')
+  const fontSize = page.getByRole('group', { name: 'Font size' }).getByRole('textbox')
+  await fontSize.fill('40')
+  await fontSize.press('Enter')
+  await expect(items.filter({ hasText: 'Size grows' })).toBeVisible()
+  // Lines added at the bottom of the page.
+  await selectTool(page, 'Text', 'T')
+  await clickLastPageBottom(page, 1, { x: 100, y: 800 }, sizes[1])
+  await expectEditing(page)
+  for (let i = 1; i <= 6; i++) await page.keyboard.type(i < 6 ? `Bottom line ${i}\n` : `Bottom line ${i}`)
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('Escape')
+  // A line too long for the page, pasted: it breaks between words.
+  const pasted =
+    'Pasted from an email: please note that the meeting has been moved to Thursday at 10:00 in the large conference room on the third floor, so bring the signed form.'
+  await paste(page, { text: pasted })
+  const block = items.filter({ hasText: 'Pasted from' })
+  await expect(block).toBeVisible()
+  expect((await block.locator('div[dir="auto"]').count()) > 1).toBe(true)
+  await expectAllOnPage()
+
+  const { bytes } = await downloadPdf(page)
+  const text = await pageText(bytes, 1)
+  for (const words of ['Herzl St. 12', 'Size grows', 'Bottom line 1', 'Bottom line 6', 'the signed form.']) expect(text).toContain(words)
+  expect(errors).toEqual([])
+})
+
+test('a line typed wider than the page says, while it is typed, that its end won’t be in the download', async ({ page }) => {
+  const errors = trackPageErrors(page)
+  const sizes = await readViewSizes(SAMPLE_PDF)
+  await openSample(page)
+  const note = page.getByRole('status').filter({ hasText: 'Text past the page edge won’t be in the download' })
+  await selectTool(page, 'Text', 'T')
+  await clickPagePoint(page, 1, { x: 300, y: 400 }, sizes[1])
+  await expectEditing(page)
+  await page.keyboard.type('A line that fits')
+  await expect(note).toHaveCount(0)
+  await page.keyboard.insertText(', and then goes on and on'.repeat(8))
+  await expect(note).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(note).toHaveCount(0)
+  // It starts at the page's left edge, where it is read from; the rest is cut, on screen as in the download.
+  const sheet = (await pdfPage(page, 1)).locator('canvas').first()
+  const item = page.locator('[data-element-layer="1"] [data-element-id][data-kind="text"]')
+  expect(Math.abs((await item.boundingBox())!.x - (await sheet.boundingBox())!.x)).toBeLessThan(1)
+  expect(errors).toEqual([])
 })
 
 test('Escape that cancels an IME composition keeps the text edit open', async ({ page }) => {

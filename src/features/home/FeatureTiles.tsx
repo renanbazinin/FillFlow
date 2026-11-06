@@ -26,7 +26,11 @@ const FEATURES: { icon: LucideIcon; title: string; body: string }[] = [
 
 export function FeatureTiles({ className }: { className?: string }) {
   return (
-    <section aria-label="Why FillFlow" className={className}>
+    <section aria-labelledby="ff-features-title" className={className}>
+      {/* The tiles' headings sit under this one, not under whatever section comes before. */}
+      <h2 id="ff-features-title" className="sr-only">
+        Why FillFlow
+      </h2>
       <ul className="grid gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
         {FEATURES.map(({ icon: Icon, title, body }, i) => (
           <li

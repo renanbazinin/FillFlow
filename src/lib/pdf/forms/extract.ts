@@ -37,6 +37,14 @@ export interface WidgetAnnotationData {
   options?: { exportValue?: unknown; displayValue?: unknown }[]
   combo?: boolean
   multiSelect?: boolean
+  /** The widget has an appearance (or the file asks viewers to draw one). */
+  hasAppearance?: boolean
+  /** Text fields: the lines of text its appearance draws (none when it draws no text). */
+  textContent?: string[]
+  /** Scripts by trigger ("Format", "Keystroke"…): a Map in pdf.js 6. */
+  actions?: unknown
+  /** The optional content (layer) the widget is in. */
+  oc?: unknown
 }
 
 /** pdf.js AnnotationType.WIDGET */
@@ -64,6 +72,56 @@ const NO_EXTRAS: FieldExtras = {}
 
 export function getFieldExtras(field: FormField): FieldExtras {
   return extrasByField.get(field) ?? NO_EXTRAS
+}
+
+const staleFields = new WeakSet<FormField>()
+
+/**
+ * Whether the PDF's own appearance of a text field shows something other than its value (a tool
+ * stored /V without redrawing it, or drew right-to-left text in the wrong order). The editor
+ * shows the value, so the export redraws such appearances.
+ */
+export function hasStaleAppearance(field: FormField): boolean {
+  return staleFields.has(field)
+}
+
+function hasScript(actions: unknown, trigger: string): boolean {
+  if (actions instanceof Map) return actions.has(trigger)
+  return !!actions && typeof actions === 'object' && trigger in actions
+}
+
+/** Runs of right-to-left letters, and of other letters and digits. */
+const RUN = /[\p{Script=Hebrew}\p{Script=Arabic}]+|[^\s\p{P}\p{S}\p{Script=Hebrew}\p{Script=Arabic}]+/gu
+const RTL = /[\p{Script=Hebrew}\p{Script=Arabic}]/u
+
+/**
+ * Whether text an appearance draws, as pdf.js reads it back, shows `value`. It is laid out in
+ * lines, cells or runs, so spaces (and invisible marks such as RLM) don't count. And pdf.js reads
+ * a line that mixes directions back in an order of its own ("123456789 .ת.ז" for "ת.ז. 123456789"),
+ * so there its runs may come in any order, but not what is in them: digits drawn reversed ("21"
+ * for "12") don't show the value. Text without right-to-left letters is read back in order:
+ * "04/03/2025" doesn't show "03/04/2025".
+ */
+function showsText(shown: string, value: string): boolean {
+  const [a, b] = [shown, value].map((s) => s.normalize('NFKC').replace(/\p{Cf}/gu, ''))
+  const squash = (s: string) => s.replace(/\s+/g, '')
+  if (squash(a) === squash(b)) return true
+  if (!RTL.test(a + b)) return false
+  const chars = (s: string) => [...squash(s)].sort().join('')
+  const runs = (s: string) => (s.match(RUN) ?? []).sort().join(' ')
+  return chars(a) === chars(b) && runs(a) === runs(b)
+}
+
+/**
+ * Whether a text widget's appearance doesn't show its value. pdf.js reports the text it draws
+ * (none for a blank one; none either when the file asks viewers to redraw appearances, which the
+ * export then does for every field). Password fields never show their value, and formatted ones
+ * (a /AA /F script) show it formatted.
+ */
+function staleText(a: WidgetAnnotationData): boolean {
+  if (!a.hasAppearance || a.password || hasScript(a.actions, 'Format')) return false
+  const shown = Array.isArray(a.textContent) ? a.textContent.join('\n') : ''
+  return !showsText(shown, normalizeText(a.fieldValue))
 }
 
 export type QuarterTurn = 0 | 90 | 180 | 270
@@ -149,7 +207,7 @@ function validRect(r: number[] | undefined): r is number[] {
   return Array.isArray(r) && r.length === 4 && r.every((n) => Number.isFinite(n))
 }
 
-function startField(name: string, type: FormFieldType, a: WidgetAnnotationData): Accumulator {
+function startField(name: string, type: FormFieldType, a: WidgetAnnotationData, label: string | undefined): Accumulator {
   const field: FormField = {
     name,
     type,
@@ -158,7 +216,6 @@ function startField(name: string, type: FormFieldType, a: WidgetAnnotationData):
     required: !!a.required,
     defaultValue: '',
   }
-  const label = a.alternativeText?.trim()
   if (label) field.label = label
   const fontSize = a.defaultAppearanceData?.fontSize
   if (type === 'text') {
@@ -201,6 +258,13 @@ export interface BuildOptions {
   signedIds?: ReadonlySet<string>
   /** Annotation id → id of the field it belongs to (pdf.js field objects' kidIds), when known. */
   parentOf?: ReadonlyMap<string, string>
+  /** Whether optional content (pdf.js' `oc` of a widget) is hidden when the document opens. */
+  hiddenLayer?: (oc: unknown) => boolean
+  /**
+   * Annotation id → label (/TU) of the field a widget belongs to. pdf.js reads labels from the
+   * widget only, but a field with separate widgets keeps its own on the field.
+   */
+  tooltipOf?: ReadonlyMap<string, string>
 }
 
 /**
@@ -224,6 +288,25 @@ function distinguishRepeatedValues(acc: Accumulator, parentOf: ReadonlyMap<strin
     w.label = value
     w.exportValue = key
   }
+}
+
+/** Whether some fillable widget has no label of its own (its field may have one, see `tooltipOf`). */
+export function lacksLabels(annotationsByPage: readonly (readonly unknown[])[]): boolean {
+  return annotationsByPage.some(
+    (annotations) =>
+      Array.isArray(annotations) &&
+      annotations.some((raw) => {
+        const a = raw as WidgetAnnotationData | null
+        if (!a || (a.annotationType !== WIDGET && a.subtype !== 'Widget') || a.hidden) return false
+        const type = kindOf(a)
+        return !!type && type !== 'button' && !a.alternativeText?.trim()
+      }),
+  )
+}
+
+/** Whether some widget is in optional content (a layer), which may be hidden. */
+export function usesLayers(annotationsByPage: readonly (readonly unknown[])[]): boolean {
+  return annotationsByPage.some((annotations) => Array.isArray(annotations) && annotations.some((raw) => !!(raw as WidgetAnnotationData | null)?.oc))
 }
 
 /** Whether some radio group repeats an export value (telling its buttons apart needs the field tree). */
@@ -259,6 +342,8 @@ export function buildFormFields(
       const a = raw as WidgetAnnotationData
       if (a.annotationType !== WIDGET && a.subtype !== 'Widget') continue
       if (a.hidden) continue
+      // In a layer that is off: the page doesn't show it, here or in other viewers.
+      if (a.oc && opts.hiddenLayer?.(a.oc)) continue
       const type = kindOf(a)
       if (!type || type === 'button') continue
       if (!validRect(a.rect)) continue
@@ -270,8 +355,9 @@ export function buildFormFields(
       // Already signed (digitally): nothing to fill, and no "Sign here" over a real signature.
       if (type === 'signature' && opts.signedIds?.has(id)) continue
       const name = a.fieldName?.trim() ? a.fieldName : `(unnamed ${id})`
+      const label = a.alternativeText?.trim() || opts.tooltipOf?.get(id)?.trim()
       let acc = byName.get(name)
-      if (!acc) byName.set(name, (acc = startField(name, type, a)))
+      if (!acc) byName.set(name, (acc = startField(name, type, a, label)))
       const { field } = acc
       // A corrupt file may reuse a name for different kinds of fields; keep the first kind.
       const sameKind = field.type === type || (field.type === 'checkbox' && type === 'radio') || (field.type === 'radio' && type === 'checkbox')
@@ -290,7 +376,8 @@ export function buildFormFields(
         const v = asString(a.fieldValue)
         if (v !== null && v !== 'Off' && acc.selected === null) acc.selected = v
       }
-      if (!field.label && a.alternativeText?.trim()) field.label = a.alternativeText.trim()
+      if (!field.label && label) field.label = label
+      if (type === 'text' && staleText(a)) staleFields.add(field)
       field.widgets.push(widget)
     }
   })

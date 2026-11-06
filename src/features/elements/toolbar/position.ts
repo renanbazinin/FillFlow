@@ -43,6 +43,22 @@ export function placeToolbar(
   return { x, y, side }
 }
 
+export type PopoverSide = 'top' | 'bottom'
+
+/**
+ * Which way the toolbar's popovers open: away from the selection, so it stays in sight while it's
+ * styled. A bar pinned over the selection opens them toward the roomier side.
+ */
+export function popoverSide(placement: ToolbarPlacement, barHeight: number, bounds: ClientBox): PopoverSide {
+  if (placement.side !== 'inside') return placement.side
+  return placement.y - bounds.top > bounds.bottom - (placement.y + barHeight) ? 'top' : 'bottom'
+}
+
+/** Whether something `height` tall fits above or below `span` (a toolbar button and the selection) within `bounds`. */
+export function fitsAboveOrBelow(span: { top: number; bottom: number }, height: number, bounds: { top: number; bottom: number }): boolean {
+  return span.top - height >= bounds.top || span.bottom + height <= bounds.bottom
+}
+
 export function intersectBoxes(a: ClientBox, b: ClientBox): ClientBox {
   return { left: Math.max(a.left, b.left), top: Math.max(a.top, b.top), right: Math.min(a.right, b.right), bottom: Math.min(a.bottom, b.bottom) }
 }

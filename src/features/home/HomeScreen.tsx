@@ -16,7 +16,8 @@ export function HomeScreen() {
   return (
     <div data-home-scroll className="relative h-full overflow-y-auto overflow-x-hidden bg-canvas scrollbar-thin">
       <Backdrop />
-      <div className="relative mx-auto flex min-h-full max-w-6xl flex-col px-4 sm:px-6 lg:px-8">
+      {/* The side gutters are at least the screen's safe areas (a phone held sideways: notch, corners). */}
+      <div className="relative mx-auto flex min-h-full max-w-6xl flex-col px-safe-4 sm:px-safe-6 lg:px-safe-8">
         <HomeHeader />
         <main className="flex-1 pb-16">
           <Hero />
@@ -50,7 +51,11 @@ function Hero() {
       </a>
       <h1 className="mt-6 font-display text-[44px] leading-[1.02] tracking-[-0.015em] text-fg text-balance animate-slide-up [animation-delay:60ms] [animation-fill-mode:both] min-[400px]:text-[50px] sm:mt-7 sm:text-[68px] lg:text-[76px]">
         Fill &amp; sign any PDF, <br className="max-sm:hidden" />
-        <em className="text-brand-gradient pr-[0.06em] italic [box-decoration-break:clone]">right in your browser.</em>
+        {/* On the light canvas the logo's bright teal is too faint to read (large text needs 3:1): the
+            gradient ends in a deeper teal there. */}
+        <em className="text-brand-gradient pr-[0.06em] italic [box-decoration-break:clone] not-dark:[--color-brand-teal:#0f766e]">
+          right in your browser.
+        </em>
       </h1>
       <p className="mx-auto mt-5 max-w-xl text-[15.5px] leading-relaxed text-fg-muted text-pretty animate-slide-up [animation-delay:110ms] [animation-fill-mode:both] sm:mt-6 sm:text-[17px]">
         Type on any form, tick boxes, add your signature and download. Free, no sign-up — your files never leave your device.

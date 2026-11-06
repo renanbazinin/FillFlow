@@ -1,17 +1,21 @@
-import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { toast } from 'sonner'
 import { CircleAlert, CircleCheck, Download, FileText, Info, LockOpen, Printer, Share, TriangleAlert } from 'lucide-react'
 import { Button } from '../../components/ui/button'
 import { FieldLabel, Spinner, Switch } from '../../components/ui/controls'
 import { Dialog } from '../../components/ui/dialog'
+import { OPEN_OVERLAY } from '../../components/ui/modal'
 import { ExportError } from '../../lib/export/errors'
 import { neededPassword } from '../../lib/storage/protectedDocs'
+import { firstStrongDirection } from '../../lib/text/direction'
 import { cn, isMac } from '../../lib/utils/misc'
 import { useEditor, type LoadedDocument } from '../../store/editor'
 import { canSharePdf, downloadPdf, printPdf, sharePdf } from './deliver'
 import {
   countChangedFields,
   countFilledFields,
+  coveredFieldLabels,
+  coveredFieldsNote,
   defaultBaseName,
   finalFileName,
   formatFileSize,
@@ -20,6 +24,7 @@ import {
   plural,
   progressLabel,
   quotedList,
+  typedFileName,
   unwrittenFieldLabels,
 } from './exportFile'
 import { errorMessage, latestExport, prepareExport, resetExport, useExportJob, type ExportStatus } from './exportJob'
@@ -43,11 +48,14 @@ function writeFlatten(value: boolean) {
 }
 
 const isCoarsePointer = () => typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
-const anotherModalOpen = () => !!document.querySelector('[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]')
+const anotherModalOpen = () => !!document.querySelector(OPEN_OVERLAY)
 
 type Action = 'download' | 'share' | 'print'
 
-/** ⌘/Ctrl+S anywhere in the editor opens the dialog (the browser's "Save page" never shows). */
+/**
+ * ⌘/Ctrl+S anywhere in the editor opens the dialog (the browser's "Save page" never shows), but
+ * not while another modal or a menu is up: the keyboard is theirs (a menu would stay open over it).
+ */
 function useSaveShortcut() {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -82,6 +90,7 @@ export function ExportDialog() {
   const revision = useEditor((s) => (s.activeDialog === 'export' ? s.revision : -1))
   const doc = useEditor((s) => s.doc)
   const formValues = useEditor((s) => (s.activeDialog === 'export' ? s.formValues : null))
+  const elements = useEditor((s) => (s.activeDialog === 'export' ? s.elements : null))
   const job = useExportJob()
 
   const [flatten, setFlatten] = useState(readFlatten)
@@ -142,6 +151,12 @@ export function ExportDialog() {
     [job.status, job.unwritten, doc, formValues],
   )
 
+  // Fields under items the user placed are flattened even when flattening is off (they'd hide the items).
+  const covered = useMemo(
+    () => (hasFields && !flatten && doc && elements ? coveredFieldLabels(doc.formFields, elements) : []),
+    [hasFields, flatten, doc, elements],
+  )
+
   // ⌘O / ⌘S never open the browser's "Open file" / "Save page" dialogs, wherever focus is in
   // here: the shell's handler never sees the keys stopped below. Like the browser, this goes by
   // the letter the layout types, or by physical key on layouts without Latin letters (Hebrew…).
@@ -156,9 +171,31 @@ export function ExportDialog() {
 
   const close = () => useEditor.getState().closeDialog()
   const fileName = finalFileName(baseName, docName)
+  const placeholder = defaultBaseName(docName)
+  // The name's direction, as dir="auto" would pick it (from the placeholder when it's empty).
+  const nameDir = firstStrongDirection(baseName || placeholder) ?? 'ltr'
+
+  // Cleaned as it's typed, so the field shows the characters the file gets. Not while a word is
+  // being composed, which that would break up: the next change or leaving the field does it.
+  const onNameChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const input = e.target
+    if ((e.nativeEvent as InputEvent).isComposing) {
+      setBaseName(input.value)
+      return
+    }
+    const typed = typedFileName(input.value, input.selectionStart ?? input.value.length, input.selectionEnd ?? input.value.length)
+    if (typed.value !== input.value) {
+      // Replacing the text moves the caret to its end: put it back.
+      input.value = typed.value
+      input.setSelectionRange(typed.start, typed.end)
+    }
+    setBaseName(typed.value)
+  }
 
   const run = async (kind: Action) => {
     if (action) return
+    // The field shows the exact name the file gets (trimmed, or the default for an empty one).
+    setBaseName(fileName.replace(/\.pdf$/, ''))
     setAction(kind)
     setNotice(null)
     setActionError(null)
@@ -170,7 +207,6 @@ export function ExportDialog() {
       if (kind === 'download') {
         downloadPdf(bytes, fileName)
         toast.success('PDF downloaded', { description: fileName })
-        setBaseName(fileName.replace(/\.pdf$/, ''))
         close()
       } else if (kind === 'share') {
         // From here the system share sheet owns the interaction (it may never settle).
@@ -265,29 +301,30 @@ export function ExportDialog() {
       <form id={formId} onSubmit={onSubmit} onKeyDown={onKeyDown} noValidate className="flex flex-col gap-5">
         <div>
           <FieldLabel htmlFor={nameId}>File name</FieldLabel>
+          {/* Laid out in the name's direction, so ".pdf" follows its end: left of a Hebrew name. */}
           <div
+            dir={nameDir}
             className={cn(
-              'flex h-10 items-center overflow-hidden rounded-lg border border-line bg-surface shadow-xs transition-[border-color,box-shadow]',
-              'hover:border-line-strong focus-within:border-accent focus-within:ring-3 focus-within:ring-accent/20 focus-within:hover:border-accent',
+              'flex h-10 items-center overflow-hidden rounded-lg border border-control bg-surface shadow-xs transition-[border-color,box-shadow]',
+              'hover:border-fg-subtle focus-within:border-accent focus-within:ring-3 focus-within:ring-accent/20 focus-within:hover:border-accent',
             )}
           >
             <input
               id={nameId}
               ref={inputRef}
               value={baseName}
-              onChange={(e) => setBaseName(e.target.value)}
+              onChange={onNameChange}
               onBlur={() => setBaseName((v) => finalFileName(v, docName).replace(/\.pdf$/, ''))}
-              placeholder={defaultBaseName(docName)}
-              dir="auto"
+              placeholder={placeholder}
               spellCheck={false}
               autoComplete="off"
               autoCapitalize="off"
               enterKeyHint="done"
               aria-describedby={`${nameId}-ext`}
-              className="h-full min-w-0 flex-1 bg-transparent pl-3 text-base text-fg outline-none placeholder:text-fg-subtle sm:text-sm"
+              className="h-full min-w-0 flex-1 bg-transparent ps-3 text-base text-fg outline-none placeholder:text-fg-subtle sm:text-sm"
             />
-            <span id={`${nameId}-ext`} className="select-none pl-1 pr-3 text-base text-fg-subtle sm:text-sm">
-              .pdf
+            <span id={`${nameId}-ext`} className="select-none ps-1 pe-3 text-base text-fg-subtle sm:text-sm">
+              <span dir="ltr">.pdf</span>
             </span>
           </div>
         </div>
@@ -309,6 +346,13 @@ export function ExportDialog() {
             label="Flatten form fields"
             description="Recommended when sending — values can no longer be edited"
           />
+        )}
+
+        {covered.length > 0 && !error && (
+          <p className="-mt-1 flex gap-2 text-[13px] text-fg-muted">
+            <Info className="mt-px size-4 shrink-0 text-fg-subtle" aria-hidden />
+            {coveredFieldsNote(covered)}
+          </p>
         )}
 
         {nothingAdded && !error && (flattenForms || !passwordDropped) && (
@@ -382,14 +426,20 @@ function FileSummary({
         <FileText className="size-5" aria-hidden />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium text-fg">
-          {parts.map((p, i) => (
-            <span key={p} className="whitespace-nowrap">
-              {i > 0 && <span className="px-1.5 text-fg-subtle" aria-hidden>·</span>}
-              {p}
-            </span>
-          ))}
-        </p>
+        {/* Wraps between the parts, never inside one. Each part comes after a separator, and the
+            one that would start a line is clipped off (the line starts that much further left). */}
+        <div className="overflow-hidden">
+          <p className="-ms-4 flex flex-wrap text-sm font-medium text-fg">
+            {parts.map((p) => (
+              <span key={p} className="whitespace-nowrap">
+                <span className="inline-block w-4 select-none text-center text-fg-subtle" aria-hidden>
+                  ·
+                </span>
+                {p}
+              </span>
+            ))}
+          </p>
+        </div>
         <p className="mt-0.5 flex min-h-5 items-center gap-1.5 text-[13px] text-fg-muted empty:hidden" aria-live="polite">
           {status === 'working' && (
             <>

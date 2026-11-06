@@ -1,9 +1,10 @@
 import { useEffect } from 'react'
 import { toast } from 'sonner'
-import { toolForShortcut } from '../../model/tools'
+import { TOOL_BY_ID, toolForShortcut } from '../../model/tools'
 import { getSelectedElements, useEditor } from '../../store/editor'
 import { isEditableTarget } from '../../lib/utils/misc'
 import { viewer } from '../viewer/viewerApi'
+import { placeAtVisibleCenter } from './create/place'
 import { trackPointer } from './interaction/pointer'
 import { bracketKey, hasMod, shortcutLetter } from './lib/keys'
 import {
@@ -20,7 +21,7 @@ import {
 import { deleteSelection, duplicateSelection, nudgeSelection, reorderSelection, selectAllOnPage, toggleLockSelection } from './state/commands'
 import { editText, finishActiveTextEdit } from './state/textEdit'
 import { activateTool } from './state/tools'
-import { useElementsUi } from './state/ui'
+import { notePointerType, useElementsUi } from './state/ui'
 import { toggleBold } from './toolbar/styleActions'
 
 const ARROWS: Record<string, [number, number]> = {
@@ -49,7 +50,8 @@ function shouldIgnore(): boolean {
  * Global editing shortcuts (mounted once by the editor screen):
  * tools by letter, Esc, Delete/Backspace, arrows (Shift ×10), undo/redo, duplicate, internal
  * clipboard (plus pasting images/text from the system clipboard), select all on the current
- * page, Enter to edit text, bold, lock, and z-order. Ctrl/⌘+S, +, −, 0 belong to other areas.
+ * page, Enter to add the active tool's item (or to edit the selected text), bold, lock, and
+ * z-order. Ctrl/⌘+S, +, −, 0 belong to other areas.
  */
 export function useEditingShortcuts(): void {
   useEffect(() => {
@@ -170,8 +172,14 @@ export function useEditingShortcuts(): void {
         return
       }
       if (e.key === 'Enter') {
+        if (isControlTarget(e.target)) return
+        if (TOOL_BY_ID[s.tool].placement !== 'none') {
+          // Places without a pointer (then the arrows move it); holding the key adds just one.
+          if (!e.repeat && placeAtVisibleCenter(s.tool)) e.preventDefault()
+          return
+        }
         const sel = getSelectedElements(s)
-        if (sel.length === 1 && sel[0].kind === 'text' && !isButtonTarget(e.target)) {
+        if (sel.length === 1 && sel[0].kind === 'text') {
           e.preventDefault()
           editText(sel[0].id)
         }
@@ -259,15 +267,23 @@ export function useEditingShortcuts(): void {
       )
     }
 
+    // Whether a pen or a finger is in use decides what a drag on an item does (see HitArea). A
+    // hovering pen tells before it touches the screen.
+    const onPointerType = (e: PointerEvent) => notePointerType(e.pointerType)
+
     const copy = (e: ClipboardEvent) => onCopy(e, false)
     const cut = (e: ClipboardEvent) => onCopy(e, true)
     window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('pointerover', onPointerType, true)
+    window.addEventListener('pointerdown', onPointerType, true)
     document.addEventListener('copy', copy)
     document.addEventListener('cut', cut)
     document.addEventListener('paste', onPaste)
     document.addEventListener('pointerdown', onBackgroundDown)
     return () => {
       window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('pointerover', onPointerType, true)
+      window.removeEventListener('pointerdown', onPointerType, true)
       document.removeEventListener('copy', copy)
       document.removeEventListener('cut', cut)
       document.removeEventListener('paste', onPaste)
@@ -282,6 +298,10 @@ function hasTextSelection(): boolean {
   return !!sel && !sel.isCollapsed && sel.toString().trim().length > 0
 }
 
-function isButtonTarget(t: EventTarget | null): boolean {
-  return t instanceof HTMLElement && !!t.closest('button, a[href], [role="button"], [role="menuitem"], [role="tab"]')
+/** Focus is on a control that Enter operates itself (a button, a checkbox of the form…). */
+function isControlTarget(t: EventTarget | null): boolean {
+  return (
+    t instanceof HTMLElement &&
+    !!t.closest('button, a[href], input, select, [role="button"], [role="menuitem"], [role="tab"], [role="checkbox"], [role="radio"], [role="option"], [role="switch"]')
+  )
 }

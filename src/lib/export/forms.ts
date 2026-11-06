@@ -10,14 +10,20 @@ import {
   PDFName,
   PDFOptionList,
   PDFRadioGroup,
+  PDFRef,
+  PDFStream,
   PDFString,
   PDFTextField,
   TextAlignment,
+  adjustDimsForRotation,
+  concatTransformationMatrix,
+  drawObject,
+  rotateInPlace,
   type PDFDocument,
   type PDFField,
   type PDFFont,
   type PDFForm,
-  type PDFRef,
+  type PDFObject,
   type PDFWidgetAnnotation,
 } from 'pdf-lib'
 import type { FormField, FormValues, PageInfo, TextAlign } from '../../model/types'
@@ -26,14 +32,17 @@ import {
   hasNormalStream,
   parseDaColor,
   parseDaFontSize,
+  setWidgetRotation,
   textRotation,
   writeDropdownAppearance,
   writeListAppearance,
   writeTextAppearance,
+  type Rotation,
   type TextSpec,
 } from '../pdf/forms/appearance'
+import { hasStaleAppearance } from '../pdf/forms/extract'
 import { adoptOrphanWidgets, relinkBareWidgets, relinkCutOffFields, sanitizeFieldList } from '../pdf/forms/fieldTree'
-import { flattenFields } from '../pdf/forms/flatten'
+import { appearanceBox, appearanceTurn, flattenFields } from '../pdf/forms/flatten'
 import { FieldIndex, PDF_OFF, PageIndex, nameForLog, usesPrintFlag, widgetEntries } from '../pdf/forms/pdfIndex'
 import { fieldValue, valuesEqual } from '../pdf/forms/values'
 import {
@@ -90,6 +99,8 @@ const DA = PDFName.of('DA')
 const DV = PDFName.of('DV')
 const AP = PDFName.of('AP')
 const N = PDFName.of('N')
+const ROLLOVER = PDFName.of('R')
+const D = PDFName.of('D')
 const CO = PDFName.of('CO')
 
 function readNeedAppearances(form: PDFForm): boolean {
@@ -188,6 +199,63 @@ function ensureButtonAppearances(ctx: Ctx, target: PDFCheckBox | PDFRadioGroup) 
   if (redraw) target.defaultUpdateAppearances()
 }
 
+/**
+ * The appearance `obj` turned upright in the widget's box on a page rotated `pageRotation`
+ * degrees: only the rest of the way when its own /Matrix already turns it. Null when it needs no
+ * turning (or can't be read).
+ */
+function turnedAppearance(doc: PDFDocument, obj: PDFObject, widget: PDFWidgetAnnotation, pageRotation: Rotation): PDFRef | null {
+  const stream = obj instanceof PDFRef ? doc.context.lookup(obj) : obj
+  if (!(stream instanceof PDFStream)) return null
+  const rotation = ((pageRotation - appearanceTurn(stream) + 360) % 360) as Rotation
+  const box = appearanceBox(stream)
+  const width = Math.abs(widget.getRectangle().width)
+  const height = Math.abs(widget.getRectangle().height)
+  if (!rotation || !box || box[2] - box[0] < 1e-6 || box[3] - box[1] < 1e-6 || width < 1e-6 || height < 1e-6) return null
+  // Like our text appearances (setAppearance): drawn in the turned frame. That has another shape
+  // when the box isn't square: the art keeps its proportions, centred.
+  const frame = adjustDimsForRotation({ width, height }, rotation)
+  const scale = Math.min(frame.width / (box[2] - box[0]), frame.height / (box[3] - box[1]))
+  const dx = (frame.width - (box[2] - box[0]) * scale) / 2 - box[0] * scale
+  const dy = (frame.height - (box[3] - box[1]) * scale) / 2 - box[1] * scale
+  const ops = [...rotateInPlace({ width, height, rotation }), concatTransformationMatrix(scale, 0, 0, scale, dx, dy), drawObject('A')]
+  const art = obj instanceof PDFRef ? obj : doc.context.register(stream)
+  return doc.context.register(doc.context.formXObject(ops, { BBox: [0, 0, width, height], Resources: { XObject: { A: art } } }))
+}
+
+/**
+ * On a rotated page, a check box or radio whose appearances aren't turned for it (no /MK /R)
+ * shows its mark turned with the page. The editor shows marks upright, as it does text in such
+ * widgets (see textRotation): their own appearances are turned upright in their boxes, and /MK /R
+ * says so (so that the ones pdf-lib draws for them come out upright too, and the next export
+ * doesn't turn them again). Other widgets may share the appearance dictionaries or the /MK of one
+ * (on pages rotated otherwise, too): it gets turned copies, and a /MK, of its own.
+ */
+function uprightButtonAppearances(ctx: Ctx, target: PDFCheckBox | PDFRadioGroup) {
+  for (const entry of widgetEntries(target.acroField)) {
+    const { widget } = entry
+    const rotation = PageIndex.rotation(ctx.pages.pageOf(entry))
+    const own = widget.getAppearanceCharacteristics()?.getRotation() ?? 0
+    if (!rotation || (((Math.round(own / 90) * 90) % 360) + 360) % 360) continue
+    const ap = widget.dict.lookup(AP)
+    if (ap instanceof PDFDict) {
+      const turned = (obj: PDFObject) => turnedAppearance(ctx.doc, obj, widget, rotation) ?? obj
+      const mine = ap.clone()
+      for (const kind of [N, ROLLOVER, D]) {
+        const states = ap.lookup(kind)
+        const value = ap.get(kind)
+        if (states instanceof PDFDict) {
+          const copy = states.clone()
+          for (const [state, obj] of states.entries()) copy.set(state, turned(obj))
+          mine.set(kind, copy)
+        } else if (value) mine.set(kind, turned(value))
+      }
+      widget.dict.set(AP, mine)
+    }
+    setWidgetRotation(widget, rotation)
+  }
+}
+
 const V = PDFName.of('V')
 
 /** The text stored in /V (undefined without /V), line breaks normalized like the extracted values. */
@@ -230,12 +298,15 @@ async function fillField(ctx: Ctx, field: FormField, target: PDFField, values: F
       let text = stored ?? ''
       const changed = differs(target, stored, want)
       if (changed) text = writeTextValue(target.acroField, want)
-      if (changed || ctx.refresh || missingStream(target)) await textAppearances(ctx, target, text, field)
+      // The editor shows the value: an appearance that shows something else is redrawn too.
+      if (changed || ctx.refresh || missingStream(target) || hasStaleAppearance(field)) await textAppearances(ctx, target, text, field)
       return
     }
     case 'checkbox':
     case 'radio': {
       if (!(target instanceof PDFCheckBox || target instanceof PDFRadioGroup)) throw new Error('not a button field in the PDF')
+      // Before any appearance is drawn below, so that it is drawn upright too.
+      uprightButtonAppearances(ctx, target)
       // Create missing on/off appearances first so every widget knows its on-state.
       ensureButtonAppearances(ctx, target)
       const acro = target.acroField as PDFAcroButton
@@ -325,18 +396,21 @@ async function ensureAppearances(ctx: Ctx, target: PDFField) {
 
 /**
  * Writes `values` into the AcroForm of `pdfDoc` (a pdf-lib document of the ORIGINAL file),
- * regenerates appearances, and optionally flattens. Called by `exportPdf` before overlay
- * elements are drawn. Must not throw because of a single bad field.
+ * regenerates appearances, and optionally flattens (all fields, or else those in `flattenAlso`).
+ * Called by `exportPdf` before overlay elements are drawn. Must not throw because of a single
+ * bad field.
  *
  * - Our fields are found by widget (by page and position when the file was rewritten, see
  *   FieldIndex); widgets missing from the field tree are linked into it first, then fields the
  *   rewrite cut off from their parents are put back under them, and widgets it cut off from
  *   their field are linked back into it.
  * - Only fields whose stored value differs from the wanted one are rewritten; the others keep
- *   their original appearance (unless it is missing or the file asked for regeneration).
+ *   their original appearance (unless it is missing, doesn't show the value, or the file asked
+ *   for regeneration).
  * - Text, combo and list appearances are drawn by us with bidi-aware layout (see
  *   lib/pdf/forms/appearance.ts) using Helvetica/Courier, or the Unicode font when needed.
- * - Check boxes and radios get /V + /AS; their own on/off appearances are preserved.
+ * - Check boxes and radios get /V + /AS; their own on/off appearances are preserved (turned
+ *   upright on rotated pages, as the editor shows them).
  * - Values that can't be written are reported in `unwritten`, never dropped silently.
  */
 export async function applyFormValues(
@@ -424,12 +498,12 @@ export async function applyFormValues(
     }
   }
 
+  // Screen-only widgets are mostly buttons and on-screen hints, which don't belong on paper.
+  // But what the user typed does, and a file that sets the Print flag on no widget at all
+  // (PDFBox, for one, doesn't by default) never meant its fields to be screen-only.
+  const printFlag = usesPrintFlag(ctx.index.all)
+  const drawScreenOnly = (f: PDFField) => !(f instanceof PDFButton) && (!printFlag || edited.has(f))
   if (opts.flatten) {
-    // Screen-only widgets are mostly buttons and on-screen hints, which don't belong on paper.
-    // But what the user typed does, and a file that sets the Print flag on no widget at all
-    // (PDFBox, for one, doesn't by default) never meant its fields to be screen-only.
-    const printFlag = usesPrintFlag(ctx.index.all)
-    const drawScreenOnly = (f: PDFField) => !(f instanceof PDFButton) && (!printFlag || edited.has(f))
     const failed = flattenFields(pdfDoc, ctx.form, ctx.index.all.filter((f) => !broken.has(f)), ctx.pages, drawScreenOnly)
     const stale = failed.length + broken.size
     if (stale) console.warn(`[forms] ${stale} field(s) were kept fillable instead of being flattened`)
@@ -438,6 +512,15 @@ export async function applyFormValues(
     // for their print-only widgets have good appearances.)
     setNeedAppearances(ctx.form, stale > 0)
   } else {
+    // Viewers paint fields over the page content the user's items are drawn into, so the fields
+    // under them are flattened all the same (a signature field goes, its signature stays).
+    const also = new Set(opts.flattenAlso)
+    const covered = new Set(fields.filter((f) => also.has(f.name)).flatMap((f) => ctx.index.findAll(f)))
+    if (covered.size) {
+      const failed = flattenFields(pdfDoc, ctx.form, [...covered].filter((f) => !broken.has(f)), ctx.pages, drawScreenOnly)
+      if (failed.length) console.warn(`[forms] ${failed.length} field(s) under placed items could not be flattened`)
+      pruneCalculationOrder(ctx.form)
+    }
     // Our appearances are complete and correct; letting viewers regenerate them would lose
     // the bidi layout (and Hebrew glyphs in viewers whose fallback fonts lack them).
     setNeedAppearances(ctx.form, broken.size > 0)

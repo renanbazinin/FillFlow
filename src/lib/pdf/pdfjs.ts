@@ -10,8 +10,13 @@ import type { PageInfo, PageRotation } from '../../model/types'
 // helper sharing this module did, and `workerUrl` only resolves in the browser.
 pdfjs.GlobalWorkerOptions.workerSrc ||= workerUrl
 
-/** Where `vite.config.ts` serves/copies pdf.js runtime assets. */
-const ASSETS = `${import.meta.env.BASE_URL}pdfjs/`
+/**
+ * Where `vite.config.ts` serves/copies pdf.js runtime assets. A full address in the browser: the
+ * worker, which fetches them, runs from a blob (see `preloadPdfWorker`), against which a path
+ * doesn't resolve.
+ */
+const ASSETS =
+  typeof location === 'undefined' ? `${import.meta.env.BASE_URL}pdfjs/` : new URL(`${import.meta.env.BASE_URL}pdfjs/`, location.href).href
 
 export { pdfjs }
 export type { PDFDocumentProxy, PDFPageProxy }
@@ -23,6 +28,74 @@ export class PasswordRequiredError extends Error {
     this.name = 'PasswordRequiredError'
     this.incorrect = incorrect
   }
+}
+
+/**
+ * pdf.js's worker script couldn't be downloaded (the connection is down, or the server no longer
+ * has it), so no file can be opened yet. Nothing is wrong with the file: trying again can work.
+ */
+export class WorkerUnavailableError extends Error {
+  /**
+   * The request itself failed (offline, connection lost), so it can work once the connection is
+   * back. Otherwise the server answered with something else (it no longer has that version of the
+   * app, say): reloading the page is what helps.
+   */
+  readonly network: boolean
+  constructor(cause: unknown) {
+    super('The pdf.js worker could not be downloaded.', { cause })
+    this.name = 'WorkerUnavailableError'
+    this.network = cause instanceof TypeError
+  }
+}
+
+/** The worker script being fetched into memory, or there (see `preloadPdfWorker`); null until then. */
+let workerReady: Promise<void> | null = null
+
+/**
+ * Downloads pdf.js's worker script once and keeps it in memory, where every load then starts its
+ * worker from: from then on, files open without the network (offline included). Until it is
+ * there, no load is started (see `openPdf`): a worker script that can't be fetched makes pdf.js
+ * fall back to running without a worker for good, which then fails every later load in the page.
+ * Rejects with WorkerUnavailableError; the next call tries again. (Node runs pdf.js in-process.)
+ */
+export function preloadPdfWorker(): Promise<void> {
+  if (typeof Worker === 'undefined') return Promise.resolve()
+  workerReady ??= fetch(workerUrl)
+    .then(async (res) => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      let source = await res.text()
+      // Something else answered (a captive portal's page, say): as the worker, it would make
+      // pdf.js fall back for good.
+      if (!source.includes('WorkerMessageHandler')) throw new Error('Not the pdf.js worker')
+      // The dev server puts an import of its client in front, by a path, which doesn't resolve
+      // from a blob. It only serves the worker's one dynamic import (of an optional fallback
+      // decoder): stand in for it, so that, as in a build, the worker needs nothing more from the
+      // network. Anything else it might import goes by its full address. Imports are hoisted, so
+      // code may come first (as in the e2e tests' older browser): they are found at any line's start.
+      if (import.meta.env.DEV) {
+        source = source
+          .replace(/^([ \t]*)import \{ injectQuery as (\w+) \} from "[^"]*";/m, '$1const $2 = (url) => url;')
+          .replace(/^[ \t]*import [^;]*? from "(\/[^"]*)";/gm, (line, path: string) => line.replace(path, new URL(path, location.href).href))
+      }
+      // Same origin as the page, so pdf.js starts it as is (and could import it, were workers missing).
+      pdfjs.GlobalWorkerOptions.workerSrc = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }))
+    })
+    .catch((err: unknown) => {
+      workerReady = null
+      throw new WorkerUnavailableError(err)
+    })
+  return workerReady
+}
+
+// Downloaded with the app, once the page has settled, rather than on the first open: a page that
+// loaded can then open files offline too. If that fails, again when the connection comes back
+// (and on the next open).
+if (typeof window !== 'undefined' && typeof Worker === 'function') {
+  const preload = () => {
+    preloadPdfWorker().catch(() => window.addEventListener('online', preload, { once: true }))
+  }
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(preload, { timeout: 3000 })
+  else setTimeout(preload, 1000)
 }
 
 /** How long a load that is given up on gets to end its worker politely before it is ended for it. */
@@ -45,13 +118,16 @@ export function stopLoading(task: PDFDocumentLoadingTask): void {
 
 /**
  * Opens a PDF with pdf.js. `bytes` is copied because pdf.js transfers the buffer to its worker.
- * Rejects with PasswordRequiredError when the file needs a (different) password.
+ * Rejects with PasswordRequiredError when the file needs a (different) password, and with
+ * WorkerUnavailableError when pdf.js's worker can't be downloaded (see `preloadPdfWorker`).
  *
  * Aborting `signal` while the file loads stops the load, its worker included (see stopLoading; the
  * promise may then never settle). Once it has settled, the document is the caller's: an abort
  * leaves it alone.
  */
 export async function openPdf(bytes: Uint8Array, password?: string, signal?: AbortSignal): Promise<PDFDocumentProxy> {
+  signal?.throwIfAborted()
+  await preloadPdfWorker()
   signal?.throwIfAborted()
   const task: PDFDocumentLoadingTask = pdfjs.getDocument({
     data: bytes.slice(),

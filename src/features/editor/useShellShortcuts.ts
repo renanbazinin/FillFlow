@@ -1,12 +1,21 @@
 import { useEffect } from 'react'
+import { OPEN_OVERLAY } from '../../components/ui/modal'
 import { isEditableTarget, isMac } from '../../lib/utils/misc'
 import { useEditor } from '../../store/editor'
 import { chooseAndOpenPdf } from '../home/openFile'
 import { viewer } from '../viewer/viewerApi'
-import { shellCommandFor } from './shortcuts'
+import { shellCommandFor, type ShellCommand } from './shortcuts'
 
-function modalOpen(): boolean {
-  return !!document.querySelector('[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]')
+const MODAL_OPEN = '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]'
+
+/**
+ * Whether an open overlay keeps `cmd` from running. Dialogs (sheets and popovers too) stop every
+ * command. So does an open menu, except zooming (the menu's own zoom steps keep it open): what the
+ * others open would land under the menu, which then stays stuck open over it.
+ */
+function blockedByOverlay(cmd: ShellCommand): boolean {
+  const zoom = cmd === 'zoomIn' || cmd === 'zoomOut' || cmd === 'fitWidth'
+  return document.querySelector(zoom ? MODAL_OPEN : OPEN_OVERLAY) !== null
 }
 
 /**
@@ -24,7 +33,7 @@ export function useShellShortcuts(scope: 'editor' | 'home' = 'editor'): void {
       if (cmd === 'download' || cmd === 'open') e.preventDefault()
       if (e.repeat && cmd !== 'zoomIn' && cmd !== 'zoomOut') return
       const state = useEditor.getState()
-      if (state.load.status !== 'idle' || modalOpen()) return
+      if (state.load.status !== 'idle' || blockedByOverlay(cmd)) return
       if (cmd === 'help' && isEditableTarget(e.target)) return
       e.preventDefault()
       switch (cmd) {

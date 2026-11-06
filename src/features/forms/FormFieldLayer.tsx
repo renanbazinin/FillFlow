@@ -9,6 +9,7 @@ import { TextControl } from './onpage/TextControl'
 import { CheckboxControl, RadioControl } from './onpage/ToggleControls'
 import type { ControlProps } from './onpage/types'
 import { widgetsOnPage } from './pageWidgets'
+import { useNativeHistoryGuard } from './useField'
 
 const FieldControl = memo(function FieldControl(props: ControlProps) {
   switch (props.field.type) {
@@ -39,6 +40,7 @@ export const FormFieldLayer = memo(function FormFieldLayer({ page, scale }: { pa
   const fields = useEditor((s) => s.doc?.formFields)
   const interactive = useEditor((s) => s.tool === 'select')
   const items = widgetsOnPage(fields, page.index)
+  useNativeHistoryGuard(items.length > 0)
 
   useEffect(() => {
     if (items.length) ensureFormFonts()

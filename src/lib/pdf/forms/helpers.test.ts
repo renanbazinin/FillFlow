@@ -63,19 +63,28 @@ describe('bidi', () => {
     ['(שלום)', 'rtl', '(םולש)'],
     ['מחיר: 42.50 ₪', 'rtl', '₪ 42.50 :ריחמ'],
     ['abc', 'ltr', 'abc'],
-  ] as const)('%s → %s', (text, dir, visual) => expect(visualOrder(text, dir)).toBe(visual))
+  ] as const)('%s → %s', (text, dir, visual) => expect(visualOrder(text, dir).shown).toBe(visual))
 
   it('keeps combining marks after their base and drops bidi controls', () => {
     // bet + dagesh, then shin: marks stay attached to the base letter after reversal.
-    expect(visualOrder('בּש', 'rtl')).toBe('שבּ')
-    expect(visualOrder('‏abc‎', 'ltr')).toBe('abc')
+    expect(visualOrder('בּש', 'rtl').shown).toBe('שבּ')
+    expect(visualOrder('‏abc‎', 'ltr')).toEqual({ shown: 'abc', typed: 'abc' })
+  })
+
+  it('gives each line as typed too: the same characters, brackets not mirrored', () => {
+    expect(visualOrder('(לא חובה)', 'rtl')).toEqual({ shown: '(הבוח אל)', typed: ')הבוח אל(' })
+    expect(visualOrder('שָׁלוֹם (לא חובה)', 'rtl')).toEqual({ shown: '(הבוח אל) םוֹלשָׁ', typed: ')הבוח אל( םוֹלשָׁ' })
+    // An RLM is dropped from both, which stay aligned; brackets in a left-to-right run aren't mirrored.
+    expect(visualOrder('‏[x] {שלום}', 'ltr')).toEqual({ shown: '[x] {םולש}', typed: '[x] {םולש}' })
+    expect(visualOrder('מספר ‏(123)', 'rtl')).toEqual({ shown: '(123) רפסמ', typed: ')123( רפסמ' })
   })
 
   it('reorders wrapped lines independently', () => {
     const p = 'תאריך: 31/10/2026'
     const b = bidiParagraph(p, 'rtl')
-    expect(b.line(0, 6)).toBe(':ךיראת')
-    expect(b.line(7, p.length)).toBe('31/10/2026')
+    expect(b.line(0, 6).shown).toBe(':ךיראת')
+    expect(b.line(7, p.length).shown).toBe('31/10/2026')
+    expect(bidiParagraph('(א) ב', 'rtl').line(0, 3)).toEqual({ shown: '(א)', typed: ')א(' })
   })
 })
 

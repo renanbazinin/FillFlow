@@ -110,6 +110,7 @@ export function shortcutGroups(mac = isMac): ShortcutGroup[] {
         { label: 'Delete', combos: [['delete'], ['backspace']] },
         { label: 'Select all on the page', combos: [['mod', 'A']] },
         { label: 'Add to selection', combos: [['shift', 'click']] },
+        { label: 'Add the active tool’s item in the middle of the view', combos: [['enter']] },
         { label: 'Nudge (Shift for 10 pt)', combos: [['←', '↑', '→', '↓']] },
         { label: 'Edit text', combos: [['enter'], ['double-click']] },
         { label: 'Finish editing text', combos: [['esc'], ['mod', 'enter']] },

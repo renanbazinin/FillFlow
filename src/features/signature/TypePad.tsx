@@ -48,7 +48,7 @@ export function TypePad({ role, onSubmit, inputRef }: { role: SignatureRole; onS
             className="h-10 text-[15px]"
           />
         </div>
-        <InkSwatches value={color} onChange={setColor} className="sm:pb-1.5" />
+        <InkSwatches value={color} onChange={setColor} className="sm:h-10" />
       </div>
 
       <RadioGroup.Root
@@ -75,7 +75,7 @@ export function TypePad({ role, onSubmit, inputRef }: { role: SignatureRole; onS
               {sample}
             </FitText>
             <span className="flex h-4 items-center justify-between gap-2">
-              <span className="truncate text-[11px] font-medium leading-none text-black/45">{signatureFontLabel(f, sample)}</span>
+              <span className="truncate text-[11px] font-medium leading-none text-black/60">{signatureFontLabel(f, sample)}</span>
               <RadioGroup.Indicator className="inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-accent text-accent-fg animate-scale-in">
                 <Check className="size-2.5" strokeWidth={3.5} />
               </RadioGroup.Indicator>

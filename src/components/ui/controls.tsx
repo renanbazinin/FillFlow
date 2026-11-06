@@ -28,7 +28,7 @@ export function Separator({ orientation = 'horizontal', className }: { orientati
   return (
     <RSeparator.Root
       orientation={orientation}
-      className={cn('shrink-0 bg-line', orientation === 'horizontal' ? 'h-px w-full' : 'h-5 w-px', className)}
+      className={cn('shrink-0 bg-line forced-colors:bg-[CanvasText]', orientation === 'horizontal' ? 'h-px w-full' : 'h-5 w-px', className)}
     />
   )
 }
@@ -52,14 +52,17 @@ export function Switch({ checked, onCheckedChange, label, description, disabled,
           {description && <div className="mt-0.5 text-[13px] text-fg-muted">{description}</div>}
         </label>
       )}
+      {/* The track's edge shows where the switch is (and stays drawn in forced colors mode, which
+          drops fills: there the state is drawn in the system highlight colors). On touch screens
+          an invisible margin makes it a 40px target. */}
       <RSwitch.Root
         id={id}
         checked={checked}
         onCheckedChange={onCheckedChange}
         disabled={disabled}
-        className="relative mt-0.5 inline-flex h-5 w-9 shrink-0 items-center rounded-full bg-line-strong transition-colors data-[state=checked]:bg-accent disabled:opacity-50"
+        className="relative mt-0.5 inline-flex h-5 w-9 shrink-0 items-center rounded-full border border-control bg-line-strong transition-colors data-[state=checked]:border-accent data-[state=checked]:bg-accent disabled:opacity-50 forced-colors:data-[state=checked]:border-[Highlight] forced-colors:data-[state=checked]:bg-[Highlight] pointer-coarse:before:absolute pointer-coarse:before:-inset-3 pointer-coarse:before:content-['']"
       >
-        <RSwitch.Thumb className="block size-4 translate-x-0.5 rounded-full bg-white shadow-xs transition-transform data-[state=checked]:translate-x-[18px]" />
+        <RSwitch.Thumb className="block size-4 translate-x-px rounded-full bg-white shadow-xs transition-transform data-[state=checked]:translate-x-[17px] forced-colors:bg-[CanvasText] forced-colors:data-[state=checked]:bg-[HighlightText]" />
       </RSwitch.Root>
     </div>
   )
@@ -86,13 +89,14 @@ export function Slider({ value, onValueChange, onValueCommit, min, max, step = 1
       min={min}
       max={max}
       step={step}
-      aria-label={label}
-      className={cn('relative flex h-5 w-full touch-none select-none items-center', className)}
+      // A press anywhere along it moves the thumb there: on touch screens the band is a 40px target.
+      className={cn('relative flex h-5 w-full touch-none select-none items-center pointer-coarse:h-10', className)}
     >
-      <RSlider.Track className="relative h-1 grow overflow-hidden rounded-full bg-line-strong">
-        <RSlider.Range className="absolute h-full bg-accent" />
+      <RSlider.Track className="relative h-1 grow overflow-hidden rounded-full bg-line-strong forced-colors:bg-[CanvasText]">
+        <RSlider.Range className="absolute h-full bg-accent forced-colors:bg-[Highlight]" />
       </RSlider.Track>
-      <RSlider.Thumb className="block size-4 rounded-full border-2 border-accent bg-white shadow-xs focus-visible:outline-2" />
+      {/* The thumb is the slider (role="slider"): the name goes on it. */}
+      <RSlider.Thumb aria-label={label} className="block size-4 rounded-full border-2 border-accent bg-white shadow-xs focus-visible:outline-2" />
     </RSlider.Root>
   )
 }
@@ -135,8 +139,11 @@ export function Segmented<T extends string>({
           value={o.value}
           aria-label={o.ariaLabel}
           className={cn(
+            // Forced colors mode drops the fill and shadow: index.css draws the chosen option
+            // (data-state=on) in the system highlight colors.
             'inline-flex items-center justify-center gap-1.5 rounded-md font-medium text-fg-muted transition-colors hover:text-fg data-[state=on]:bg-surface data-[state=on]:text-fg data-[state=on]:shadow-xs [&_svg]:size-4',
             size === 'sm' ? 'h-7 min-w-7 px-2 text-xs' : 'h-8 min-w-8 px-3 text-[13px]',
+            'pointer-coarse:h-10 pointer-coarse:min-w-10',
           )}
         >
           {o.label}
@@ -168,13 +175,18 @@ export function NumberStepper({
 }) {
   const set = (v: number) => onChange(clamp(Math.round(v * 100) / 100, min, max))
   return (
-    <div className={cn('inline-flex h-8 items-center rounded-lg border border-line bg-surface', className)} role="group" aria-label={label}>
+    // Touch screens: the 40px height is inside the border, so the − and + buttons are 40px targets.
+    <div
+      className={cn('inline-flex h-8 items-center rounded-lg border border-control bg-surface pointer-coarse:box-content pointer-coarse:h-10', className)}
+      role="group"
+      aria-label={label}
+    >
       <button
         type="button"
         aria-label={`Decrease ${label.toLowerCase()}`}
         onClick={() => set(value - step)}
         disabled={value <= min}
-        className="inline-flex h-full w-7 items-center justify-center rounded-l-lg text-fg-muted hover:bg-surface-3 hover:text-fg disabled:opacity-40"
+        className="inline-flex h-full w-7 items-center justify-center rounded-l-lg text-fg-muted hover:bg-surface-3 hover:text-fg disabled:opacity-40 pointer-coarse:w-10"
       >
         <Minus className="size-3.5" />
       </button>
@@ -194,13 +206,45 @@ export function NumberStepper({
         aria-label={`Increase ${label.toLowerCase()}`}
         onClick={() => set(value + step)}
         disabled={value >= max}
-        className="inline-flex h-full w-7 items-center justify-center rounded-r-lg text-fg-muted hover:bg-surface-3 hover:text-fg disabled:opacity-40"
+        className="inline-flex h-full w-7 items-center justify-center rounded-r-lg text-fg-muted hover:bg-surface-3 hover:text-fg disabled:opacity-40 pointer-coarse:w-10"
       >
         <Plus className="size-3.5" />
       </button>
     </div>
   )
 }
+
+/** Plain names of the app's palette colors (model/elements.ts), read out for their swatches. */
+const COLOR_NAMES: Record<string, string> = {
+  '#111827': 'Black',
+  '#1d4ed8': 'Blue',
+  '#c81e1e': 'Red',
+  '#047857': 'Green',
+  '#7c3aed': 'Purple',
+  '#ffffff': 'White',
+  '#fde047': 'Yellow',
+}
+
+/** A color's plain name; a color the palette doesn't name (a custom one) by its hex code. */
+const colorName = (hex: string) => COLOR_NAMES[hex.toLowerCase()] ?? hex
+
+/**
+ * A round swatch (with a 1px border). On touch screens an invisible margin makes it a 40px target;
+ * the row's gaps are twice that margin, so neighbouring targets meet without overlapping. Forced
+ * colors mode (Windows Contrast themes) would blank it: its color is its content, so it keeps it
+ * there, edged in the text color; the chosen one is ringed in the system highlight color.
+ */
+const SWATCH =
+  "relative rounded-full border ring-offset-2 ring-offset-surface transition-shadow forced-color-adjust-none forced-colors:border-[CanvasText] forced-colors:ring-[Highlight] forced-colors:ring-offset-[Canvas] forced-colors:focus-visible:outline-[Highlight] pointer-coarse:before:absolute pointer-coarse:before:content-['']"
+
+// The margin is measured from inside the border.
+const SWATCH_SIZES = {
+  sm: { swatch: 'size-5 pointer-coarse:before:-inset-[11px]', gap: 'pointer-coarse:gap-5' },
+  md: { swatch: 'size-6 pointer-coarse:before:-inset-[9px]', gap: 'pointer-coarse:gap-4' },
+}
+
+/** A swatch's edge: ≥ 3:1 against the popover where its own color isn't (white on white, black on dark). */
+const swatchEdge = (color: string) => (isLight(color) ? 'border-control dark:border-white/15' : 'border-black/10 dark:border-control')
 
 /** Row of color swatches plus an optional custom color picker. */
 export function ColorSwatches({
@@ -223,10 +267,10 @@ export function ColorSwatches({
   label?: string
   className?: string
 }) {
-  const dim = size === 'sm' ? 'size-5' : 'size-6'
+  const dim = SWATCH_SIZES[size]
   const isCustom = value !== null && !colors.some((c) => c.toLowerCase() === value.toLowerCase())
   return (
-    <div className={cn('flex flex-wrap items-center gap-1.5', className)} role="radiogroup" aria-label={label}>
+    <div className={cn('flex flex-wrap items-center gap-1.5', dim.gap, className)} role="radiogroup" aria-label={label}>
       {allowNone && (
         <button
           type="button"
@@ -234,13 +278,10 @@ export function ColorSwatches({
           aria-checked={value === null}
           aria-label="No color"
           onClick={() => onChange(null)}
-          className={cn(
-            dim,
-            'relative overflow-hidden rounded-full border border-line-strong bg-surface ring-offset-2 ring-offset-surface transition-shadow',
-            value === null && 'ring-2 ring-accent',
-          )}
+          className={cn(dim.swatch, SWATCH, 'border-control bg-surface', value === null && 'ring-2 ring-accent')}
         >
-          <span className="absolute left-1/2 top-1/2 h-px w-[140%] -translate-x-1/2 -translate-y-1/2 -rotate-45 bg-danger" />
+          {/* A slash across the circle, edge to edge. */}
+          <span className="absolute left-1/2 top-1/2 h-px w-full -translate-x-1/2 -translate-y-1/2 -rotate-45 bg-danger" />
         </button>
       )}
       {colors.map((c) => {
@@ -251,13 +292,9 @@ export function ColorSwatches({
             type="button"
             role="radio"
             aria-checked={selected}
-            aria-label={c}
+            aria-label={colorName(c)}
             onClick={() => onChange(c)}
-            className={cn(
-              dim,
-              'inline-flex items-center justify-center rounded-full border border-black/10 ring-offset-2 ring-offset-surface transition-shadow dark:border-white/15',
-              selected && 'ring-2 ring-accent',
-            )}
+            className={cn(dim.swatch, SWATCH, 'inline-flex items-center justify-center', swatchEdge(c), selected && 'ring-2 ring-accent')}
             style={{ background: c }}
           >
             {selected && <Check className={cn('size-3', isLight(c) ? 'text-black/70' : 'text-white')} strokeWidth={3} />}
@@ -267,8 +304,10 @@ export function ColorSwatches({
       {allowCustom && (
         <label
           className={cn(
-            dim,
-            'relative inline-flex items-center justify-center overflow-hidden rounded-full border border-black/10 ring-offset-2 ring-offset-surface dark:border-white/15',
+            dim.swatch,
+            SWATCH,
+            'inline-flex items-center justify-center',
+            isCustom && value ? swatchEdge(value) : 'border-black/10 dark:border-white/15',
             isCustom && 'ring-2 ring-accent',
           )}
           style={{ background: isCustom && value ? value : 'conic-gradient(#f43f5e, #f59e0b, #84cc16, #06b6d4, #6366f1, #d946ef, #f43f5e)' }}
@@ -278,7 +317,8 @@ export function ColorSwatches({
             type="color"
             value={value ?? '#000000'}
             onChange={(e) => onChange(e.target.value)}
-            className="absolute inset-0 cursor-pointer opacity-0"
+            // size-full: a color input keeps its own (wider) size otherwise.
+            className="absolute inset-0 size-full cursor-pointer opacity-0"
           />
         </label>
       )}
@@ -300,7 +340,8 @@ export function Input({ className, ...props }: ComponentProps<'input'>) {
   return (
     <input
       className={cn(
-        'h-9 w-full rounded-lg border border-line bg-surface px-3 text-sm text-fg shadow-xs outline-none transition-[border-color,box-shadow] placeholder:text-fg-subtle hover:border-line-strong focus:border-accent focus:ring-3 focus:ring-accent/20 disabled:opacity-50',
+        // focus:outline-hidden: the ring shows focus, and forced colors mode (which drops rings) an outline.
+        'h-9 w-full rounded-lg border border-control bg-surface px-3 text-sm text-fg shadow-xs transition-[border-color,box-shadow] placeholder:text-fg-subtle hover:border-fg-subtle focus:border-accent focus:ring-3 focus:ring-accent/20 focus:outline-hidden disabled:opacity-50',
         className,
       )}
       {...props}

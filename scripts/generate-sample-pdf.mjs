@@ -356,8 +356,8 @@ function drawPage1(doc, form, page, fonts) {
   y += 42
   label(c, 'Country', M, y)
   label(c, 'How did you hear about us?', right, y, { hint: 'choose any' })
+  // No arrow drawn on the page: viewers show their own on the drop-down, which covers the box.
   fieldBox(c, M, y + 6, COL, 24)
-  c.path(`M${M + COL - 17},${y + 16} l4,4 l4,-4`, { borderColor: C.muted, borderWidth: 1.2 })
   const country = form.createDropdown('Country')
   country.addOptions([
     'Australia',
@@ -372,7 +372,7 @@ function drawPage1(doc, form, page, fonts) {
     'United States',
     'Other',
   ])
-  country.addToPage(page, bare(c.pdfRect(M, y + 6, COL - 24, 24), 4))
+  country.addToPage(page, bare(c.pdfRect(M, y + 6, COL, 24), 4))
   country.setFontSize(10.5)
   setTooltip(country, 'Country')
   c.text('Where you live now', M, y + 42, { size: 7.5, color: C.subtle })

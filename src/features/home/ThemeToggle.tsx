@@ -4,7 +4,7 @@ import { cn } from '../../lib/utils/misc'
 import { setThemePreference, useTheme, type ThemePreference } from '../../lib/theme'
 import { THEME_OPTIONS } from './themeOptions'
 
-/** Compact light / dark / system switch. */
+/** Compact light / dark / system switch (40px targets on touch screens). */
 export function ThemeToggle({ className }: { className?: string }) {
   const { preference } = useTheme()
   return (
@@ -20,7 +20,7 @@ export function ThemeToggle({ className }: { className?: string }) {
           <ToggleGroup.Item
             value={value}
             aria-label={`${label} theme`}
-            className="inline-flex size-7 items-center justify-center rounded-full text-fg-subtle transition-colors hover:text-fg data-[state=on]:bg-surface data-[state=on]:text-fg data-[state=on]:shadow-xs"
+            className="inline-flex size-7 items-center justify-center rounded-full text-fg-subtle transition-colors hover:text-fg data-[state=on]:bg-surface data-[state=on]:text-fg data-[state=on]:shadow-xs pointer-coarse:size-10"
           >
             <Icon className="size-[15px]" strokeWidth={2} />
           </ToggleGroup.Item>

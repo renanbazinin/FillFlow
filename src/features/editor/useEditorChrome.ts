@@ -52,6 +52,8 @@ export function useEditorChrome(): void {
           const s = useEditor.getState()
           if (s.doc?.id !== docId) return
           announced.add(docId)
+          // Already in a field: the hint has nothing to add, and would sit over the fields.
+          if (s.activeFieldName !== null) return
           const count = fillableFieldCount(s.doc.formFields)
           const formVisible =
             s.rightPanelOpen && s.rightPanelTab === 'form' && window.matchMedia(RIGHT_PANEL_INLINE).matches
@@ -77,8 +79,17 @@ export function useEditorChrome(): void {
               : { label: 'Show form', onClick: () => useEditor.getState().setRightPanelOpen(true, 'form') },
           })
         }, 450)
+    // Once a field is in use, the hint has done its job: it goes rather than cover the fields
+    // (Tab moves on to the ones further down, where it sits).
+    const unsubscribe = useEditor.subscribe(
+      (s) => s.activeFieldName,
+      (name) => {
+        if (name !== null) toast.dismiss(toastId)
+      },
+    )
     return () => {
       window.clearTimeout(timer)
+      unsubscribe()
       // It's about this document: don't let it linger on the home screen or over the next file.
       toast.dismiss(toastId)
     }

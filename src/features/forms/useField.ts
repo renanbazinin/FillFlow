@@ -1,8 +1,9 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { coerceValue, storedValue } from '../../lib/pdf/forms/values'
 import { isMac } from '../../lib/utils/misc'
 import type { FormField, FormValue } from '../../model/types'
 import { useEditor } from '../../store/editor'
+import { shortcutLetter } from '../elements/lib/keys'
 import { focusAdjacentField } from './navigation'
 import { fieldSigned } from './signed'
 
@@ -49,11 +50,73 @@ export function useFieldSigned(field: FormField): boolean {
   return useEditor((s) => fieldSigned(s.elements, field))
 }
 
+type HistoryKeyEvent = Pick<
+  React.KeyboardEvent,
+  'key' | 'code' | 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey' | 'preventDefault' | 'stopPropagation'
+> & { nativeEvent: Pick<KeyboardEvent, 'isComposing'> }
+
+/**
+ * ⌘/Ctrl+Z, ⌘/Ctrl+Shift+Z and (not on Apple platforms) Ctrl+Y inside a field (on the page or in
+ * the form panel) run the editor's undo/redo, like everywhere else. The browser's own undo would
+ * change whichever field it last saw typing in, page and panel copies alike. Letters go by
+ * physical key where the layout types no Latin letter (Hebrew…). True when the key was handled.
+ */
+export function routeHistoryKeys(e: HistoryKeyEvent): boolean {
+  const mod = isMac ? e.metaKey : e.ctrlKey
+  if (!mod || e.altKey || e.nativeEvent.isComposing) return false
+  const letter = shortcutLetter(e)
+  const redo = (letter === 'z' && e.shiftKey) || (letter === 'y' && !isMac)
+  if (letter !== 'z' && !redo) return false
+  e.preventDefault()
+  e.stopPropagation()
+  const s = useEditor.getState()
+  if (redo) s.redo()
+  else s.undo()
+  return true
+}
+
+/** A control of a form field, on the page or in the form panel. */
+function inField(node: EventTarget | null): boolean {
+  return node instanceof Element && node.closest('[data-form-field], [data-panel-field]') !== null
+}
+
+/**
+ * The browser keeps one undo history for the whole page, so its own undo — ⌘/Ctrl+Z in a box that
+ * isn't a field (a text item, the file name…), or a menu's Undo — can reach back into a field: it
+ * changes the field behind the editor's back and moves focus into it. Fields undo through the
+ * editor only: the browser's undo or redo of a field is cancelled, and from inside a field (its
+ * context menu) the editor's runs instead, as with the keys (`routeHistoryKeys`). One already
+ * cancelled (by another guard) is left alone.
+ */
+export function guardNativeHistory(
+  e: Pick<InputEvent, 'inputType' | 'target' | 'cancelable' | 'defaultPrevented' | 'preventDefault'>,
+  focused: Element | null,
+): void {
+  if ((e.inputType !== 'historyUndo' && e.inputType !== 'historyRedo') || !e.cancelable || e.defaultPrevented) return
+  const fromField = inField(focused)
+  if (!fromField && !inField(e.target)) return
+  e.preventDefault()
+  if (!fromField) return
+  const s = useEditor.getState()
+  if (e.inputType === 'historyRedo') s.redo()
+  else s.undo()
+}
+
+/** Keeps the browser's own undo out of the fields while mounted (`guardNativeHistory`). */
+export function useNativeHistoryGuard(on = true): void {
+  useEffect(() => {
+    if (!on) return
+    // A native listener: React's onBeforeInput is a stand-in without `inputType`.
+    const listener = (e: InputEvent) => guardNativeHistory(e, document.activeElement)
+    document.addEventListener('beforeinput', listener, true)
+    return () => document.removeEventListener('beforeinput', listener, true)
+  }, [on])
+}
+
 /**
  * Focus bookkeeping and keyboard behaviour shared by every on-page control:
  * focus/blur keep `activeFieldName` in sync, ⌘/Ctrl+Z/Y route to the editor's undo history
- * (instead of the input's private one), Enter (single-line) moves to the next field, and
- * Escape leaves the field.
+ * (`routeHistoryKeys`), Enter (single-line) moves to the next field, and Escape leaves the field.
  */
 export function useControlEvents(field: FormField, opts: { enterAdvances?: boolean } = {}) {
   const enterAdvances = opts.enterAdvances ?? false
@@ -64,16 +127,7 @@ export function useControlEvents(field: FormField, opts: { enterAdvances?: boole
   }, [field.name])
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLElement>) => {
-      const mod = isMac ? e.metaKey : e.ctrlKey
-      const key = e.key.toLowerCase()
-      if (mod && !e.altKey && (key === 'z' || key === 'y')) {
-        e.preventDefault()
-        e.stopPropagation()
-        const s = useEditor.getState()
-        if (key === 'y' || e.shiftKey) s.redo()
-        else s.undo()
-        return
-      }
+      if (routeHistoryKeys(e)) return
       if (e.key === 'Escape') {
         e.stopPropagation()
         e.currentTarget.blur()

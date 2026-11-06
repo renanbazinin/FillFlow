@@ -3,6 +3,8 @@ import type { Point, TextAlign } from '../../../model/types'
 import { textCss } from '../render/textStyle'
 
 const RTL = /[֐-ࣿיִ-﷿ﹰ-ﻼ]/
+/** Where (CSS px from the viewport's left edge) a line is hit-tested by `caretInBidiLine`. */
+const HIT_X = 8
 
 type CaretDocument = Document & {
   caretPositionFromPoint?(x: number, y: number): { offsetNode: Node; offset: number } | null
@@ -34,8 +36,12 @@ function caretInBidiLine(line: string, style: TextStyle, x: number): number | nu
   probe.textContent = line
   document.body.append(probe)
   try {
+    // The browser finds no caret outside the viewport: the probe moves left so that the point
+    // `x` points into it is near the viewport's left edge, however long the line is.
+    const into = Math.min(Math.max(x, 0.5), probe.getBoundingClientRect().width - 0.5)
+    probe.style.left = `${HIT_X - into}px`
     const box = probe.getBoundingClientRect()
-    const px = box.left + Math.min(Math.max(x, 0.5), box.width - 0.5)
+    const px = box.left + into
     const py = box.top + box.height / 2
     let node: Node | null = null
     let offset = 0

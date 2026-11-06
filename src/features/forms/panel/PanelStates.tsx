@@ -53,7 +53,7 @@ function ToolChips() {
               <span className="block text-[13px] font-medium text-fg">{tool.label}</span>
               <span className="block text-[11.5px] leading-snug text-fg-subtle">{tool.hint}</span>
             </span>
-            {tool.shortcut && <Kbd>{tool.shortcut}</Kbd>}
+            {tool.shortcut && <Kbd className="pointer-coarse:hidden">{tool.shortcut}</Kbd>}
           </button>
         )
       })}

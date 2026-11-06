@@ -4,12 +4,13 @@ import { scrollBehavior } from '../../../lib/utils/motion'
 import type { FormField } from '../../../model/types'
 import { useEditor } from '../../../store/editor'
 import { revealField } from '../navigation'
-import { useIsActiveField } from '../useField'
+import { routeHistoryKeys, useIsActiveField } from '../useField'
 import { FieldInput } from './FieldInput'
 
 /**
  * One field in the panel. Focusing anything inside makes it the active field and scrolls the
- * page to it; when a field becomes active from the page, the row scrolls into view.
+ * page to it; when a field becomes active from the page, the row scrolls into view. ⌘/Ctrl+Z/Y
+ * in any of its controls undo and redo like on the page.
  */
 export const FieldRow = memo(function FieldRow({ field }: { field: FormField }) {
   const active = useIsActiveField(field.name)
@@ -36,8 +37,9 @@ export const FieldRow = memo(function FieldRow({ field }: { field: FormField }) 
         const s = useEditor.getState()
         if (s.activeFieldName === field.name) s.setActiveField(null)
       }}
+      onKeyDown={routeHistoryKeys}
     >
-      {active && <span aria-hidden className="absolute inset-y-2.5 left-0 w-[3px] rounded-full bg-accent" />}
+      {active && <span aria-hidden className="absolute inset-y-2.5 left-0 w-[3px] rounded-full bg-accent forced-colors:bg-[Highlight]" />}
       <FieldInput field={field} />
     </div>
   )

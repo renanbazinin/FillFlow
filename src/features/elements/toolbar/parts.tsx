@@ -1,24 +1,25 @@
-import { useState, type ComponentProps, type KeyboardEvent, type ReactNode } from 'react'
+import { useRef, useState, type ComponentProps, type KeyboardEvent, type ReactNode } from 'react'
 import { Blend, Minus, Plus } from 'lucide-react'
 import { ColorSwatches, Separator, Slider } from '../../../components/ui/controls'
-import { Popover, PopoverContent, PopoverTrigger } from '../../../components/ui/menu'
+import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '../../../components/ui/menu'
 import { Tooltip } from '../../../components/ui/tooltip'
 import { INK_COLORS } from '../../../model/elements'
 import { clamp, cn } from '../../../lib/utils/misc'
 import { keepEditorFocus, preventFocusWhileEditing } from './focus'
+import { POPOVER_FIT, useAwayPopover } from './popoverSide'
 
 export function ToolbarSeparator({ className }: { className?: string }) {
   return <Separator orientation="vertical" className={cn('mx-1 h-5', className)} />
 }
 
-/** A compact trigger button used by the toolbar popovers. */
+/** A compact trigger button used by the toolbar popovers (40px on touch, like the toolbar's other buttons). */
 export function TriggerButton({ label, children, className, ...props }: { label: string; children: ReactNode; className?: string } & ComponentProps<'button'>) {
   return (
     <button
       type="button"
       aria-label={label}
       className={cn(
-        'inline-flex h-8 min-w-8 shrink-0 items-center justify-center gap-1 rounded-lg px-1.5 text-fg-muted transition-colors hover:bg-surface-3 hover:text-fg data-[state=open]:bg-surface-3 data-[state=open]:text-fg',
+        'inline-flex h-8 min-w-8 shrink-0 items-center justify-center gap-1 rounded-lg px-1.5 text-fg-muted transition-colors hover:bg-surface-3 hover:text-fg data-[state=open]:bg-surface-3 data-[state=open]:text-fg pointer-coarse:h-10 pointer-coarse:min-w-10',
         className,
       )}
       {...props}
@@ -73,24 +74,31 @@ export function ColorButton({
   variant?: 'fill' | 'stroke' | 'text'
   colors?: readonly string[]
 }) {
+  const trigger = useRef<HTMLButtonElement>(null)
+  const content = useRef<HTMLDivElement>(null)
+  const away = useAwayPopover(trigger, content)
   return (
-    <Popover>
+    <Popover {...away.root}>
+      <PopoverAnchor virtualRef={away.virtualRef} />
       <Tooltip content={label}>
         <PopoverTrigger asChild>
-          <TriggerButton label={label}>
+          <TriggerButton ref={trigger} label={label}>
             <Swatch value={value} variant={variant} />
           </TriggerButton>
         </PopoverTrigger>
       </Tooltip>
       <PopoverContent
-        side="bottom"
-        className="w-auto"
+        ref={content}
+        side={away.side}
+        // Named as written ("Text color"), not as its caption shows it: browsers read that out in capitals.
+        aria-label={label}
+        className={cn('w-auto', POPOVER_FIT)}
         onMouseDown={keepEditorFocus}
         onOpenAutoFocus={preventFocusWhileEditing}
         onCloseAutoFocus={preventFocusWhileEditing}
       >
         <div className="mb-2 px-0.5 text-[11px] font-semibold uppercase tracking-wide text-fg-subtle">{label}</div>
-        <ColorSwatches value={value} onChange={onChange} colors={colors} allowNone={allowNone} />
+        <ColorSwatches value={value} onChange={onChange} colors={colors} allowNone={allowNone} label={label} />
       </PopoverContent>
     </Popover>
   )
@@ -100,7 +108,8 @@ const fmt = (n: number) => (Math.round(n * 10) / 10).toString()
 
 /**
  * − value + stepper. Unlike a live-parsed field, typing only applies on Enter/blur, so a value
- * can pass through out-of-range digits ("1" → "14") without being clamped mid-way.
+ * can pass through out-of-range digits ("1" → "14") without being clamped mid-way. On touch it
+ * grows so its buttons and field get the toolbar's 40px (inside the border).
  */
 export function SizeField({
   label,
@@ -149,7 +158,7 @@ export function SizeField({
   }
   return (
     <div
-      className={cn('inline-flex h-8 shrink-0 items-center rounded-lg border border-line bg-surface', className)}
+      className={cn('inline-flex h-8 shrink-0 items-center rounded-lg border border-line bg-surface pointer-coarse:h-[42px]', className)}
       role="group"
       aria-label={label}
       title={locked ? `Unlock to change the ${label.toLowerCase()}` : undefined}
@@ -159,7 +168,7 @@ export function SizeField({
         aria-label={`Decrease ${label.toLowerCase()}`}
         onClick={() => set(value - step)}
         disabled={locked || value <= min}
-        className="inline-flex h-full w-7 items-center justify-center rounded-l-lg text-fg-muted hover:bg-surface-3 hover:text-fg disabled:opacity-40"
+        className="inline-flex h-full w-7 items-center justify-center rounded-l-lg text-fg-muted hover:bg-surface-3 hover:text-fg disabled:opacity-40 pointer-coarse:w-10"
       >
         <Minus className="size-3.5" />
       </button>
@@ -172,14 +181,14 @@ export function SizeField({
         onBlur={commit}
         onKeyDown={onKeyDown}
         disabled={locked}
-        className="h-full w-9 bg-transparent text-center text-[13px] font-medium tabular-nums text-fg outline-none disabled:opacity-40"
+        className="h-full w-9 bg-transparent text-center text-[13px] font-medium tabular-nums text-fg outline-none disabled:opacity-40 pointer-coarse:w-10"
       />
       <button
         type="button"
         aria-label={`Increase ${label.toLowerCase()}`}
         onClick={() => set(value + step)}
         disabled={locked || value >= max}
-        className="inline-flex h-full w-7 items-center justify-center rounded-r-lg text-fg-muted hover:bg-surface-3 hover:text-fg disabled:opacity-40"
+        className="inline-flex h-full w-7 items-center justify-center rounded-r-lg text-fg-muted hover:bg-surface-3 hover:text-fg disabled:opacity-40 pointer-coarse:w-10"
       >
         <Plus className="size-3.5" />
       </button>
@@ -219,17 +228,28 @@ export function SliderRow({
 /** Opacity (0–1) behind a "100%" button. */
 export function OpacityButton({ value, onChange }: { value: number; onChange: (v: number) => void }) {
   const pct = Math.round(value * 100)
+  const trigger = useRef<HTMLButtonElement>(null)
+  const content = useRef<HTMLDivElement>(null)
+  const away = useAwayPopover(trigger, content)
   return (
-    <Popover>
+    <Popover {...away.root}>
+      <PopoverAnchor virtualRef={away.virtualRef} />
       <Tooltip content="Opacity">
         <PopoverTrigger asChild>
-          <TriggerButton label={`Opacity ${pct}%`} className="px-2 text-[12px] font-medium tabular-nums">
+          <TriggerButton ref={trigger} label={`Opacity ${pct}%`} className="px-2 text-[12px] font-medium tabular-nums">
             <Blend className="size-4" />
             {pct}%
           </TriggerButton>
         </PopoverTrigger>
       </Tooltip>
-      <PopoverContent side="bottom" className="w-56" onOpenAutoFocus={preventFocusWhileEditing} onCloseAutoFocus={preventFocusWhileEditing}>
+      <PopoverContent
+        ref={content}
+        side={away.side}
+        aria-label="Opacity"
+        className={cn('w-56', POPOVER_FIT)}
+        onOpenAutoFocus={preventFocusWhileEditing}
+        onCloseAutoFocus={preventFocusWhileEditing}
+      >
         <SliderRow label="Opacity" value={pct} display={`${pct}%`} onChange={(v) => onChange(v / 100)} min={5} max={100} step={1} />
       </PopoverContent>
     </Popover>

@@ -1,14 +1,12 @@
 import { useEffect } from 'react'
 import { FileUp, FileX } from 'lucide-react'
+import { OPEN_OVERLAY } from '../../components/ui/modal'
 import { useSaveStatusStore } from '../../lib/storage/saveStatus'
 import { cn } from '../../lib/utils/misc'
 import { useEditor } from '../../store/editor'
 import { classifyDrag, dragHasFiles, setFileDrag, useFileDrag } from './fileDrag'
 import { openFirstPdf } from './openFile'
 import { displayName } from './pdfFiles'
-
-/** Open dialogs and sheets, confirmations, popovers (dialogs too) and menus. */
-const OPEN_OVERLAY = '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"], [role="menu"][data-state="open"]'
 
 /**
  * While something modal is up, a drop must not swap the document underneath it. Nor while a

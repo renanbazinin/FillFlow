@@ -219,6 +219,96 @@ describe('documents', () => {
     await remember('a', 5000)
     expect(await db.getRecentDocument('a')).toMatchObject({ openedAt: 5000, editedAt: 3000 })
   })
+
+  it('lists a document whose file there is no room for, marked as such, and says why it wasn’t stored', async () => {
+    const quota = new DOMException('The quota has been exceeded.', 'QuotaExceededError')
+    const put = IDBObjectStore.prototype.put
+    const full = vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(function (this: IDBObjectStore, ...args: Parameters<IDBObjectStore['put']>) {
+      // No room for the file; its small recents entry still fits.
+      if (this.name === 'files') throw quota
+      return put.apply(this, args)
+    })
+    now = 1000
+    await expect(db.rememberDocument({ id: 'big', name: 'big.pdf', size: 3, pageCount: 2 }, bytesOf(1, 2, 3))).rejects.toBe(quota)
+    full.mockRestore()
+    expect(await db.loadDocumentBytes('big')).toBeNull()
+    expect(await db.listRecentDocuments()).toEqual([
+      { id: 'big', name: 'big.pdf', size: 3, pageCount: 2, addedAt: 1000, openedAt: 1000, fileMissing: true },
+    ])
+    // Opened again with room for it: stored, and no longer marked.
+    await remember('big', 2000)
+    expect(await db.loadDocumentBytes('big')).toEqual(bytesOf(1, 2, 3))
+    expect((await db.getRecentDocument('big'))?.fileMissing).toBeUndefined()
+  })
+
+  it('lists a document whose file there is no room for even where the write after that one fails too', async () => {
+    const quota = new DOMException('The quota has been exceeded.', 'QuotaExceededError')
+    const put = IDBObjectStore.prototype.put
+    let refused = false
+    const full = vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(function (this: IDBObjectStore, ...args: Parameters<IDBObjectStore['put']>) {
+      if (this.name === 'files') {
+        refused = true
+        throw quota
+      }
+      // As in Chrome, which still counts the refused file for a moment: the next write to the
+      // recents list fails too, small as it is.
+      if (this.name === 'recents' && refused) {
+        refused = false
+        throw quota
+      }
+      return put.apply(this, args)
+    })
+    now = 1000
+    await expect(db.rememberDocument({ id: 'big', name: 'big.pdf', size: 3, pageCount: 2 }, bytesOf(1, 2, 3))).rejects.toBe(quota)
+    full.mockRestore()
+    expect(await db.getRecentDocument('big')).toEqual({ id: 'big', name: 'big.pdf', size: 3, pageCount: 2, addedAt: 1000, openedAt: 1000, fileMissing: true })
+    expect(await db.loadDocumentBytes('big')).toBeNull()
+  })
+
+  it('stores no file that it can’t list', async () => {
+    const quota = new DOMException('The quota has been exceeded.', 'QuotaExceededError')
+    const put = IDBObjectStore.prototype.put
+    const full = vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(function (this: IDBObjectStore, ...args: Parameters<IDBObjectStore['put']>) {
+      if (this.name === 'recents') throw quota
+      return put.apply(this, args)
+    })
+    await expect(remember('a', 1000)).rejects.toBe(quota)
+    full.mockRestore()
+    expect(await db.listRecentDocuments()).toEqual([])
+    // Nothing would ever take it off the device again.
+    expect(await db.loadDocumentBytes('a')).toBeNull()
+  })
+
+  it('tells whether work is saved for a document', async () => {
+    expect(await db.hasSession('a')).toBe(false)
+    await db.saveSession(session('a'))
+    expect(await db.hasSession('a')).toBe(true)
+  })
+
+  it('tells the other tabs which documents’ work it deletes', async () => {
+    const otherTab = new BroadcastChannel(db.SESSIONS_CHANNEL)
+    const heard: unknown[] = []
+    otherTab.onmessage = (e) => heard.push(e.data)
+    try {
+      await remember('a', 1000)
+      await db.saveSession(session('a'))
+      await db.forgetDocument('a')
+      await db.saveSession(session('unlisted'))
+      await db.forgetUnlistedSessions()
+      await db.saveSession(session('stale', { updatedAt: 1 }))
+      now = 1_800_000_000_000
+      await db.forgetStaleSessions()
+      await vi.waitFor(() =>
+        expect(heard).toEqual([
+          { docId: 'a', removed: true },
+          { docId: 'unlisted', removed: true },
+          { docId: 'stale', removed: true },
+        ]),
+      )
+    } finally {
+      otherTab.close()
+    }
+  })
 })
 
 describe('sessions', () => {
@@ -306,10 +396,72 @@ describe('sessions', () => {
     expect(fresh.updatedAt).toBe(9)
   })
 
-  it('compare-and-swap: work deleted elsewhere is written again', async () => {
+  it('compare-and-swap: work deleted since this tab saved or loaded it isn’t written back', async () => {
     const version = { updatedAt: 5 }
-    await db.saveSession(session('a', { updatedAt: 6 }), version)
-    expect((await db.loadSession('a'))?.updatedAt).toBe(6)
+    await expect(db.saveSession(session('a', { updatedAt: 6 }), version)).rejects.toBeInstanceOf(db.SessionRemovedError)
+    expect(version.updatedAt).toBe(5)
+    expect(await db.loadSession('a')).toBeNull()
+    // Where this tab expects nothing (or can't tell), nothing stored is fine.
+    await db.saveSession(session('a', { updatedAt: 7 }), { updatedAt: 0 })
+    await db.saveSession(session('b', { updatedAt: 8 }), { updatedAt: null })
+    expect((await db.loadSession('a'))?.updatedAt).toBe(7)
+    expect((await db.loadSession('b'))?.updatedAt).toBe(8)
+  })
+
+  it('compare-and-swap: replaces a record it can’t read back, in a transaction of its own', async () => {
+    await db.saveSession(session('a', { updatedAt: 5, formValues: { Name: 'Lost' } }))
+    const get = IDBObjectStore.prototype.get
+    const put = IDBObjectStore.prototype.put
+    let doomed: IDBTransaction | null = null
+    vi.spyOn(IDBObjectStore.prototype, 'get').mockImplementation(function (this: IDBObjectStore, key: IDBValidKey | IDBKeyRange) {
+      if (this.transaction.mode !== 'readwrite') return get.call(this, key)
+      // Its data is gone (a missing blob file): the read fails, and, as in Chrome, so does
+      // anything else its transaction then writes.
+      doomed = this.transaction
+      const failing = {} as IDBRequest
+      queueMicrotask(() => failing.onerror?.call(failing, new Event('error', { cancelable: true })))
+      return failing
+    })
+    vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(function (this: IDBObjectStore, value: unknown, key?: IDBValidKey) {
+      if (this.transaction === doomed) throw new DOMException('Data lost due to missing file.', 'UnknownError')
+      return put.call(this, value, key)
+    })
+    const version = { updatedAt: null as number | null }
+    await db.saveSession(session('a', { updatedAt: 9, formValues: { Name: 'New' } }), version)
+    vi.restoreAllMocks()
+    expect(version.updatedAt).toBe(9)
+    expect((await db.loadSession('a'))?.formValues).toEqual({ Name: 'New' })
+  })
+})
+
+describe('when storage can’t be used at all', () => {
+  it('tells that apart from one record failing', async () => {
+    // Blocked for this site: opening the database fails.
+    vi.spyOn(IDBFactory.prototype, 'open').mockImplementation(() => {
+      const req = { error: new DOMException('The user denied permission to access the database.', 'UnknownError') } as unknown as IDBOpenDBRequest
+      queueMicrotask(() => req.onerror?.call(req, new Event('error')))
+      return req
+    })
+    await expect(db.loadSession('a')).rejects.toBeInstanceOf(db.StorageUnavailableError)
+    await expect(db.rememberDocument({ id: 'a', name: 'a.pdf', size: 3, pageCount: 1 }, bytesOf(1))).rejects.toBeInstanceOf(
+      db.StorageUnavailableError,
+    )
+    await expect(db.saveSession(session('a'))).rejects.toBeInstanceOf(db.StorageUnavailableError)
+    vi.restoreAllMocks()
+
+    // Storage works, but one record can't be read: not the same thing.
+    vi.spyOn(IDBObjectStore.prototype, 'get').mockImplementationOnce(() => {
+      throw new DOMException('Data lost due to missing file.', 'NotReadableError')
+    })
+    const failure = await db.loadSession('a').catch((err: unknown) => err)
+    expect(failure).toMatchObject({ name: 'NotReadableError' })
+    expect(failure).not.toBeInstanceOf(db.StorageUnavailableError)
+  })
+
+  it('says so where the browser has no IndexedDB', async () => {
+    globalThis.indexedDB = undefined as unknown as IDBFactory
+    await expect(db.loadSession('a')).rejects.toBeInstanceOf(db.StorageUnavailableError)
+    await expect(db.listRecentDocuments()).rejects.toBeInstanceOf(db.StorageUnavailableError)
   })
 })
 

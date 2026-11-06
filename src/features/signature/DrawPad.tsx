@@ -18,14 +18,38 @@ interface Live {
 /** Minimum distance (pad units) between recorded points; filters jitter and duplicates. */
 const MIN_STEP = 0.6
 
-export function DrawPad({ role }: { role: SignatureRole }) {
+/**
+ * The part of `el` that can be seen: its box, cut by the ancestors that clip what overflows them
+ * (up to the fixed-position dialog, which nothing above clips) and by the window.
+ */
+function visibleRect(el: Element): Pick<DOMRect, 'left' | 'top' | 'right' | 'bottom'> {
+  const r = el.getBoundingClientRect()
+  const rect = { left: Math.max(r.left, 0), top: Math.max(r.top, 0), right: Math.min(r.right, innerWidth), bottom: Math.min(r.bottom, innerHeight) }
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    const style = getComputedStyle(p)
+    if (style.overflowX !== 'visible' || style.overflowY !== 'visible') {
+      const b = p.getBoundingClientRect()
+      rect.left = Math.max(rect.left, b.left)
+      rect.top = Math.max(rect.top, b.top)
+      rect.right = Math.min(rect.right, b.right)
+      rect.bottom = Math.min(rect.bottom, b.bottom)
+    }
+    if (style.position === 'fixed') break
+  }
+  return rect
+}
+
+export function DrawPad({
+  role,
+  controls = true,
+}: {
+  role: SignatureRole
+  /** Show the DrawControls under the pad (false: they're shown elsewhere). */
+  controls?: boolean
+}) {
   const strokes = useSignatureDraft((s) => s.strokes[role])
   const color = useSignatureDraft((s) => s.color)
   const pen = useSignatureDraft((s) => s.pen)
-  const setColor = useSignatureDraft((s) => s.setColor)
-  const setPen = useSignatureDraft((s) => s.setPen)
-  const undo = useSignatureDraft((s) => s.undoStroke)
-  const clear = useSignatureDraft((s) => s.clearStrokes)
   const [inking, setInking] = useState(false)
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -98,7 +122,17 @@ export function DrawPad({ role }: { role: SignatureRole }) {
     const k = PAD_UNITS / rect.width
     const native = e.nativeEvent
     const events = native.getCoalescedEvents?.() ?? []
+    // Off the part of the pad that shows (past its edge, under the dialog's footer…) ink would end up
+    // in the signature unseen: the pen lifts there, and comes down again where it comes back.
+    const { left, top, right, bottom } = visibleRect(e.currentTarget)
     for (const ev of events.length ? events : [native]) {
+      if (ev.clientX < left || ev.clientX > right || ev.clientY < top || ev.clientY > bottom) {
+        if (l.stroke.points.length) {
+          useSignatureDraft.getState().addStroke(role, l.stroke)
+          l.stroke = { points: [], simulate: l.stroke.simulate }
+        }
+        continue
+      }
       const x = (ev.clientX - rect.left) * k
       const y = (ev.clientY - rect.top) * k
       const pts = l.stroke.points
@@ -140,12 +174,11 @@ export function DrawPad({ role }: { role: SignatureRole }) {
   }
 
   const empty = strokes.length === 0 && !inking
-  const canUndo = strokes.length > 0
   const noun = role === 'signature' ? 'signature' : 'initials'
 
   return (
     <div>
-      <div className={cn('relative select-none overflow-hidden rounded-xl border border-line bg-white shadow-xs', PAD_FRAME[role])}>
+      <div data-signing-pad className={cn('relative select-none overflow-hidden rounded-xl border border-line bg-white shadow-xs', PAD_FRAME[role])}>
         {/* Guides: part of the pad, never of the output. */}
         <div aria-hidden className="pointer-events-none absolute inset-x-[6%] top-[68%] h-px bg-black/15" />
         <div
@@ -157,11 +190,11 @@ export function DrawPad({ role }: { role: SignatureRole }) {
         <div
           aria-hidden
           className={cn(
-            'pointer-events-none absolute inset-x-0 top-[68%] pt-2.5 text-center text-xs font-medium text-black/40 transition-opacity duration-300',
+            'pointer-events-none absolute inset-x-0 top-[68%] pt-2.5 text-center text-xs font-medium text-black/60 transition-opacity duration-300',
             !empty && 'opacity-0',
           )}
         >
-          {role === 'signature' ? 'Sign above the line' : 'Write your initials above the line'}
+          {role === 'signature' ? 'Sign above the line' : 'Initial above the line'}
         </div>
         <canvas
           ref={canvasRef}
@@ -176,25 +209,43 @@ export function DrawPad({ role }: { role: SignatureRole }) {
         />
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
-        <InkSwatches value={color} onChange={setColor} />
-        <span aria-hidden className="h-5 w-px bg-line" />
-        <PenWidthPicker value={pen} onChange={setPen} />
-        {/* aria-disabled: emptying the pad must not take focus away from the button just used. */}
-        <div className="ml-auto flex items-center gap-0.5">
-          <Tooltip content="Undo last stroke" shortcut={`${modKeyLabel}+Z`} side="top">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => canUndo && undo(role)}
-              aria-disabled={!canUndo || undefined}
-              aria-label="Undo last stroke"
-              className={SOFT_DISABLED}
-            >
-              <Undo2 />
-              <span className="max-sm:hidden">Undo</span>
-            </Button>
-          </Tooltip>
+      {controls && <DrawControls role={role} className="mt-3" />}
+    </div>
+  )
+}
+
+/** Ink color, pen width, Undo and Clear for the drawing pad. `compact`: Undo and Clear show icons only. */
+export function DrawControls({ role, compact, className }: { role: SignatureRole; compact?: boolean; className?: string }) {
+  const color = useSignatureDraft((s) => s.color)
+  const pen = useSignatureDraft((s) => s.pen)
+  const canUndo = useSignatureDraft((s) => s.strokes[role].length > 0)
+  const setColor = useSignatureDraft((s) => s.setColor)
+  const setPen = useSignatureDraft((s) => s.setPen)
+  const undo = useSignatureDraft((s) => s.undoStroke)
+  const clear = useSignatureDraft((s) => s.clearStrokes)
+
+  return (
+    // Touch screens: bigger targets, so tighter spacing (and no divider) to keep them on one line.
+    <div className={cn('flex flex-wrap items-center gap-x-3 gap-y-2 pointer-coarse:gap-x-2', className)}>
+      <InkSwatches value={color} onChange={setColor} />
+      <span aria-hidden className="h-5 w-px bg-line pointer-coarse:hidden" />
+      <PenWidthPicker value={pen} onChange={setPen} />
+      {/* aria-disabled: emptying the pad must not take focus away from the button just used. */}
+      <div className="ml-auto flex items-center gap-0.5">
+        <Tooltip content="Undo last stroke" shortcut={`${modKeyLabel}+Z`} side="top">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => canUndo && undo(role)}
+            aria-disabled={!canUndo || undefined}
+            aria-label="Undo last stroke"
+            className={SOFT_DISABLED}
+          >
+            <Undo2 />
+            {!compact && <span className="max-sm:hidden">Undo</span>}
+          </Button>
+        </Tooltip>
+        <Tooltip content="Clear drawing" side="top">
           <Button
             variant="ghost"
             size="sm"
@@ -204,9 +255,9 @@ export function DrawPad({ role }: { role: SignatureRole }) {
             className={SOFT_DISABLED}
           >
             <Eraser />
-            <span className="max-sm:hidden">Clear</span>
+            {!compact && <span className="max-sm:hidden">Clear</span>}
           </Button>
-        </div>
+        </Tooltip>
       </div>
     </div>
   )

@@ -4,6 +4,7 @@
  */
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 import {
+  PDFArray,
   PDFDocument,
   PDFHexString,
   PDFName,
@@ -58,6 +59,44 @@ export async function pageText(pdf: Awaited<ReturnType<typeof openWithPdfjs>>['r
   return content.items.map((i) => ('str' in i ? i.str : '')).join(' ')
 }
 
+/**
+ * Renders a page the way PDF viewers show it: every annotation, form fields included, painted
+ * with its own appearance over the page (pdf.js AnnotationMode.ENABLE), on white. `inkIn` gives
+ * the fraction of dark pixels in a rect given in view space.
+ */
+export async function renderAsViewers(bytes: Uint8Array, pageNumber = 1, scale = 2) {
+  const pdf = await pdfjs.getDocument({ data: bytes.slice(), verbosity: 0 }).promise
+  try {
+    const page = await pdf.getPage(pageNumber)
+    const viewport = page.getViewport({ scale })
+    const width = Math.ceil(viewport.width)
+    const height = Math.ceil(viewport.height)
+    const factory = (pdf as unknown as { canvasFactory: { create(w: number, h: number): { canvas: unknown; context: CanvasRenderingContext2D } } })
+      .canvasFactory
+    const { canvas, context } = factory.create(width, height)
+    context.fillStyle = '#ffffff'
+    context.fillRect(0, 0, width, height)
+    await page.render({ canvas: canvas as HTMLCanvasElement, canvasContext: context, viewport, annotationMode: pdfjs.AnnotationMode.ENABLE }).promise
+    const { data } = context.getImageData(0, 0, width, height)
+    return {
+      inkIn(x: number, y: number, w: number, h: number): number {
+        let dark = 0
+        let total = 0
+        for (let py = Math.floor(y * scale); py < Math.ceil((y + h) * scale) && py < height; py++) {
+          for (let px = Math.floor(x * scale); px < Math.ceil((x + w) * scale) && px < width; px++) {
+            const i = (py * width + px) * 4
+            if (0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2] < 128) dark++
+            total++
+          }
+        }
+        return total ? dark / total : 0
+      },
+    }
+  } finally {
+    await pdf.loadingTask.destroy()
+  }
+}
+
 /** Decoded content of a widget's normal appearance stream. */
 export function appearanceContent(doc: PDFDocument, fieldName: string, widgetIndex = 0): string {
   const field = doc.getForm().getField(fieldName)
@@ -65,6 +104,13 @@ export function appearanceContent(doc: PDFDocument, fieldName: string, widgetInd
   const ref = widget.getNormalAppearance() as PDFRef
   const stream = doc.context.lookup(ref) as PDFRawStream
   return Array.from(decodePDFRawStream(stream).decode(), (b) => String.fromCharCode(b)).join('')
+}
+
+/** Decoded content of a page: its content streams, in order. */
+export function pageContent(doc: PDFDocument, pageIndex = 0): string {
+  const contents = doc.getPage(pageIndex).node.Contents()
+  const streams = contents instanceof PDFArray ? contents.asArray().map((ref) => doc.context.lookup(ref)) : [contents]
+  return streams.map((stream) => Array.from(decodePDFRawStream(stream as PDFRawStream).decode(), (b) => String.fromCharCode(b)).join('')).join('\n')
 }
 
 /** Hex strings shown with Tj in a content stream, in order. */

@@ -1,7 +1,9 @@
 import { memo } from 'react'
 import { elementLabel } from '../../../model/elements'
 import type { Element } from '../../../model/types'
+import { useEditor } from '../../../store/editor'
 import { lineEndpoints } from '../lib/geometry'
+import { useElementsUi } from '../state/ui'
 import { ElementContent } from './ElementContent'
 import { isHighlight, isLine } from './helpers'
 import { minHitPx } from './hitSize'
@@ -50,6 +52,11 @@ export const ElementView = memo(function ElementView({ el, scale, interactive, e
 
 function HitArea({ el, scale }: { el: Element; scale: number }) {
   const cursor = el.locked ? 'default' : 'move'
+  // One finger on an item that isn't selected (or can't move) scrolls the document like the page
+  // around it; a tap selects it, then a drag moves it. A pen grabs items straight away.
+  const grabs = useEditor((s) => s.selection.includes(el.id)) && !el.locked
+  const pen = useElementsUi((s) => s.penInput)
+  const touchAction = grabs || pen ? 'none' : 'pan-x pan-y'
   const min = minHitPx()
   if (isLine(el) && el.kind === 'shape') {
     const lw = el.width * scale
@@ -66,7 +73,7 @@ function HitArea({ el, scale }: { el: Element; scale: number }) {
           stroke="transparent"
           strokeWidth={Math.max(el.strokeWidth * scale, min * 0.6)}
           strokeLinecap="round"
-          style={{ pointerEvents: 'stroke', cursor, touchAction: 'none' }}
+          style={{ pointerEvents: 'stroke', cursor, touchAction }}
         />
       </svg>
     )
@@ -79,7 +86,7 @@ function HitArea({ el, scale }: { el: Element; scale: number }) {
     <div
       data-hit=""
       className="pointer-events-auto absolute"
-      style={{ left: -padX, right: -padX, top: -padY, bottom: -padY, cursor, touchAction: 'none' }}
+      style={{ left: -padX, right: -padX, top: -padY, bottom: -padY, cursor, touchAction }}
     />
   )
 }

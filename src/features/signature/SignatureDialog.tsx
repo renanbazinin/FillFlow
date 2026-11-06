@@ -8,17 +8,21 @@ import { Dialog } from '../../components/ui/dialog'
 import type { SavedSignature } from '../../lib/storage/db'
 import { cn, isEditableTarget, isMac } from '../../lib/utils/misc'
 import { useEditor } from '../../store/editor'
+import { useMediaQuery } from '../editor/useMediaQuery'
 import { shortcutLetter } from '../elements/lib/keys'
 import { isOpenShortcut, isSaveShortcut } from '../export/exportFile'
+import { viewer } from '../viewer/viewerApi'
 import { armPlacement, deleteSavedSignature, placeSavedSignature, releaseTool } from './actions'
 import { firstImageFile } from './decode'
 import { draftHasContent, SIGNATURE_TABS, useSignatureDraft, type SignatureTab } from './draft'
-import { DrawPad } from './DrawPad'
+import { DrawControls, DrawPad } from './DrawPad'
+import { fitPadInDialog } from './fit'
 import { preloadSignatureFonts, SIGNATURE_FONT_BY_ID } from './fonts'
 import { useSavedSignatures, useSignatureLibrary, type SignatureRole } from './library'
 import { SaveCheckbox, SavedTile } from './parts'
 import { renderDrawing, renderTyped, renderUpload, type RenderedImage } from './render'
 import { PEN_SIZES } from './strokes'
+import { SHORT_SCREEN } from './styles'
 import { TypePad } from './TypePad'
 import { UploadPad } from './UploadPad'
 import { loadUploadFile } from './upload'
@@ -59,9 +63,12 @@ export function SignatureDialog() {
   const setSave = useSignatureDraft((s) => s.setSave)
   const canUse = useSignatureDraft((s) => draftHasContent(s, role, s.tab))
   const saved = useSavedSignatures(role)
+  const short = useMediaQuery(SHORT_SCREEN)
   const [busy, setBusy] = useState(false)
   const bodyRef = useRef<HTMLDivElement>(null)
   const nameRef = useRef<HTMLInputElement>(null)
+  /** It was used (or a saved one picked) from the keyboard: focus goes on to the pages, where Enter places it. */
+  const keyed = useRef(false)
   const savedHeadingId = useId()
   const noun = role === 'signature' ? 'signature' : 'initials'
 
@@ -123,13 +130,15 @@ export function SignatureDialog() {
     releaseTool(role)
   }
 
-  const pickSaved = (item: SavedSignature) => {
+  const pickSaved = (item: SavedSignature, byKeyboard: boolean) => {
+    keyed.current = byKeyboard
     useEditor.getState().closeDialog()
     placeSavedSignature(item)
   }
 
-  const confirm = async () => {
+  const confirm = async (byKeyboard: boolean) => {
     if (busy || !openRole || !draftHasContent(useSignatureDraft.getState(), openRole, useSignatureDraft.getState().tab)) return
+    keyed.current = byKeyboard
     setBusy(true)
     try {
       await nextFrame() // let the spinner paint before the (synchronous) rasterization
@@ -205,7 +214,8 @@ export function SignatureDialog() {
       <Button variant="secondary" onClick={close} className="max-sm:flex-1">
         Cancel
       </Button>
-      <Button variant="primary" onClick={() => void confirm()} disabled={!canUse || busy} className="min-w-32 max-sm:flex-1">
+      {/* Pressing Enter or Space on a button fires a click with no click count. */}
+      <Button variant="primary" onClick={(e) => void confirm(e.detail === 0)} disabled={!canUse || busy} className="min-w-32 max-sm:flex-1">
         {busy && <Spinner />}
         {role === 'signature' ? 'Use signature' : 'Use initials'}
       </Button>
@@ -217,10 +227,19 @@ export function SignatureDialog() {
       open={openRole !== null}
       onOpenChange={(next) => !next && close()}
       title={role === 'signature' ? 'Add your signature' : 'Add your initials'}
-      description="Draw, type or upload it. It never leaves your device."
+      // A short screen has no room to spare for it: there it's only read out.
+      description={<span className={cn(short && 'sr-only')}>Draw, type or upload it. It never leaves your device.</span>}
       size="lg"
       dismissible={!busy}
       onOpenAutoFocus={onOpenAutoFocus}
+      onCloseAutoFocus={(e) => {
+        // Back on the dock button, Enter would open this dialog again.
+        if (keyed.current && useEditor.getState().placingAssetId !== null) {
+          e.preventDefault()
+          viewer.getScrollContainer()?.focus({ preventScroll: true })
+        }
+        keyed.current = false
+      }}
       footer={footer}
     >
       <div ref={bodyRef} onKeyDown={onKeyDown}>
@@ -234,7 +253,7 @@ export function SignatureDialog() {
                 <SavedTile
                   key={item.id}
                   item={item}
-                  onUse={() => pickSaved(item)}
+                  onUse={(e) => pickSaved(item, e.detail === 0)}
                   onDelete={() => void removeSaved(item)}
                   className={cn('h-[72px] shrink-0', role === 'signature' ? 'w-44' : 'w-28')}
                 />
@@ -248,33 +267,39 @@ export function SignatureDialog() {
           </section>
         )}
 
-        <Tabs.Root value={tab} onValueChange={(v) => setTab(v as SignatureTab)}>
-          <Tabs.List
-            aria-label={`How to create your ${noun}`}
-            // A pressed tab focuses itself. Without this, Radix takes the press for a click on the
-            // list, and the next Tab into the list stops on the list itself (unseen), not the tab.
-            onMouseDown={(e) => e.preventDefault()}
-            className="grid h-10 w-full grid-cols-3 items-center rounded-lg bg-surface-3 p-0.5 sm:inline-grid sm:h-9 sm:w-auto"
-          >
-            {SIGNATURE_TABS.map((t) => {
-              const { label, icon: Icon } = TABS[t]
-              return (
-                <Tabs.Trigger
-                  key={t}
-                  value={t}
-                  className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md px-4 text-[13px] font-medium text-fg-muted transition-colors hover:text-fg data-[state=active]:bg-surface data-[state=active]:text-fg data-[state=active]:shadow-xs sm:h-8"
-                >
-                  <Icon className="size-4" />
-                  {label}
-                </Tabs.Trigger>
-              )
-            })}
-          </Tabs.List>
+        <Tabs.Root ref={fitPadInDialog} value={tab} onValueChange={(v) => setTab(v as SignatureTab)}>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
+            <Tabs.List
+              aria-label={`How to create your ${noun}`}
+              // A pressed tab focuses itself. Without this, Radix takes the press for a click on the
+              // list, and the next Tab into the list stops on the list itself (unseen), not the tab.
+              onMouseDown={(e) => e.preventDefault()}
+              // Touch screens: 40px tabs.
+              className="grid h-10 w-full grid-cols-3 items-center rounded-lg bg-surface-3 p-0.5 sm:inline-grid sm:h-9 sm:w-auto pointer-coarse:min-h-11"
+            >
+              {SIGNATURE_TABS.map((t) => {
+                const { label, icon: Icon } = TABS[t]
+                return (
+                  <Tabs.Trigger
+                    key={t}
+                    value={t}
+                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md px-4 text-[13px] font-medium text-fg-muted transition-colors hover:text-fg data-[state=active]:bg-surface data-[state=active]:text-fg data-[state=active]:shadow-xs sm:h-8 pointer-coarse:min-h-10"
+                  >
+                    {!short && <Icon className="size-4" />}
+                    {label}
+                  </Tabs.Trigger>
+                )
+              })}
+            </Tabs.List>
+            {/* Short screen: the drawing controls sit up here, where the pad can't push them out of view. */}
+            {short && tab === 'draw' && <DrawControls role={role} compact className="ml-auto" />}
+          </div>
           <Tabs.Content value="draw" className="mt-4">
-            <DrawPad role={role} />
+            <DrawPad role={role} controls={!short} />
           </Tabs.Content>
           <Tabs.Content value="type" className="mt-4">
-            <TypePad role={role} onSubmit={() => void confirm()} inputRef={nameRef} />
+            {/* Enter in the name field: on a touch screen, its keyboard's Go key, and a tap places it. */}
+            <TypePad role={role} onSubmit={() => void confirm(!isCoarsePointer())} inputRef={nameRef} />
           </Tabs.Content>
           <Tabs.Content value="upload" className="mt-4">
             <UploadPad role={role} />

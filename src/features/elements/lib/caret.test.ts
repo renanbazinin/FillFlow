@@ -28,7 +28,7 @@ describe('caretIndexAt', () => {
     expect(caretIndexAt('abc', spaced, 'left', { x: 16, y: 1 }, measure)).toBe(2)
   })
 
-  it('clamps rows and puts the caret at the end of RTL lines', () => {
+  it('clamps rows and, without a DOM to lay them out, puts the caret at the end of RTL lines', () => {
     expect(caretIndexAt('ab\ncd', style, 'left', { x: 0, y: 500 }, measure)).toBe(3)
     expect(caretIndexAt('ab\ncd', style, 'left', { x: 0, y: -50 }, measure)).toBe(0)
     expect(caretIndexAt('שלום\nab', style, 'left', { x: 1, y: 2 }, measure)).toBe(4)

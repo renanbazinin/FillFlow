@@ -78,7 +78,7 @@ export const DropdownControl = memo(function DropdownControl({ field, widget, sc
       data-form-widget={widget.id}
       className={cn(
         fieldBoxClass({ interactive, active, filled: value !== '', required: field.required, readOnly }),
-        'group overflow-clip',
+        'overflow-clip',
         !interactive && 'pointer-events-none',
       )}
       style={rectStyle(widget.rect, scale)}
@@ -120,7 +120,8 @@ export const DropdownControl = memo(function DropdownControl({ field, widget, sc
           <ChevronDown
             aria-hidden
             strokeWidth={2.25}
-            className="pointer-events-none absolute right-[3px] top-1/2 -translate-y-1/2 text-selection/70 opacity-70 transition-opacity group-hover:opacity-100"
+            // Full strength: at least 3:1 against the field, as a control's parts need (WCAG 1.4.11).
+            className="pointer-events-none absolute right-[3px] top-1/2 -translate-y-1/2 text-selection"
             style={{ width: chevron, height: chevron }}
           />
         )}
@@ -153,6 +154,9 @@ export const ListboxControl = memo(function ListboxControl({ field, widget, scal
     paddingRight: 0,
     overflowY: 'auto',
     scrollbarWidth: 'none',
+    // Forced colors mode paints a list box on Canvas whatever its styles, even on the page (which
+    // keeps its own colors otherwise): its text takes the system colors too, or it could vanish.
+    forcedColorAdjust: 'auto',
   }
   const toggle = (v: string) => {
     if (readOnly) return
@@ -196,9 +200,10 @@ export const ListboxControl = memo(function ListboxControl({ field, widget, scal
               onMouseDown={
                 multi
                   ? (e) => {
-                      // Toggle on plain click instead of replacing the selection.
+                      // Toggle on plain click instead of replacing the selection. Focus as a press
+                      // does, without scrolling a list box that is partly out of view.
                       e.preventDefault()
-                      ;(e.currentTarget.parentElement as HTMLSelectElement | null)?.focus()
+                      ;(e.currentTarget.parentElement as HTMLSelectElement | null)?.focus({ preventScroll: true })
                       toggle(o.value)
                     }
                   : undefined

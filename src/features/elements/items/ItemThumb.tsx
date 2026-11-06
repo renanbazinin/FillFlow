@@ -10,12 +10,16 @@ import { inkPixelStrokes } from '../render/helpers'
 
 const TILE = 28
 
-/** A tiny, true-to-color preview of an element on a white "paper" tile. */
+/**
+ * A tiny, true-to-color preview of an element on a white "paper" tile. Forced colors mode (Windows
+ * Contrast themes) leaves it so, as it does the page: the tile would turn black in a dark palette
+ * and hide dark ink.
+ */
 export const ItemThumb = memo(function ItemThumb({ el }: { el: Element }) {
   return (
     <span
       aria-hidden
-      className="relative flex size-7 shrink-0 items-center justify-center overflow-hidden rounded-md border border-black/10 bg-white shadow-[0_1px_1px_rgb(16_24_40/0.06)] dark:border-white/10"
+      className="relative flex size-7 shrink-0 items-center justify-center overflow-hidden rounded-md border border-black/10 bg-white shadow-[0_1px_1px_rgb(16_24_40/0.06)] forced-color-adjust-none dark:border-white/10"
     >
       <ThumbContent el={el} />
     </span>

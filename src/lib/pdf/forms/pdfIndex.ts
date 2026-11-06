@@ -105,7 +105,7 @@ const PARENT = PDFName.of('Parent')
 const RECT = PDFName.of('Rect')
 
 /** Decodes a text string like pdf.js does (pdf-lib reads a UTF-8 BOM as PDFDocEncoding). */
-function pdfText(s: PDFString | PDFHexString): string {
+export function pdfText(s: PDFString | PDFHexString): string {
   const bytes = s.asBytes()
   if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) return new TextDecoder().decode(bytes.subarray(3))
   return s.decodeText()

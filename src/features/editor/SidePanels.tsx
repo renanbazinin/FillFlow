@@ -242,7 +242,7 @@ function TabTrigger({ value, count, children }: { value: InspectorTab; count: nu
   return (
     <Tabs.Trigger
       value={value}
-      className="group inline-flex h-7 items-center gap-1.5 rounded-[7px] px-2.5 text-[13px] font-medium text-fg-muted transition-colors hover:text-fg data-[state=active]:bg-surface data-[state=active]:text-fg data-[state=active]:shadow-xs"
+      className="group inline-flex h-7 items-center gap-1.5 rounded-[7px] px-2.5 text-[13px] font-medium text-fg-muted transition-colors hover:text-fg data-[state=active]:bg-surface data-[state=active]:text-fg data-[state=active]:shadow-xs pointer-coarse:h-10"
     >
       {children}
       <span className="min-w-[18px] rounded-full bg-line/80 px-1.5 text-center text-[11px] font-semibold leading-[18px] tabular-nums text-fg-muted group-data-[state=active]:bg-accent-soft group-data-[state=active]:text-accent-ink">

@@ -127,6 +127,11 @@
   --ff-shadow-1: rgb(16 24 40 / 0.07);
   --ff-shadow-2: rgb(16 24 40 / 0.2);
   --ff-shadow-3: rgb(16 24 40 / 0.32);
+  /* The safe-area insets, for script to read: menus and popovers keep clear of them (ui/menu.tsx). */
+  --ff-safe-top: env(safe-area-inset-top, 0px);
+  --ff-safe-right: env(safe-area-inset-right, 0px);
+  --ff-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --ff-safe-left: env(safe-area-inset-left, 0px);
 }
 
 .dark {
@@ -142,8 +147,11 @@
   --ff-fg: #e8ebf1;
   --ff-fg-muted: #a3acbb;
   --ff-fg-subtle: #8a94a6;
-  --ff-accent: #3a76f0;
-  --ff-accent-hover: #4c84f5;
+  /* White text on the accent (and on its hover) stays ≥ 4.5:1, and the accent as a focus ring or a
+     marker ≥ 3:1 on every surface, also on the accent-soft tint of an active or selected row (a narrow
+     window: a darker accent fails the tint, a lighter one the white text). */
+  --ff-accent: #3170ea;
+  --ff-accent-hover: #1d4fd8;
   --ff-accent-ink: #7aa7ff;
   --ff-accent-soft: rgb(122 167 255 / 0.15);
   --ff-accent-fg: #ffffff;
@@ -212,17 +220,76 @@
       scroll-behavior: auto !important;
     }
   }
+
+  /* Forced colors mode (Windows Contrast themes) recolors the page to the system palette. A PDF
+     page is white paper in every theme (its canvas is never recolored), so what is drawn on it
+     (fields, items, their selection) keeps its own colors. So does a signing pad, paper the ink is
+     drawn on (the page color would hide dark ink). */
+  @media (forced-colors: active) {
+    [data-page-index],
+    [data-signing-pad]:has(> canvas) {
+      forced-color-adjust: none;
+    }
+  }
+}
+
+/* Forced colors mode also drops fills and shadows, all that marks a pressed toggle (a tool, a
+   picked row, the chosen option of a toggle group: data-state=on), the selected tab or the current
+   page: they are drawn in the system highlight colors, as system-highlight (below) draws them, and
+   what they hold follows their text color (a key chip keeps its own). Unlayered, to win over the
+   component fills (bg-accent…) that forced colors would turn into the page color. */
+@media (forced-colors: active) {
+  [aria-pressed="true"],
+  [data-state="on"],
+  [role="tab"][aria-selected="true"],
+  [aria-current]:not([aria-current="false"]) {
+    forced-color-adjust: none;
+    background-color: Highlight;
+    color: HighlightText;
+
+    & > :not(kbd) {
+      color: inherit;
+    }
+  }
+}
+
+/* ------------------------------------------------------------------------- */
+/* Components                                                                */
+/* ------------------------------------------------------------------------- */
+
+@layer components {
+  /* Touch screens: a control is at least 40×40, about a fingertip. A floor that size utilities
+     (h-8, size-9…) can't lower; a min-w-* / min-h-* utility still overrides it. */
+  .min-tap-size {
+    @media (pointer: coarse) {
+      min-width: 2.5rem;
+      min-height: 2.5rem;
+    }
+  }
 }
 
 /* ------------------------------------------------------------------------- */
 /* Utilities                                                                 */
 /* ------------------------------------------------------------------------- */
 
-/* Transparency checkerboard (signature / image previews). */
+/* Transparency checkerboard (signature / image previews). What is previewed on it keeps its
+   colors in forced colors mode, as on the PDF page it goes to. */
 @utility bg-checker {
   background-color: #ffffff;
   background-image: conic-gradient(#eef0f4 25%, transparent 0 50%, #eef0f4 0 75%, transparent 0);
   background-size: 16px 16px;
+  forced-color-adjust: none;
+}
+
+/* The system's selection colors, for what is chosen or highlighted in forced colors mode (Windows
+   Contrast themes), which drops fills and shadows: forced-colors:data-[highlighted]:system-highlight
+   (pressed toggles, selected tabs and the current page get them on their own, above).
+   forced-color-adjust: none keeps the browser from putting a Canvas-colored backplate behind the
+   text on it; children keep their own colors too (text-current makes one follow the text). */
+@utility system-highlight {
+  forced-color-adjust: none;
+  background-color: Highlight;
+  color: HighlightText;
 }
 
 /* Subtle dot grid for the editor canvas. */
@@ -257,6 +324,30 @@
 
 @utility pb-safe {
   padding-bottom: max(env(safe-area-inset-bottom), 0px);
+}
+
+/* Left and right safe areas (a phone held sideways: notch, rounded corners). index.html opts into
+   edge-to-edge (viewport-fit=cover), so whatever touches a side edge pads it: pl-safe is the inset,
+   pl-safe-2 the inset or at least the gutter 2 (0.5rem), whichever is wider. */
+@utility pl-safe {
+  padding-left: max(env(safe-area-inset-left), 0px);
+}
+
+@utility pr-safe {
+  padding-right: max(env(safe-area-inset-right), 0px);
+}
+
+@utility pl-safe-* {
+  padding-left: max(--spacing(--value(number)), env(safe-area-inset-left));
+}
+
+@utility pr-safe-* {
+  padding-right: max(--spacing(--value(number)), env(safe-area-inset-right));
+}
+
+@utility px-safe-* {
+  padding-left: max(--spacing(--value(number)), env(safe-area-inset-left));
+  padding-right: max(--spacing(--value(number)), env(safe-area-inset-right));
 }
 
 /* Skeleton shimmer for loading placeholders. */

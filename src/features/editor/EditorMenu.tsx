@@ -43,7 +43,7 @@ export function EditorMenu({ compact }: { compact: boolean }) {
       <MenuTrigger asChild>
         <IconButton label="More" icon={<Ellipsis />} />
       </MenuTrigger>
-      <MenuContent className="w-60 [&_[role^=menuitem]]:pointer-coarse:h-11" {...closeHandlers}>
+      <MenuContent className="w-60" {...closeHandlers}>
         <MenuItem icon={<FolderOpen />} shortcut={shortcutLabel(SHORTCUTS.open)} onSelect={() => void chooseAndOpenPdf()}>
           Open another PDF…
         </MenuItem>
@@ -83,7 +83,7 @@ export function EditorMenu({ compact }: { compact: boolean }) {
           ))}
         </MenuRadioGroup>
         <MenuSeparator />
-        <ClearAllItem />
+        <ClearEverythingItem />
         <MenuItem icon={<X />} onSelect={() => afterMenuCloses(() => void closeDocumentSafely())}>
           Close document
         </MenuItem>
@@ -126,8 +126,12 @@ function ZoomItems() {
   )
 }
 
-/** Only mounted while the menu is open, so the (cheap but non-trivial) count isn't live. */
-function ClearAllItem() {
+/**
+ * Removes the placed items and resets the form fields: "everything", unlike the Items panel's
+ * "Clear all items" (items only) and the Form panel's "Reset form" (fields only). Only mounted
+ * while the menu is open, so the (cheap but non-trivial) count isn't live.
+ */
+function ClearEverythingItem() {
   // Locked items stay, so they aren't something to clear.
   const hasWork = useEditor((s) => filledCount(s) > s.elements.filter((e) => e.locked).length)
   return (
@@ -151,7 +155,7 @@ function ClearAllItem() {
         })
       }
     >
-      Clear all items…
+      Clear everything…
     </MenuItem>
   )
 }

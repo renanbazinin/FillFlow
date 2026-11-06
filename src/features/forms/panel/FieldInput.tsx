@@ -11,8 +11,12 @@ import { primaryWidget, revealField } from '../navigation'
 import { requestSignatureFor } from '../signatureTarget'
 import { setFieldValue, useComboText, useFieldSigned, useFieldValue } from '../useField'
 
+/** Like Input: the ring shows focus, and forced colors mode (which drops rings) an outline. */
 const FIELD =
-  'w-full rounded-lg border border-line bg-surface text-sm text-fg shadow-xs outline-none transition-[border-color,box-shadow] placeholder:text-fg-subtle hover:border-line-strong focus:border-accent focus:ring-3 focus:ring-accent/20 disabled:opacity-60 read-only:bg-surface-2 read-only:text-fg-muted read-only:hover:border-line read-only:focus:border-line read-only:focus:ring-0'
+  'w-full rounded-lg border border-control bg-surface text-sm text-fg shadow-xs transition-[border-color,box-shadow] placeholder:text-fg-subtle hover:border-fg-subtle focus:border-accent focus:ring-3 focus:ring-accent/20 focus:outline-hidden disabled:opacity-60'
+
+/** A read-only field: muted, with no hover emphasis. Set by prop: every <select> matches `:read-only`. */
+const LOCKED = 'bg-surface-2 text-fg-muted hover:border-control'
 
 function Label({ htmlFor, field, aside }: { htmlFor?: string; field: FormField; aside?: ReactNode }) {
   const Tag = htmlFor ? 'label' : 'div'
@@ -45,7 +49,14 @@ function AutoTextarea(props: React.ComponentProps<'textarea'>) {
     el.style.height = 'auto'
     el.style.height = `${Math.min(el.scrollHeight + 2, 200)}px`
   }, [props.value])
-  return <textarea ref={ref} rows={2} {...props} className={cn(FIELD, 'block min-h-[60px] resize-none px-3 py-2 leading-relaxed scrollbar-thin', props.className)} />
+  return (
+    <textarea
+      ref={ref}
+      rows={2}
+      {...props}
+      className={cn(FIELD, 'block min-h-[60px] resize-none px-3 py-2 leading-relaxed scrollbar-thin', props.readOnly && LOCKED, props.className)}
+    />
+  )
 }
 
 function TextInput({ field }: { field: FormField }) {
@@ -76,7 +87,7 @@ function TextInput({ field }: { field: FormField }) {
         <Input
           {...common}
           type={field.password ? 'password' : 'text'}
-          className={cn('read-only:bg-surface-2 read-only:text-fg-muted', field.comb && 'font-mono tracking-[0.2em]')}
+          className={cn(field.readOnly && LOCKED, field.comb && 'font-mono tracking-[0.2em]')}
         />
       )}
     </>
@@ -94,10 +105,10 @@ function CheckboxInput({ field }: { field: FormField }) {
         disabled={field.readOnly}
         aria-required={field.required || undefined}
         onCheckedChange={(c) => setFieldValue(field.name, c === true)}
-        className="mt-px flex size-[18px] shrink-0 items-center justify-center rounded-[5px] border border-line-strong bg-surface shadow-xs transition-colors hover:border-fg-subtle disabled:opacity-60 data-[state=checked]:border-accent data-[state=checked]:bg-accent"
+        className="mt-px flex size-[18px] shrink-0 items-center justify-center rounded-[5px] border border-control bg-surface shadow-xs transition-colors hover:border-fg-subtle disabled:opacity-60 data-[state=checked]:border-accent data-[state=checked]:bg-accent forced-colors:data-[state=checked]:border-[Highlight] forced-colors:data-[state=checked]:bg-[Highlight]"
       >
         <Checkbox.Indicator>
-          <Check className="size-3.5 text-accent-fg" strokeWidth={3} />
+          <Check className="size-3.5 text-accent-fg forced-colors:text-[HighlightText]" strokeWidth={3} />
         </Checkbox.Indicator>
       </Checkbox.Root>
       <label htmlFor={id} className="min-w-0 flex-1 cursor-pointer select-none text-[13px] leading-[18px] text-fg">
@@ -108,8 +119,17 @@ function CheckboxInput({ field }: { field: FormField }) {
   )
 }
 
+/**
+ * An option chip. Forced colors mode (Windows contrast themes) drops its fill: a chosen one is drawn
+ * in the system highlight colors, which its circle, dot and check follow.
+ */
 const CHIP =
-  'inline-flex min-h-8 max-w-full items-center gap-2 rounded-lg border border-line bg-surface px-2.5 py-1 text-left text-[13px] text-fg shadow-xs transition-colors hover:border-line-strong disabled:opacity-60 data-[state=checked]:border-accent data-[state=checked]:bg-accent-soft data-[state=checked]:text-accent-ink'
+  'inline-flex min-h-8 max-w-full items-center gap-2 rounded-lg border border-line bg-surface px-2.5 py-1 text-left text-[13px] text-fg shadow-xs transition-colors hover:border-line-strong disabled:opacity-60 data-[state=checked]:border-accent data-[state=checked]:bg-accent-soft data-[state=checked]:text-accent-ink forced-colors:focus-visible:outline-[Highlight] forced-colors:data-[state=checked]:system-highlight forced-colors:data-[state=checked]:border-[Highlight]'
+
+/** The radio circle of a chip (with `group` on the chip) and its dot. */
+const CHIP_RADIO =
+  'flex size-3.5 shrink-0 items-center justify-center rounded-full border border-control bg-surface group-data-[state=checked]:border-accent forced-colors:group-data-[state=checked]:border-[HighlightText] forced-colors:group-data-[state=checked]:bg-transparent'
+const CHIP_DOT = 'size-1.5 rounded-full bg-accent forced-colors:bg-[HighlightText]'
 
 function RadioInput({ field }: { field: FormField }) {
   const value = String(useFieldValue(field))
@@ -127,8 +147,8 @@ function RadioInput({ field }: { field: FormField }) {
       >
         {options.map((o) => (
           <RadioGroup.Item key={o.value} value={o.value} className={cn(CHIP, 'group')}>
-            <span className="flex size-3.5 shrink-0 items-center justify-center rounded-full border border-line-strong bg-surface group-data-[state=checked]:border-accent">
-              <RadioGroup.Indicator className="size-1.5 rounded-full bg-accent" />
+            <span className={CHIP_RADIO}>
+              <RadioGroup.Indicator className={CHIP_DOT} />
             </span>
             <span className="truncate" dir="auto">
               {o.label}
@@ -159,6 +179,7 @@ function DropdownInput({ field }: { field: FormField }) {
           readOnly={field.readOnly}
           placeholder="Choose or type…"
           autoComplete="off"
+          className={field.readOnly ? LOCKED : undefined}
           onChange={(e) => combo.change(e.target.value)}
           onBlur={combo.endEdit}
         />
@@ -181,7 +202,7 @@ function DropdownInput({ field }: { field: FormField }) {
           disabled={field.readOnly}
           aria-required={field.required || undefined}
           onChange={(e) => setFieldValue(field.name, e.target.value)}
-          className={cn(FIELD, 'h-9 cursor-pointer appearance-none pl-3 pr-9', value === '' && 'text-fg-subtle')}
+          className={cn(FIELD, 'h-9 cursor-pointer appearance-none pl-3 pr-9', value === '' && 'text-fg-subtle', field.readOnly && LOCKED)}
         >
           <option value="">Select…</option>
           {custom && <option value={value}>{value}</option>}
@@ -214,8 +235,8 @@ function ListboxInput({ field }: { field: FormField }) {
         >
           {options.map((o, i) => (
             <RadioGroup.Item key={i} value={o.value} className={cn(CHIP, 'group')}>
-              <span className="flex size-3.5 shrink-0 items-center justify-center rounded-full border border-line-strong bg-surface group-data-[state=checked]:border-accent">
-                <RadioGroup.Indicator className="size-1.5 rounded-full bg-accent" />
+              <span className={CHIP_RADIO}>
+                <RadioGroup.Indicator className={CHIP_DOT} />
               </span>
               <span className="truncate" dir="auto">
                 {o.label}
@@ -240,9 +261,14 @@ function ListboxInput({ field }: { field: FormField }) {
               onCheckedChange={(c) => setFieldValue(field.name, c === true ? [...value, o.value] : value.filter((v) => v !== o.value))}
               className={CHIP}
             >
-              <span className={cn('flex size-3.5 shrink-0 items-center justify-center rounded-[4px] border', on ? 'border-accent bg-accent' : 'border-line-strong bg-surface')}>
+              <span
+                className={cn(
+                  'flex size-3.5 shrink-0 items-center justify-center rounded-[4px] border',
+                  on ? 'border-accent bg-accent forced-colors:border-[HighlightText] forced-colors:bg-transparent' : 'border-control bg-surface',
+                )}
+              >
                 <Checkbox.Indicator>
-                  <Check className="size-2.5 text-accent-fg" strokeWidth={3.5} />
+                  <Check className="size-2.5 text-accent-fg forced-colors:text-[HighlightText]" strokeWidth={3.5} />
                 </Checkbox.Indicator>
               </span>
               <span className="truncate" dir="auto">

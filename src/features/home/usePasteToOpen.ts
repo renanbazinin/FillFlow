@@ -1,10 +1,8 @@
 import { useEffect } from 'react'
+import { OPEN_OVERLAY } from '../../components/ui/modal'
 import { isEditableTarget } from '../../lib/utils/misc'
 import { useEditor } from '../../store/editor'
 import { openFirstPdf } from './openFile'
-
-/** Open dialogs, confirmations, popovers (dialogs too) and menus. */
-const OPEN_OVERLAY = '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"], [role="menu"][data-state="open"]'
 
 /** Home screen: paste a PDF file (copied in the OS file manager) to open it. */
 export function usePasteToOpen(): void {

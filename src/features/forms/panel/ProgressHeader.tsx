@@ -14,8 +14,9 @@ interface Props {
   onReset: () => void
 }
 
+/** A filter's count. On a chosen filter in forced colors mode, it takes the system highlight text color. */
 function Count({ n }: { n: number }) {
-  return <span className="ml-0.5 tabular-nums text-fg-subtle">{n}</span>
+  return <span className="ml-0.5 tabular-nums text-fg-subtle forced-colors:text-current">{n}</span>
 }
 
 /** Progress summary, filter and actions; sticks to the top of the panel's scroll area. */
@@ -53,10 +54,13 @@ export function ProgressHeader({ progress, filter, onFilter, emptyCount, dirty, 
         aria-valuemax={total}
         aria-valuenow={filled}
         aria-valuetext={`${filled} of ${total} fields filled`}
-        className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-3"
+        className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-3 forced-colors:border"
       >
         <div
-          className={cn('h-full rounded-full transition-[width,background-color] duration-300 ease-out', complete ? 'bg-success' : 'bg-accent')}
+          className={cn(
+            'h-full rounded-full transition-[width,background-color] duration-300 ease-out forced-colors:bg-[Highlight]',
+            complete ? 'bg-success' : 'bg-accent',
+          )}
           style={{ width: `${pct}%` }}
         />
       </div>
@@ -64,6 +68,7 @@ export function ProgressHeader({ progress, filter, onFilter, emptyCount, dirty, 
       <div className="mt-3 flex items-center gap-2">
         <Segmented<FieldFilter>
           size="sm"
+          label="Show fields"
           value={filter}
           onValueChange={onFilter}
           className="min-w-0 flex-1 [&>*]:flex-1"

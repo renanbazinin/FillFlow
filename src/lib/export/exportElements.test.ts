@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { HIGHLIGHT_COLOR, HIGHLIGHT_OPACITY } from '../../model/elements'
-import type { Asset, Element, ImageElement, InkElement, MarkElement, ShapeElement } from '../../model/types'
+import type { Asset, Element, ImageElement, InkElement, MarkElement, ShapeElement, TextElement } from '../../model/types'
+import type { TextBlockLayout } from '../text/layout'
 import { renderPdf } from './engine'
 import { debugWrite } from './testing/debug'
 import { buildPdf } from './testing/fixtures'
@@ -299,26 +300,49 @@ describe.skipIf(!napi)('exportPdf: images', () => {
 })
 
 describe('exportPdf: text that the fonts cannot draw', () => {
-  it('rasterizes the element and places the bitmap over its box', async () => {
+  it('pictures only the lines the fonts cannot draw, and keeps their text findable', async () => {
     const bytes = await buildPdf([{ size: [300, 300] }])
     const pages = await readPages(bytes)
-    const el = makeText(0, 40, 50, 'Thumbs 👍', { fontSize: 20 })
-    const ok = makeText(0, 40, 150, 'Plain', { fontSize: 20 })
+    const el = makeText(0, 40, 50, 'Plain line\nThumbs 👍\n✓ כן (אושר)', { fontSize: 20 })
+    const after = makeText(0, 40, 200, 'After', { fontSize: 20 })
     // A 4×4 opaque black PNG standing in for the browser rendering.
     const png = napi ? encode(4, 4, (c) => c.fillRect(0, 0, 4, 4), 'image/png') : null
-    const rasterizeText = vi.fn(async () => (png ? { png, x: el.x - 5, y: el.y - 5, width: el.width + 10, height: el.height + 10 } : null))
-    const out = await renderPdf(makeInput(bytes, pages, [el, ok]), { ...testDeps, rasterizeText })
+    const rasterizeText = vi.fn(async (_el: TextElement, _layout: TextBlockLayout) =>
+      png ? { png, x: el.x - 5, y: el.y - 5, width: el.width + 10, height: el.height + 10 } : null,
+    )
+    const out = await renderPdf(makeInput(bytes, pages, [el, after]), { ...testDeps, rasterizeText })
+    await debugWrite('missing-glyphs.pdf', out)
     expect(rasterizeText).toHaveBeenCalledOnce()
+    expect(rasterizeText.mock.calls[0][1].lines.map((l) => l.text)).toEqual(['Thumbs 👍', '✓ כן (אושר)'])
     const pdf = await openPdfjs(out)
-    const strings = (await textInView(pdf, 1)).map((t) => t.str)
-    expect(strings).toContain('Plain')
+    const items = await textInView(pdf, 1)
+    const line = (n: number) =>
+      items
+        .filter((it) => Math.abs(it.y - (el.y + 20 * 1.2 * n + 18)) < 6)
+        .map((it) => it.str)
+        .join('')
+    // Every line can still be found and copied, characters the fonts lack included.
+    expect(line(0)).toBe('Plain line')
+    expect(line(1)).toBe('Thumbs 👍')
+    expect(line(2)).toBe('✓ כן (אושר)')
+    expect(items.map((it) => it.str)).toContain('After')
     if (png) {
-      expect(strings.some((s) => s.includes('Thumbs'))).toBe(false)
       const raster = await renderPage(pdf, 1, 2)
       const box = raster.bbox((r, g, b) => r + g + b < 50)!
       expect(box.x).toBeCloseTo(el.x - 5, 0)
       expect(box.y).toBeCloseTo(el.y - 5, 0)
       expect(box.width).toBeCloseTo(el.width + 10, 0)
+      // Text drawn afterwards is visible again.
+      expect(raster.inkIn(after.x, after.y, after.width, after.height)).toBeGreaterThan(0.02)
+
+      // The text over the picture is invisible: with a blank picture only the plain line shows.
+      const blank = encode(4, 4, () => {}, 'image/png')
+      const out2 = await renderPdf(makeInput(bytes, pages, [el]), { ...testDeps, rasterizeText: async () => ({ png: blank, x: 0, y: 0, width: 4, height: 4 }) })
+      const pdf2 = await openPdfjs(out2)
+      const page = await renderPage(pdf2, 1, 2)
+      expect(page.inkIn(el.x, el.y, el.width, 24)).toBeGreaterThan(0.02)
+      expect(page.inkIn(el.x, el.y + 24, el.width, 48)).toBe(0)
+      await pdf2.loadingTask.destroy()
     }
     await pdf.loadingTask.destroy()
   })

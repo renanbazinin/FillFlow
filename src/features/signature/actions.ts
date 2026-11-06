@@ -25,7 +25,8 @@ export function armPlacement(role: ImageRole, assetId: string): void {
   useEditor.getState().startPlacingAsset(role, assetId)
   setTimeout(() => {
     if (useEditor.getState().placingAssetId !== assetId) return
-    toast(isCoarsePointer() ? 'Tap where you want to place it' : 'Click where you want to place it', {
+    // Enter places it in the middle of the view (useEditingShortcuts).
+    toast(isCoarsePointer() ? 'Tap where you want to place it' : 'Click where you want to place it, or press Enter', {
       id: PLACE_TOAST_ID,
       duration: 4000,
       action: {

@@ -1,33 +1,100 @@
+import { fieldsUnderItems } from '../../lib/export/coverage'
 import type { ExportProgress } from '../../lib/export/types'
 import { fieldLabel } from '../../lib/pdf/forms/labels'
 import { storedValue } from '../../lib/pdf/forms/values'
-import { suffixedFileName } from '../../lib/utils/misc'
-import type { FormField, FormValue, FormValues } from '../../model/types'
+import { bidiIsolate, suffixedFileName } from '../../lib/utils/misc'
+import type { Element, FormField, FormValue, FormValues } from '../../model/types'
 import { shortcutLetter } from '../elements/lib/keys'
 
 /** Pure helpers behind the export dialog (file names, summary, progress copy). */
 
 const PDF_EXT = /\.pdf$/i
 
-/** Editable part of the default name: "lease.pdf" → "lease-filled". */
+/** Characters file systems reject in names, and those browsers do ("~", noncharacters). */
+const REJECTED = /[\\/:*?"<>|~\p{Cc}\p{Noncharacter_Code_Point}]/u
+/** Invisible formatting characters (direction marks, joiners…), which browsers save as "_". */
+const INVISIBLE = /\p{Cf}/u
+const HEBREW_LETTER = /(?=\p{Script=Hebrew})\p{L}/u
+const MARK = /\p{M}/u
+const WORD_CHAR = /[\p{L}\p{N}\p{M}]/u
+/** Stands for a rejected character until runs of them are merged. */
+const REJECT = '\uffff'
+
+/**
+ * A file name's characters as they will be saved, nothing trimmed yet. Hebrew abbreviations keep
+ * their marks, which Hebrew keyboards type as ASCII quotes: a " between Hebrew letters is a
+ * gershayim (בע"מ → בע״מ) and a ' after one a geresh (ז'בוטינסקי → ז׳בוטינסקי, מס' 5 → מס׳ 5).
+ * Once a ' at the start of a word has opened a quote, a ' at the end of a word may close it, so
+ * it stays ('טיוטה', 'רח' הרצל'). Rejected characters become "-" (a run of them, with the hyphens
+ * next to it, a single one) and invisible ones go. A ' just before `caret`, or a " there after a
+ * Hebrew letter, was most likely just typed: it stays as typed until what comes after it is known
+ * (at the next keystroke, on leaving the field or on download).
+ */
+function nameChars(text: string, caret = -1): string {
+  const chars = Array.from(text)
+  const afterHebrewLetter = (i: number) => {
+    while (i > 0 && MARK.test(chars[i - 1])) i--
+    return i > 0 && HEBREW_LETTER.test(chars[i - 1])
+  }
+  // Whether a quote was opened. A geresh can end a word too, so which ' at the end of a word closes
+  // it can't be told: none of them is taken for a geresh then (a ' is fine in a file name).
+  let opened = false
+  const singleQuote = (i: number) => {
+    const next = chars[i + 1] ?? ''
+    if (!WORD_CHAR.test(chars[i - 1] ?? '') && WORD_CHAR.test(next)) opened = true
+    // A geresh inside a Hebrew word, or at the end of one when no quote was opened before it.
+    else if (afterHebrewLetter(i) && (HEBREW_LETTER.test(next) || !opened)) return '\u05f3'
+    return "'"
+  }
+  let out = ''
+  let end = 0
+  for (let i = 0; i < chars.length; i++) {
+    const c = chars[i]
+    end += c.length
+    const justTyped = end === caret
+    if (c === '"' && afterHebrewLetter(i) && justTyped) out += c
+    else if (c === '"' && afterHebrewLetter(i) && HEBREW_LETTER.test(chars[i + 1] ?? '')) out += '\u05f4'
+    else if (c === "'") {
+      // Read even when just typed: a ' that opens a quote changes what the ones after it are.
+      const mark = singleQuote(i)
+      out += justTyped ? c : mark
+    } else if (REJECTED.test(c)) out += REJECT
+    else if (!INVISIBLE.test(c)) out += c
+  }
+  return out.replace(/[-\uffff]*\uffff[-\uffff]*/g, '-')
+}
+
+/** The name without its extension, as it will be saved (if anything usable is left, see below). */
+function cleanName(input: string): string {
+  return nameChars(input)
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(PDF_EXT, '')
+    .replace(/^[-.\s]+|[-.\s]+$/g, '')
+    .slice(0, 180)
+}
+
+/** Editable part of the default name: "lease.pdf" → "lease-filled", cleaned like a typed one. */
 export function defaultBaseName(docName: string): string {
-  return suffixedFileName(docName).replace(PDF_EXT, '')
+  return cleanName(suffixedFileName(docName))
 }
 
 /**
- * Turns what the user typed into a safe file name ending in ".pdf". Characters that are
- * invalid on common file systems become "-"; an empty name falls back to the default.
+ * Turns what the user typed into a safe file name ending in ".pdf" (see `nameChars`); an empty
+ * name falls back to the default.
  */
 export function finalFileName(input: string, docName: string): string {
-  const cleaned = input
-    .trim()
-    .replace(PDF_EXT, '')
-    // eslint-disable-next-line no-control-regex
-    .replace(/[\\/:*?"<>|\u0000-\u001f\u007f]+/g, '-')
-    .replace(/\s+/g, ' ')
-    .replace(/^[-.\s]+|[-.\s]+$/g, '')
-    .slice(0, 180)
-  return `${/[\p{L}\p{N}]/u.test(cleaned) ? cleaned : defaultBaseName(docName)}.pdf`
+  const name = cleanName(input)
+  return `${/[\p{L}\p{N}]/u.test(name) ? name : defaultBaseName(docName)}.pdf`
+}
+
+/**
+ * The name field's text cleaned as it is typed, so it shows the characters the file will have
+ * (spaces and dots at the ends wait until it's done), and where its selection lands in it.
+ */
+export function typedFileName(value: string, start: number, end: number): { value: string; start: number; end: number } {
+  const upTo = (i: number) => nameChars(value.slice(0, i), end).length
+  return { value: nameChars(value, end), start: upTo(start), end: upTo(end) }
 }
 
 function isFilled(field: FormField, value: FormValue | undefined): boolean {
@@ -70,9 +137,29 @@ export function unwrittenFieldLabels(fields: FormField[], values: FormValues, un
   return fields.filter((f) => names.has(f.name) && isChanged(f, values)).map((f) => fieldLabel(f))
 }
 
-/** “A”, “A” and “B”, “A”, “B” and “C”, “A”, “B”, “C” and 2 more. */
+/**
+ * Labels of the form fields under items the user placed. The export flattens them even when
+ * flattening is off, since viewers paint fields over the page and they would hide those items.
+ */
+export function coveredFieldLabels(fields: FormField[], elements: Element[]): string[] {
+  const covered = new Set(fieldsUnderItems(fields, elements))
+  return fields.filter((f) => covered.has(f.name)).map((f) => fieldLabel(f))
+}
+
+/** What the dialog says about those fields when flattening is off. */
+export function coveredFieldsNote(labels: string[]): string {
+  return `${quotedList(labels)} will still be flattened so what you placed on ${labels.length === 1 ? 'it' : 'them'} stays visible.`
+}
+
+/** Letters of the right-to-left scripts (and their presentation forms). */
+const RTL_TEXT = /[\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufefc]/
+
+/**
+ * “A”, “A” and “B”, “A”, “B” and “C”, “A”, “B”, “C” and 2 more. Right-to-left items are isolated,
+ * so two Hebrew labels in a row keep their order and quotes.
+ */
 export function quotedList(items: string[], max = 3): string {
-  const quoted = items.map((s) => `“${s}”`)
+  const quoted = items.map((s) => `“${RTL_TEXT.test(s) ? bidiIsolate(s) : s}”`)
   if (quoted.length <= max) return quoted.length > 1 ? `${quoted.slice(0, -1).join(', ')} and ${quoted.at(-1)}` : (quoted[0] ?? '')
   return `${quoted.slice(0, max).join(', ')} and ${quoted.length - max} more`
 }

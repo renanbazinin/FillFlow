@@ -47,8 +47,9 @@ const handledPresses = new WeakSet<Event>()
 
 /**
  * Select-tool interactions for one page: pressing/dragging elements (with smart guides and
- * cross-page drops), resize handles, line endpoints, double-click to edit text, hover, and —
- * through a listener on the page frame — click-to-deselect and marquee selection.
+ * cross-page drops; on touch, a tap selects and only a selected item drags), resize handles, line
+ * endpoints, double-click to edit text, hover, and — through a listener on the page frame —
+ * click-to-deselect and marquee selection.
  */
 export function useSelectInteractions(page: PageInfo, rootRef: RefObject<HTMLDivElement | null>): SelectOverlayState {
   const [marquee, setMarquee] = useState<Rect | null>(null)
@@ -67,6 +68,9 @@ export function useSelectInteractions(page: PageInfo, rootRef: RefObject<HTMLDiv
     const size = { width: pageW, height: pageH }
     let dispose: TrackDisposer | null = null
     let lastPress: { id: string; time: number; x: number; y: number } | null = null
+    /** Soon after `prev` on the same item and spot: the second press of a double-click (or tap). */
+    const isSecondPress = (prev: typeof lastPress, id: string, e: PointerEvent) =>
+      !!prev && prev.id === id && e.timeStamp - prev.time < DOUBLE_CLICK_MS && Math.hypot(e.clientX - prev.x, e.clientY - prev.y) < 10
 
     const toLocal = (x: number, y: number) => clientToLocal(root, pageW, pageH, x, y)
     /** Points per CSS px at the current (possibly transformed) zoom. */
@@ -143,16 +147,55 @@ export function useSelectInteractions(page: PageInfo, rootRef: RefObject<HTMLDiv
       endMove()
     }
 
+    /**
+     * One finger on an item it can't move yet scrolls the document like the page around it (see
+     * HitArea), keeping any text edit open; only a tap (no scroll) selects the item, and a second
+     * tap soon after edits a text item (a locked one too), as a double-click does.
+     */
+    function pressToSelect(e: PointerEvent, el: Item) {
+      const second = isSecondPress(lastPress, el.id, e)
+      lastPress = null
+      // Keep the browser from moving focus (or synthesizing mouse events) once the editor has it.
+      if (second && el.kind === 'text') e.preventDefault()
+      dispose?.()
+      dispose = trackPointer(
+        e,
+        {
+          up(p) {
+            dispose = null
+            if (Math.hypot(p.clientX - e.clientX, p.clientY - e.clientY) >= 10) return
+            if (second && el.kind === 'text') {
+              const local = toLocal(e.clientX, e.clientY)
+              editText(el.id, caretIndexAt(el.text, el, el.align, { x: local.x - el.x, y: local.y - el.y }))
+              return
+            }
+            finishActiveTextEdit()
+            useEditor.getState().select([el.id])
+            lastPress = { id: el.id, time: e.timeStamp, x: e.clientX, y: e.clientY }
+          },
+          cancel() {
+            dispose = null
+          },
+        },
+        { escapeCancels: false },
+      )
+    }
+
     function pressElement(e: PointerEvent, id: string) {
       const s = useEditor.getState()
       const el = s.elements.find((x) => x.id === id)
       if (!el || s.editingId === id) return
-      finishActiveTextEdit()
       const additive = e.shiftKey || e.ctrlKey || e.metaKey
+      // A finger moves only a selected, unlocked item: on any other one the document scrolls (see
+      // HitArea) and a tap selects it, also just after a pen was in use, when nothing scrolls yet.
+      if (e.pointerType === 'touch' && !additive && (el.locked || !s.selection.includes(id))) {
+        pressToSelect(e, el)
+        return
+      }
+      finishActiveTextEdit()
       const prev = lastPress
       lastPress = { id, time: e.timeStamp, x: e.clientX, y: e.clientY }
-      const isDouble =
-        !additive && !!prev && prev.id === id && e.timeStamp - prev.time < DOUBLE_CLICK_MS && Math.hypot(e.clientX - prev.x, e.clientY - prev.y) < 10
+      const isDouble = !additive && isSecondPress(prev, id, e)
       if (isDouble && el.kind === 'text') {
         lastPress = null
         // Keep the browser from moving focus (or synthesizing mouse events) after we focus the editor.

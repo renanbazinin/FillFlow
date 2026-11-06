@@ -2,6 +2,7 @@ import { Check, Pencil, Signature, Type } from 'lucide-react'
 import { Kbd } from '../../../components/ui/controls'
 import { TOOL_BY_ID } from '../../../model/tools'
 import type { ToolId } from '../../../model/types'
+import { viewer } from '../../viewer/viewerApi'
 import { activateTool } from '../state/tools'
 import { closePanelOnSmallScreens } from './panel'
 
@@ -36,9 +37,11 @@ export function ItemsEmptyState() {
             <button
               key={tool}
               type="button"
-              onClick={() => {
+              onClick={(e) => {
                 activateTool(tool)
                 closePanelOnSmallScreens()
+                // Chosen from the keyboard: on to the pages, where Enter adds the item.
+                if (e.detail === 0) viewer.getScrollContainer()?.focus({ preventScroll: true })
               }}
               className="group flex items-center gap-3 rounded-xl border border-transparent px-3 py-2 text-left transition-colors hover:border-line hover:bg-surface-2"
             >
@@ -54,6 +57,9 @@ export function ItemsEmptyState() {
           )
         })}
       </div>
+      <p className="mt-4 max-w-64 text-[12px] leading-5 text-fg-subtle pointer-coarse:hidden">
+        From the keyboard: pick any tool but Draw, press <Kbd>Enter</Kbd> to add one in the middle of the page, then move it with the arrow keys.
+      </p>
     </div>
   )
 }

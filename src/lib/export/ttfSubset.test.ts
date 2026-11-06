@@ -55,6 +55,35 @@ describe('subsetTrueType', () => {
     })
   }
 
+  it('makes glyphs for the subset: moved, with an advance of their own, or empty', () => {
+    const bytes = testFontBytes('serif', false)
+    const font = testFont('serif', false)
+    const qamats = font.glyphForCodePoint(0x5b8)
+    const bet = font.glyphForCodePoint(0x5d1)
+    const { data } = subsetTrueType(bytes, [
+      0,
+      { id: qamats.id, dx: 300, dy: -20, advance: 0 },
+      { id: bet.id, dx: 0, dy: 0, advance: 1500 },
+      { id: null, dx: 0, dy: 0, advance: 0 },
+    ])
+    const sub = fontkit.create(data)
+    const box = (g: { path: { bbox: { minX: number; minY: number; maxX: number; maxY: number } } }) => {
+      const { minX, minY, maxX, maxY } = g.path.bbox
+      return [minX, minY, maxX, maxY]
+    }
+    // The qamats, moved: a composite glyph drawing the original outline at an offset.
+    const [x0, y0, x1, y1] = box(qamats)
+    expect(isComposite(data, 1)).toBe(true)
+    expect(box(sub.getGlyph(1))).toEqual([x0 + 300, y0 - 20, x1 + 300, y1 - 20])
+    expect(sub.getGlyph(1).advanceWidth).toBe(0)
+    // The bet with a wider advance, and an empty glyph.
+    expect(sub.getGlyph(2).path.toSVG()).toBe(bet.path.toSVG())
+    expect(sub.getGlyph(2).advanceWidth).toBe(1500)
+    expect(sub.getGlyph(3).path.toSVG()).toBe('')
+    expect(sub.getGlyph(3).advanceWidth).toBe(0)
+    expect(fileChecksum(data)).toBe(0xb1b0afba)
+  })
+
   it('pulls in and renumbers composite glyph components', () => {
     const bytes = testFontBytes('sans', false)
     const font = testFont('sans', false)

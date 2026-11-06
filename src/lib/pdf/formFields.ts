@@ -1,6 +1,6 @@
 import type { PDFDocumentProxy } from './pdfjs'
 import type { FormField, FormValues, PageInfo } from '../../model/types'
-import { buildFormFields, repeatsRadioValue } from './forms/extract'
+import { buildFormFields, lacksLabels, repeatsRadioValue, usesLayers } from './forms/extract'
 
 export { getFieldExtras, getWidgetRotation, visualTextRotation, type QuarterTurn } from './forms/extract'
 
@@ -59,6 +59,48 @@ async function fieldParents(pdf: PDFDocumentProxy): Promise<Map<string, string> 
   }
 }
 
+/** Labels that fields keep on the field rather than on their widgets (see readFieldTooltips). */
+async function fieldTooltips(pdf: PDFDocumentProxy): Promise<Map<string, string> | null> {
+  try {
+    const { readFieldTooltips } = await import('./forms/tooltips')
+    return await readFieldTooltips(await pdf.getData())
+  } catch (err) {
+    console.warn('[forms] could not read the labels of fields', err)
+    return null
+  }
+}
+
+// That reader comes with pdf-lib, which the app otherwise loads only to export. It is downloaded
+// once the page has settled, as pdf.js's worker is (see pdfjs.ts), rather than by the first open
+// that needs it: a page that loaded then reads the labels of fields offline too. Offline then, it
+// waits for the connection (some browsers never fetch a module again once it failed), as it does
+// after a failure.
+if (typeof window !== 'undefined') {
+  const preload = () => {
+    const retry = () => window.addEventListener('online', preload, { once: true })
+    if (navigator.onLine) import('./forms/tooltips').catch(retry)
+    else retry()
+  }
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(preload, { timeout: 3000 })
+  else setTimeout(preload, 1000)
+}
+
+/** Whether optional content (a layer) is hidden as the document opens, as the page shows it. */
+async function layerHidden(pdf: PDFDocumentProxy): Promise<((oc: unknown) => boolean) | null> {
+  try {
+    const config = await pdf.getOptionalContentConfig({ intent: 'display' })
+    return (oc) => {
+      try {
+        return !config.isVisible(oc)
+      } catch {
+        return false
+      }
+    }
+  } catch {
+    return null
+  }
+}
+
 /** Signed fields plus every widget below them: a field's widget is often a separate kid. */
 function signedWidgetIds(signed: Set<string>, parentOf: Map<string, string> | null): Set<string> {
   const out = new Set(signed)
@@ -99,10 +141,20 @@ export async function extractFormFields(pdf: PDFDocumentProxy, pages: PageInfo[]
   )
   try {
     const signed = await signedIds
-    // Only pdf.js' field tree tells which field a widget belongs to: needed to find the widgets of
-    // signed fields and to tell apart radio buttons that repeat an export value. Rarely needed.
-    const parentOf = signed.size || repeatsRadioValue(annotations) ? await fieldParents(pdf) : null
-    return buildFormFields(annotations, pages, { signedIds: signedWidgetIds(signed, parentOf), parentOf: parentOf ?? undefined })
+    const [parentOf, tooltipOf, hiddenLayer] = await Promise.all([
+      // Only pdf.js' field tree tells which field a widget belongs to: needed to find the widgets of
+      // signed fields and to tell apart radio buttons that repeat an export value. Rarely needed.
+      signed.size || repeatsRadioValue(annotations) ? fieldParents(pdf) : null,
+      // pdf.js reads labels from widgets only: a widget without one may belong to a field with one.
+      lacksLabels(annotations) ? fieldTooltips(pdf) : null,
+      usesLayers(annotations) ? layerHidden(pdf) : null,
+    ])
+    return buildFormFields(annotations, pages, {
+      signedIds: signedWidgetIds(signed, parentOf),
+      parentOf: parentOf ?? undefined,
+      tooltipOf: tooltipOf ?? undefined,
+      hiddenLayer: hiddenLayer ?? undefined,
+    })
   } catch (err) {
     console.warn('[forms] could not build form fields', err)
     return []

@@ -1,6 +1,7 @@
+import fontkit from '@pdf-lib/fontkit'
 import { describe, expect, it } from 'vitest'
 import { firstStrongDirection, hasMissingGlyphs, paintableText, shapeLine, shapeText, visualRuns } from './shaping'
-import { testFont } from './testing/fonts'
+import { testFont, testFontBytes } from './testing/fonts'
 
 const sans = testFont('sans', false)
 const mono = testFont('mono', false)
@@ -74,6 +75,21 @@ describe('shapeLine', () => {
     expect(visual('שלום (עולם)')).toBe('(םלוע) םולש')
   })
 
+  it('tells the characters each glyph stands for: a mirrored bracket stands for the bracket typed', () => {
+    const [run] = shapeLine(sans, '(שלום)')
+    expect(run.glyphs.map((g) => String.fromCodePoint(...g.codePoints)).join('')).toBe('(םולש)')
+    expect(run.chars.join('')).toBe(')םולש(')
+    expect(run.typed).toEqual(['(', 'ש', 'ל', 'ו', 'ם', ')'])
+    // Left-to-right brackets, and glyphs composed of several characters, stand for their own code points.
+    for (const text of ['(abc)', 'שָׁלוֹם']) {
+      for (const r of shapeLine(sans, text)) expect(r.chars).toEqual(r.glyphs.map((g) => String.fromCodePoint(...g.codePoints)))
+    }
+    // The clusters keep their points in the order typed, though the shin dot is composed first.
+    const shalom = shapeText(sans, 'שָׁל', 'rtl')
+    expect(shalom.typed).toEqual(['שָׁ', 'ל'])
+    expect(shalom.chars).toContain('שׁ')
+  })
+
   it('handles numbers and punctuation in Hebrew sentences', () => {
     expect(visual('מספר 123.')).toBe('.123 רפסמ')
     expect(visual('טלפון: 03-1234567')).toBe('03-1234567 :ןופלט')
@@ -98,6 +114,43 @@ describe('shapeLine', () => {
     // The vowel is still positioned on the composed letter.
     const { glyphs, positions } = shapeText(sans, '\u05E9\u05B8\u05C1', 'rtl')
     expect(positions[glyphs.findIndex((g) => g.codePoints[0] === 0x5b8)].xOffset).toBeGreaterThan(0)
+  })
+
+  it('places a point the same way whether or not the letter before it is pointed, as browsers do', () => {
+    /** Where `point` is drawn relative to the first `letter`, in font units. */
+    const offset = (font: ReturnType<typeof testFont>, text: string, letter: number, point: number) => {
+      const { glyphs, positions } = shapeText(font, text, 'rtl')
+      const at: [number, number][] = []
+      let pen = 0
+      glyphs.forEach((_, i) => {
+        at.push([pen + positions[i].xOffset, positions[i].yOffset])
+        pen += positions[i].xAdvance
+      })
+      const l = glyphs.findIndex((g) => g.codePoints[0] === letter)
+      const p = glyphs.findIndex((g) => g.codePoints[0] === point)
+      return [at[p][0] - at[l][0], at[p][1] - at[l][1]]
+    }
+    const RESH = 0x5e8
+    for (const [fontId, bold] of [['serif', false], ['serif', true], ['mono', false], ['mono', true], ['sans', false]] as const) {
+      const font = testFont(fontId, bold)
+      const name = `${fontId}${bold ? ' bold' : ''}`
+      // Tsere under resh, after a bet with sheva (OpenType backtracks are nearest glyph first).
+      expect(offset(font, 'בְרֵא', RESH, 0x5b5), name).toEqual(offset(font, 'רֵא', RESH, 0x5b5))
+      // Qamats under resh, after a shin with sin dot and sheva.
+      expect(offset(font, 'יִשְׂרָאֵל', RESH, 0x5b8), name).toEqual(offset(font, 'רָא', RESH, 0x5b8))
+    }
+  })
+
+  it('tells the characters of a glyph first used for a presentation form, and spells those out', () => {
+    // fontkit keeps one glyph object per glyph id, with the code points of its first use, and
+    // fonts are shared across exports: after שׁ and וֹ typed as one character each (U+FB2A,
+    // U+FB4B), their glyphs drawn for ש and its dot, or ו and its holam, counted one character.
+    const font = fontkit.create(testFontBytes('sans', false).slice())
+    const [shin, vav] = [0xfb2a, 0xfb4b].map((cp) => String.fromCodePoint(cp))
+    const forms = shapeText(font, `${shin}לום ${vav}ת`, 'rtl')
+    expect(forms.chars).toEqual(expect.arrayContaining([shin.normalize('NFD'), vav.normalize('NFD')]))
+    expect(forms.typed[0]).toBe(shin.normalize('NFD'))
+    for (const text of ['שָׁלוֹם', 'מִצְוֹת']) expect(shapeText(font, text, 'rtl').chars, text).toEqual(shapeText(sans, text, 'rtl').chars)
   })
 
   it('tells which grapheme cluster each glyph belongs to', () => {

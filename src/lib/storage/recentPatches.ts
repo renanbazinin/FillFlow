@@ -11,7 +11,7 @@ const draining = new Map<string, Promise<void>>()
  * Merges `patch` into a document's recents entry as soon as the entry exists. Patches for the
  * same document coalesce (newer values win) and are written one at a time, so a slow first
  * write can never overwrite a newer progress count. Gives up quietly when the entry never
- * shows up (e.g. the file could not be stored). Resolves when this document's queue is empty.
+ * shows up (e.g. the document was removed meanwhile). Resolves when this document's queue is empty.
  */
 export function patchRecentSoon(id: string, patch: Partial<RecentDocument>): Promise<void> {
   pending.set(id, { ...pending.get(id), ...patch })

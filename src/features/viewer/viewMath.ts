@@ -67,15 +67,30 @@ export function spanIndexAt(count: number, span: (index: number) => Span, y: num
 
 /**
  * Minimal scroll along one axis so [start, end] is inside [viewStart + margin, viewEnd - margin].
- * When the target is bigger than the room available, its start is aligned instead.
+ * A target bigger than the room between the margins is centred when it fits in the view (it takes
+ * what margin there is); one bigger than the view has its start aligned instead, or its end with
+ * `alignEnd` (where right-to-left or right-aligned text sits).
  */
-export function revealDelta(start: number, end: number, viewStart: number, viewEnd: number, margin: number): number {
+export function revealDelta(start: number, end: number, viewStart: number, viewEnd: number, margin: number, alignEnd = false): number {
   const lo = viewStart + margin
   const hi = viewEnd - margin
-  if (end - start > hi - lo) return start - lo
+  if (end - start > hi - lo) {
+    if (end - start <= viewEnd - viewStart) return (start + end - viewStart - viewEnd) / 2
+    return alignEnd ? end - hi : start - lo
+  }
   if (start < lo) return start - lo
   if (end > hi) return end - hi
   return 0
+}
+
+/**
+ * How far up from the bottom of `view` something floating over it (`cover`, like the tool dock)
+ * reaches, plus `gap`. 0 when they don't overlap: it has no box (hidden), or sits below or beside.
+ */
+export function coveredFromBelow(view: ClientRect, cover: ClientRect, gap: number): number {
+  const overlaps =
+    cover.bottom > cover.top && cover.top < view.bottom - 1 && cover.bottom > view.top && cover.left < view.right && cover.right > view.left
+  return overlaps ? view.bottom - cover.top + gap : 0
 }
 
 /** Distance between a rect and a viewport (0 when they intersect). Used to prioritize rendering. */

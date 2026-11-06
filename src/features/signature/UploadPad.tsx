@@ -81,6 +81,7 @@ export function UploadPad({ role }: { role: SignatureRole }) {
         <>
           <button
             type="button"
+            data-signing-pad
             onClick={choose}
             {...drop}
             className={cn(
@@ -180,6 +181,7 @@ function UploadPreview({
   return (
     <div>
       <div
+        data-signing-pad
         {...drop}
         className={cn('relative overflow-hidden rounded-xl border border-line bg-checker shadow-xs', PAD_FRAME[role], dragging && 'ring-3 ring-accent/40')}
       >

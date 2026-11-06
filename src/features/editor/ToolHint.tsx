@@ -31,13 +31,17 @@ export function ToolHint({ className }: { className?: string }) {
               Stays on
             </span>
           )}
-          {hint.exit && (
-            <span className="flex shrink-0 items-center gap-1.5 text-fg-subtle">
-              <span aria-hidden>·</span>
-              <Kbd className="h-[18px] min-w-[18px] text-[10.5px]">Esc</Kbd>
-              <span>{hint.exit.replace(/^Esc /, '')}</span>
-            </span>
-          )}
+          {/* "Enter to add · Esc to finish": each key as a key cap, then what it does. */}
+          {hint.exit?.split(' · ').map((part) => {
+            const [key, ...action] = part.split(' ')
+            return (
+              <span key={key} className="flex shrink-0 items-center gap-1.5 text-fg-subtle">
+                <span aria-hidden>·</span>
+                <Kbd className="h-[18px] min-w-[18px] text-[10.5px]">{key}</Kbd>
+                <span>{action.join(' ')}</span>
+              </span>
+            )
+          })}
         </div>
       )}
     </div>

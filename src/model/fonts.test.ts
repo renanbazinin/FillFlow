@@ -38,3 +38,41 @@ describe('unknown font ids', () => {
     expect(isFontLoaded(unknown, true)).toBe(true)
   })
 })
+
+describe('the face that typed text and form fields start in', () => {
+  it('is loaded once the page has settled, and only while online', async () => {
+    const idle: (() => void)[] = []
+    const faces: { family: string; weight?: string }[] = []
+    let online = false
+    const win = new EventTarget()
+    vi.stubGlobal('window', win)
+    vi.stubGlobal('navigator', {
+      get onLine() {
+        return online
+      },
+    })
+    vi.stubGlobal('requestIdleCallback', (cb: () => void) => void idle.push(cb))
+    vi.stubGlobal(
+      'FontFace',
+      class {
+        constructor(family: string, _src: string, desc: { weight?: string }) {
+          faces.push({ family, weight: desc.weight })
+        }
+        load() {
+          return Promise.resolve(this)
+        }
+      },
+    )
+    vi.stubGlobal('document', { fonts: { add: () => {} } })
+    vi.resetModules()
+    await import('./fonts')
+    expect(idle).toHaveLength(1)
+    // Offline as the page settles: not then (a face that fails to load isn't tried again)…
+    idle[0]()
+    expect(faces).toEqual([])
+    // …but once the connection is back.
+    online = true
+    win.dispatchEvent(new Event('online'))
+    expect(faces).toEqual([{ family: FONTS.sans.cssFamily, weight: '400' }])
+  })
+})

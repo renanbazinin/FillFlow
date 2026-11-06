@@ -1,10 +1,10 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
-import { CircleAlert, Eye, EyeOff, FileText, FolderOpen, LockKeyhole } from 'lucide-react'
+import { CircleAlert, Eye, EyeOff, FileText, FolderOpen, LockKeyhole, RotateCw } from 'lucide-react'
 import { Button } from '../../components/ui/button'
 import { Input, Spinner } from '../../components/ui/controls'
 import { Dialog } from '../../components/ui/dialog'
 import { cn } from '../../lib/utils/misc'
-import { useEditor, type LoadedDocument } from '../../store/editor'
+import { useEditor, type LoadedDocument, type LoadState } from '../../store/editor'
 import { chooseAndOpenPdf } from '../home/openFile'
 import { displayName } from '../home/pdfFiles'
 
@@ -60,11 +60,7 @@ export function LoadOverlay() {
           onCancel={() => useEditor.getState().cancelOpen()}
         />
       )}
-      <ErrorDialog
-        open={load.status === 'error'}
-        fileName={load.status === 'error' ? load.fileName : ''}
-        message={load.status === 'error' ? load.message : ''}
-      />
+      <ErrorDialog error={load.status === 'error' ? load : null} />
     </>
   )
 }
@@ -287,43 +283,55 @@ function PasswordDialog({
   )
 }
 
-function ErrorDialog({ open, fileName, message }: { open: boolean; fileName: string; message: string }) {
+function ErrorDialog({ error }: { error: Extract<LoadState, { status: 'error' }> | null }) {
   const dismiss = () => useEditor.getState().dismissLoadError()
+  // FillFlow couldn't download what opening files needs: nothing points at the file, which can be
+  // tried again as is.
+  const unavailable = error?.reason === 'unavailable'
   return (
     <Dialog
-      open={open}
+      open={error !== null}
       onOpenChange={(o) => !o && dismiss()}
       size="sm"
       title={
         <IconTitle icon={<CircleAlert />} danger>
-          Couldn’t open this file
+          {unavailable ? 'FillFlow couldn’t finish loading' : 'Couldn’t open this file'}
         </IconTitle>
       }
-      description={message}
+      // A long word (a file name, an address) wraps instead of running out of the dialog.
+      description={<span className="[overflow-wrap:anywhere]">{error?.message}</span>}
       onCloseAutoFocus={restoreFocusOnClose}
       footer={
         <>
           <Button variant="secondary" onClick={dismiss}>
             Close
           </Button>
-          <Button
-            variant="primary"
-            onClick={() => {
-              dismiss()
-              void chooseAndOpenPdf()
-            }}
-          >
-            <FolderOpen />
-            Try another file
-          </Button>
+          {unavailable ? (
+            <Button variant="primary" onClick={() => void useEditor.getState().retryOpen()}>
+              <RotateCw />
+              Try again
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              onClick={() => {
+                dismiss()
+                void chooseAndOpenPdf()
+              }}
+            >
+              <FolderOpen />
+              {/* A recent document whose file is gone: the same file, opened again, brings back its work. */}
+              {error?.reason === 'missing' ? 'Choose file' : 'Try another file'}
+            </Button>
+          )}
         </>
       }
     >
-      {fileName && (
+      {error?.fileName && !unavailable && (
         <div className="mb-1 flex items-center gap-2.5 rounded-xl border border-line bg-surface-2 px-3 py-2.5">
           <FileText className="size-4 shrink-0 text-fg-subtle" />
-          <span className="min-w-0 truncate text-[13px] font-medium text-fg" dir="auto" title={fileName}>
-            {fileName}
+          <span className="min-w-0 truncate text-[13px] font-medium text-fg" dir="auto" title={error.fileName}>
+            {error.fileName}
           </span>
         </div>
       )}

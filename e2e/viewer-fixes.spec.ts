@@ -258,6 +258,173 @@ test.describe('a document too long to keep every page ready', () => {
   })
 })
 
+/**
+ * Waits until the pages stop scrolling: a smooth scroll has run its course. (Found by CSS: a sheet
+ * open over the pages hides them from the accessibility tree.)
+ */
+async function scrollSettled(page: Page): Promise<void> {
+  await page.locator('[role="region"][aria-label="Document pages"]').evaluate(
+    (el) =>
+      new Promise<void>((done) => {
+        let last = ''
+        let still = 0
+        const check = () => {
+          const now = `${el.scrollLeft} ${el.scrollTop}`
+          still = now === last ? still + 1 : 0
+          last = now
+          if (still < 10) requestAnimationFrame(check)
+          else done()
+        }
+        requestAnimationFrame(check)
+      }),
+  )
+}
+
+/** The field whose control on a page has focus, if any. */
+function focusedField(page: Page): Promise<string | null> {
+  return page.evaluate(() => document.activeElement?.closest<HTMLElement>('[data-page-index] [data-form-field]')?.dataset.formField ?? null)
+}
+
+/**
+ * How much of a field's box on a page the floating tool dock covers, and how much of it is out of
+ * sight (outside the visible part of the pages), in percent.
+ */
+function hiddenShare(widget: Locator): Promise<{ underDock: number; outOfSight: number }> {
+  return widget.evaluate((el) => {
+    const box = el.getBoundingClientRect()
+    const pages = document.querySelector('[role="region"][aria-label="Document pages"]')!
+    const { left, top } = pages.getBoundingClientRect()
+    const view = { left, top, right: left + pages.clientWidth, bottom: top + pages.clientHeight }
+    const dock = document.querySelector('[role="toolbar"][aria-label="Tools"]')!.getBoundingClientRect()
+    const share = (r: { left: number; top: number; right: number; bottom: number }) =>
+      (Math.max(0, Math.min(box.right, r.right) - Math.max(box.left, r.left)) * Math.max(0, Math.min(box.bottom, r.bottom) - Math.max(box.top, r.top))) /
+      (box.width * box.height)
+    return { underDock: Math.round(share(dock) * 100), outOfSight: Math.round((1 - share(view)) * 100) }
+  })
+}
+
+test.describe('on a phone held sideways, with a keyboard that leaves 190px of the page', () => {
+  test.use({ viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true })
+
+  test('"Next empty field", Enter and Tab bring the field clear of the tool dock', async ({ page }) => {
+    const errors = trackPageErrors(page)
+    await gotoHome(page)
+    await openPdf(page, SAMPLE_PDF)
+    await showPage(page, 0)
+    const pages = page.getByRole('region', { name: 'Document pages' })
+    // The first fields filled in: the next empty one is Home address, further down.
+    for (const [name, value] of [
+      ['Full name', 'Dana Levi'],
+      ['Date of birth', '01/01/1990'],
+      ['Email', 'dana@example.com'],
+      ['Phone', '050-1234567'],
+    ] as const) {
+      await (await formField(page, name)).locator('input').fill(value)
+    }
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+    await page.setViewportSize({ width: 844, height: 190 })
+
+    // From the Form & items sheet, with the page behind it: the dock shows (nothing on the pages has focus).
+    const address = await formField(page, 'Address')
+    await pages.evaluate((el) => el.scrollTo({ top: 0 }))
+    expect((await hiddenShare(address)).outOfSight).toBe(100)
+    await page.getByRole('button', { name: 'Form & items' }).tap()
+    const sheet = page.getByRole('dialog', { name: 'Form and items' })
+    await sheet.getByRole('button', { name: 'Next empty field' }).tap()
+    await scrollSettled(page)
+    expect(await hiddenShare(address)).toEqual({ underDock: 0, outOfSight: 0 })
+    await sheet.getByRole('button', { name: 'Close' }).first().tap()
+    await expect(sheet).toHaveCount(0)
+
+    // On from a text box, where the dock makes way while typing, to the next field below the view: a
+    // text box, where it still does, or a choice, where it is back.
+    for (const [from, key, to] of [
+      ['Phone', 'Enter', 'Address'],
+      ['ID number', 'Enter', 'Membership type'],
+      ['ID number', 'Tab', 'Membership type'],
+      ['Comments', 'Tab', 'Signature'],
+    ] as const) {
+      const control = (await formField(page, from)).locator('input, textarea')
+      await control.focus()
+      // At the bottom of the view.
+      await control.evaluate((el) => {
+        const view = el.closest('[role="region"]')!
+        view.scrollTop += el.getBoundingClientRect().bottom - (view.getBoundingClientRect().top + view.clientHeight - 4)
+      })
+      expect((await hiddenShare(await formField(page, to))).outOfSight).toBe(100)
+      await page.keyboard.press(key)
+      await expect.poll(() => focusedField(page)).toBe(to)
+      await scrollSettled(page)
+      const widget = page.locator('[data-page-index] [data-form-widget]:focus-within')
+      expect(await hiddenShare(widget), `${key} from ${from}`).toEqual({ underDock: 0, outOfSight: 0 })
+    }
+    expect(errors).toEqual([])
+  })
+})
+
+/** Where a text field's text ends on screen (its right edge, inside its padding), next to the field's width and the view. */
+function textEnd(input: Locator): Promise<{ width: number; text: number; view: { left: number; right: number } }> {
+  return input.evaluate((el) => {
+    const pages = el.closest('[role="region"]')!
+    const left = pages.getBoundingClientRect().left + pages.clientLeft
+    const box = el.getBoundingClientRect()
+    const style = getComputedStyle(el)
+    return {
+      width: box.width,
+      text: box.right - parseFloat(style.borderRightWidth) - parseFloat(style.paddingRight),
+      view: { left, right: left + pages.clientWidth },
+    }
+  })
+}
+
+test('Enter and "Next empty field" bring in the end of a wide field that its text sits at', async ({ page }) => {
+  const errors = trackPageErrors(page)
+  await page.setViewportSize({ width: 1366, height: 657 })
+  await gotoHome(page)
+  await openPdf(page, fixture('form-basic.pdf'))
+  await showPage(page, 0)
+  const pages = page.getByRole('region', { name: 'Document pages' })
+  const name = (await formField(page, 'Name')).locator('input')
+  const hebrewName = (await formField(page, 'Hebrew name')).locator('input')
+  await page.getByRole('button', { name: /^Zoom level/ }).click()
+  await page.getByRole('menuitemradio', { name: '300%' }).click()
+  await expect.poll(async () => (await textEnd(name)).width).toBeGreaterThan(850)
+
+  // Hebrew in a right-aligned field, then in a left-aligned one (where it starts at the right edge too).
+  await name.fill('דנה לוי')
+  await hebrewName.fill('ישראל כהן')
+  for (const [from, key, to] of [
+    [name, 'Enter', hebrewName],
+    [hebrewName, 'Shift+Enter', name],
+  ] as const) {
+    await from.focus()
+    await pages.evaluate((el) => el.scrollTo({ left: 0 }))
+    const before = await textEnd(to)
+    expect(before.text).toBeGreaterThan(before.view.right)
+    await page.keyboard.press(key)
+    await expect(to).toBeFocused()
+    await scrollSettled(page)
+    const { width, text, view } = await textEnd(to)
+    expect(width).toBeGreaterThan(view.right - view.left)
+    expect(text, `${key} into ${await to.inputValue()}`).toBeLessThanOrEqual(view.right)
+    expect(text).toBeGreaterThan(view.left)
+  }
+
+  // The empty right-aligned field, where typing starts at its right edge: next after Name.
+  await hebrewName.fill('')
+  await name.focus()
+  await pages.evaluate((el) => el.scrollTo({ left: 0 }))
+  const before = await textEnd(hebrewName)
+  expect(before.text).toBeGreaterThan(before.view.right)
+  await page.getByRole('button', { name: 'Next empty field' }).click()
+  await expect(hebrewName).toBeFocused()
+  await scrollSettled(page)
+  const { text, view } = await textEnd(hebrewName)
+  expect(text).toBeLessThanOrEqual(view.right)
+  expect(text).toBeGreaterThan(view.left)
+  expect(errors).toEqual([])
+})
+
 test.describe('in a browser without the newest JavaScript built-ins', () => {
   // Baseline 2025-2026 features that pdf.js' default build calls without polyfills.
   const REMOVE_BUILT_INS = `

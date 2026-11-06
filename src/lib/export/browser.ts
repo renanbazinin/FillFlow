@@ -31,9 +31,9 @@ const MAX_CANVAS_SIDE = 8192
 const MAX_CANVAS_AREA = 16_777_216
 
 /**
- * Renders a text element with the browser's own text stack (font + system fallbacks for
- * emoji, CJK, Arabic…) using the same layout as the editor, padded so glyphs that overflow
- * the line box aren't clipped.
+ * Renders the lines of `layout` (those of a text element the fonts can't draw) with the browser's
+ * own text stack (font + system fallbacks for emoji, CJK, Arabic…), placed as the editor lays
+ * them out in the element's box, padded so glyphs that overflow the line box aren't clipped.
  */
 export async function rasterizeText(el: TextElement, layout: TextBlockLayout): Promise<RasterizedText | null> {
   if (typeof document === 'undefined') return null

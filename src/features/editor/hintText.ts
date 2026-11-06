@@ -4,7 +4,10 @@ import type { ToolId } from '../../model/types'
 export interface ToolHintText {
   /** What to do next, e.g. "Click anywhere to type". */
   text: string
-  /** How to get out, e.g. "Esc to finish"; null when there's nothing useful to say (touch). */
+  /**
+   * The keys that help, each followed by what it does, e.g. "Enter to add · Esc to finish"; null
+   * when there's nothing useful to say (touch).
+   */
   exit: string | null
 }
 
@@ -24,6 +27,9 @@ export function toolHint(tool: ToolId, opts: { armed: boolean; touch: boolean })
   const placing = opts.armed && PLACE_ASSET[tool]
   let text = placing || def.hint
   if (opts.touch) text = text.replace(/^Click\b/, 'Tap').replace(/\bclick\b/g, 'tap')
-  const exit = opts.touch ? null : placing ? 'Esc to cancel' : 'Esc to finish'
+  // Enter adds the tool's item in the middle of the view (useEditingShortcuts): not a drawing, and a
+  // signature, initials or picture only once there's one to place.
+  const enter = def.placement !== 'draw' && !PLACE_ASSET[tool]
+  const exit = opts.touch ? null : placing ? 'Enter to place · Esc to cancel' : enter ? 'Enter to add · Esc to finish' : 'Esc to finish'
   return { text, exit }
 }

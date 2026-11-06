@@ -5,6 +5,8 @@ import { TOOL_BY_ID } from '../../model/tools'
 import type { ToolId } from '../../model/types'
 import { useEditor } from '../../store/editor'
 import { ImageToolButton, SignatureToolButton } from '../signature/SignatureToolButton'
+import { viewer } from '../viewer/viewerApi'
+import { DateToolButton } from './DateToolButton'
 import { ShapesButton } from './ShapesButton'
 import { ToolButton } from './ToolButton'
 import { ToolHint } from './ToolHint'
@@ -35,8 +37,18 @@ export const ToolDock = memo(function ToolDock() {
   }, [compact])
 
   return (
-    <div className="pointer-events-none relative z-30 shrink-0 sm:absolute sm:inset-x-0 sm:bottom-4 sm:flex sm:justify-center sm:px-4">
-      <ToolHint className="absolute inset-x-0 bottom-full mb-2.5 px-3" />
+    <div
+      className={cn(
+        'group/dock pointer-events-none relative z-30 shrink-0 sm:absolute sm:inset-x-0 sm:bottom-4 sm:flex sm:justify-center sm:px-4',
+        // While typing on the pages, it makes way where an on-screen keyboard has shrunk the page (in-app
+        // browsers do; most lay the keyboard over the page): floating over the 100–210px left on a phone
+        // held sideways, it would hide much of it. Without a keyboard, such a phone is 280–360px tall in
+        // a browser, and keeps its tools. A read-only box brings up no keyboard.
+        'sm:[@media(max-height:260px)]:in-[main:has([data-page-index]_:is(input,textarea):not([readonly]):focus)]:hidden',
+      )}
+    >
+      {/* A tool's choices (date formats, shapes, signatures) open over the hint: it makes way meanwhile. */}
+      <ToolHint className="absolute inset-x-0 bottom-full mb-2.5 px-3 transition-opacity group-has-[[aria-expanded=true]]/dock:opacity-0" />
       <div
         ref={barRef}
         role="toolbar"
@@ -61,7 +73,7 @@ export const ToolDock = memo(function ToolDock() {
           <PlainTool id="check" />
           <PlainTool id="cross" />
           <PlainTool id="dot" />
-          <PlainTool id="date" />
+          <DateToolButton />
         </Group>
         <Divider />
         <Group>
@@ -99,7 +111,12 @@ const PlainTool = memo(function PlainTool({ id }: { id: ToolId }) {
       tool={def}
       active={active}
       badge={locked}
-      onClick={() => useEditor.getState().setTool(id)}
+      onClick={(e) => {
+        useEditor.getState().setTool(id)
+        // Picked from the keyboard (a click with no click count): on to the pages, where Enter adds
+        // the tool's item. Back on this button, Enter would only pick it again.
+        if (e.detail === 0 && lockable) viewer.getScrollContainer()?.focus({ preventScroll: true })
+      }}
       onDoubleClick={lockable ? () => useEditor.getState().setTool(id, { locked: true }) : undefined}
     />
   )

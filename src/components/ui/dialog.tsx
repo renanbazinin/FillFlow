@@ -23,7 +23,15 @@ export interface DialogProps {
   onCloseAutoFocus?: (e: Event) => void
 }
 
-const WIDTHS = { sm: 'max-w-sm', md: 'max-w-lg', lg: 'max-w-2xl', xl: 'max-w-4xl' }
+/** The card's width (as a bottom sheet, on small screens, it takes the whole width). */
+const WIDTHS = { sm: 'sm:max-w-sm', md: 'sm:max-w-lg', lg: 'sm:max-w-2xl', xl: 'sm:max-w-4xl' }
+
+/**
+ * A modal's backdrop fades in and out. While it fades out it lets presses through (Radix sets its
+ * pointer-events inline, hence the !): a click or tap right after the modal closes is meant for
+ * the page.
+ */
+const OVERLAY_FADE = 'data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out data-[state=closed]:!pointer-events-none'
 
 /**
  * Radix's focus trap moves focus to the modal itself when anything inside it is removed while
@@ -77,7 +85,7 @@ export function Dialog({
   return (
     <RDialog.Root open={open} onOpenChange={onOpenChange}>
       <RDialog.Portal>
-        <RDialog.Overlay className="fixed inset-0 z-[80] bg-overlay backdrop-blur-[2px] data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out" />
+        <RDialog.Overlay className={cn('fixed inset-0 z-[80] bg-overlay backdrop-blur-[2px]', OVERLAY_FADE)} />
         <RDialog.Content
           {...focusMoves}
           onOpenAutoFocus={(e) => {
@@ -99,7 +107,8 @@ export function Dialog({
             className,
           )}
         >
-          <div className={cn('flex items-start gap-4 px-5 pb-2 pt-5 sm:px-6', hideTitle && 'sr-only')}>
+          {/* With no body, the header keeps the body's room above the footer itself. */}
+          <div className={cn('flex items-start gap-4 px-5 pt-5 sm:px-6', children ? 'pb-2' : 'pb-5', hideTitle && 'sr-only')}>
             <div className="min-w-0 flex-1">
               <RDialog.Title className="text-[17px] font-semibold tracking-[-0.01em]">{title}</RDialog.Title>
               {description ? (
@@ -108,14 +117,15 @@ export function Dialog({
                 <RDialog.Description className="sr-only">{typeof title === 'string' ? title : 'Dialog'}</RDialog.Description>
               )}
             </div>
+            {/* 40px on touch screens, grown evenly around the same icon spot. */}
             <RDialog.Close
-              className="-mr-2 -mt-1 inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-fg-subtle transition-colors hover:bg-surface-3 hover:text-fg"
+              className="-mr-2 -mt-1 inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-fg-subtle transition-colors hover:bg-surface-3 hover:text-fg pointer-coarse:-mr-3 pointer-coarse:-mt-2 pointer-coarse:size-10"
               aria-label="Close"
             >
               <X className="size-4" />
             </RDialog.Close>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5 pt-2 scrollbar-thin sm:px-6">{children}</div>
+          {children && <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5 pt-2 scrollbar-thin sm:px-6">{children}</div>}
           {footer && (
             <div className="flex flex-wrap items-center justify-end gap-2 border-t border-line bg-surface-2 px-5 pt-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] sm:px-6">
               {footer}
@@ -143,7 +153,7 @@ export function Sheet({ open, onOpenChange, side = 'right', title, children, cla
   return (
     <RDialog.Root open={open} onOpenChange={onOpenChange}>
       <RDialog.Portal>
-        <RDialog.Overlay className="fixed inset-0 z-[70] bg-overlay data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out" />
+        <RDialog.Overlay className={cn('fixed inset-0 z-[70] bg-overlay', OVERLAY_FADE)} />
         <RDialog.Content
           ref={contentRef}
           {...focusMoves}
@@ -158,9 +168,11 @@ export function Sheet({ open, onOpenChange, side = 'right', title, children, cla
           onPointerDownOutside={(e) => isToastTarget(e) && e.preventDefault()}
           className={cn(
             'fixed z-[71] flex flex-col bg-surface text-fg shadow-overlay outline-none',
-            side === 'right' && 'inset-y-0 right-0 w-[min(88vw,360px)] border-l border-line data-[state=open]:animate-slide-in-right',
-            side === 'left' && 'inset-y-0 left-0 w-[min(80vw,300px)] border-r border-line data-[state=open]:animate-slide-in-left',
-            side === 'bottom' && 'inset-x-0 bottom-0 max-h-[80dvh] rounded-t-2xl border-t border-line data-[state=open]:animate-slide-up',
+            // The side at the screen's edge is padded with its safe-area inset (a phone held sideways:
+            // notch, rounded corners). A side sheet grows by it: the width it is given stays usable.
+            side === 'right' && 'inset-y-0 right-0 box-content w-[min(88vw,360px)] border-l border-line pr-safe data-[state=open]:animate-slide-in-right',
+            side === 'left' && 'inset-y-0 left-0 box-content w-[min(80vw,300px)] border-r border-line pl-safe data-[state=open]:animate-slide-in-left',
+            side === 'bottom' && 'inset-x-0 bottom-0 max-h-[80dvh] rounded-t-2xl border-t border-line pl-safe pr-safe data-[state=open]:animate-slide-up',
             className,
           )}
         >

@@ -1,24 +1,32 @@
 import { useEffect } from 'react'
 import { toast } from 'sonner'
 import { shallow } from 'zustand/shallow'
+import { confirm } from '../../components/ui/confirm'
+import { STAYING_TOASTER } from '../../components/ui/toasts'
 import { filledCount, useEditor, type EditorState, type LoadedDocument } from '../../store/editor'
 import { bidiIsolate } from '../utils/misc'
 import { createAutosaver, type Autosaver } from './autosaver'
 import {
   SessionConflictError,
+  SessionRemovedError,
+  StorageUnavailableError,
   getRecentDocument,
   loadedSessionVersion,
+  rememberDocument,
   requestPersistentStorage,
   saveSession,
+  sessionsChannel,
   type SessionVersion,
 } from './db'
 import { neededPassword } from './protectedDocs'
 import { patchRecentSoon } from './recentPatches'
-import { IDLE_STATUS, describeStorageError, setSaveStatus, useSaveStatusStore, type SaveStatus } from './saveStatus'
+import { IDLE_STATUS, STORAGE_BLOCKED, describeStorageError, setSaveStatus, useSaveStatusStore, type SaveStatus } from './saveStatus'
 import { buildSession } from './session'
 import { renderThumbnail, whenIdle } from './thumbnail'
 
 export type { SaveStatus } from './saveStatus'
+/** Tabs announce each session they save or delete on this channel (see `startAutosave`). */
+export { SESSIONS_CHANNEL } from './db'
 
 /** Quiet time after the last change before it is written. */
 export const AUTOSAVE_DELAY_MS = 600
@@ -26,17 +34,12 @@ export const AUTOSAVE_DELAY_MS = 600
 export const AUTOSAVE_MAX_WAIT_MS = 3000
 const ERROR_TOAST_ID = 'autosave-error'
 const OUTDATED_TOAST_ID = 'autosave-outdated'
-/** Tabs announce each session they save on this channel (see `startAutosave`). */
-export const SESSIONS_CHANNEL = 'fillflow-sessions'
+const STORAGE_TOAST_ID = 'storage-unavailable'
+const NOT_STORED_TOAST_ID = 'file-not-stored'
 
 const CHANGED_ELSEWHERE = 'This document was changed in another tab'
 const NOT_LOADED = 'Your saved work on this document didn’t load'
-/**
- * The toaster of the messages that stay until acted on (App mounts it just under the top bar, where
- * nothing opens): with the passing ones at the bottom, they would cover the popovers that open above
- * the tool dock.
- */
-export const STAYING_TOASTER = 'staying'
+const REMOVED = 'This document was removed from this device'
 
 /** Autosave state of one opened document. */
 interface Target {
@@ -63,16 +66,15 @@ type Content = Pick<EditorState, 'elements' | 'formValues'>
 
 /** One error toast per failure streak, app-wide. */
 let errorToastShown = false
+/**
+ * The document with which the user was told that nothing can be stored in this browser (once per
+ * page load: the message goes with that document); null until then.
+ */
+let storageNoticeFor: string | null = null
 let activeFlush: (() => Promise<void>) | null = null
 const thumbnailRequested = new WeakSet<LoadedDocument>()
 /** Newest session version this tab has written (versions only ever increase, see `persist`). */
 let lastVersion = 0
-
-let channel: BroadcastChannel | null | undefined
-function sessionsChannel(): BroadcastChannel | null {
-  channel ??= typeof BroadcastChannel === 'function' ? new BroadcastChannel(SESSIONS_CHANNEL) : null
-  return channel
-}
 
 /**
  * Autosaves the open document's work to IndexedDB and keeps its recents entry fresh (progress
@@ -137,10 +139,12 @@ export function startAutosave(): () => void {
         if (err instanceof SessionConflictError) {
           return outdated(snap.target, snap.target.version.updatedAt === null ? NOT_LOADED : CHANGED_ELSEWHERE)
         }
+        if (err instanceof SessionRemovedError) return outdated(snap.target, REMOVED)
         console.warn('[autosave] could not save', err)
         if (snap.target !== target) return reportLost(snap.target, describeStorageError(err))
         if (target.outdated) return
-        if (!errorToastShown) {
+        // Where nothing can be stored, the user was told so as the document opened (see `switchTo`).
+        if (!errorToastShown && !(err instanceof StorageUnavailableError && storageNoticeFor !== null)) {
           errorToastShown = true
           toast.error("Couldn't save your progress on this device", {
             id: ERROR_TOAST_ID,
@@ -170,13 +174,33 @@ export function startAutosave(): () => void {
     setSaveStatus({ state: 'error', savedAt: useSaveStatusStore.getState().savedAt, error: `${reason}.` })
   }
 
+  // The actions of these messages keep them up as they run (sonner closes them otherwise): they go
+  // once the document is opened again with its work, or kept (see `switchTo`, `keep`), and stay
+  // up when that doesn't happen, the open failing again included.
   function showOutdated(t: Target, reason: string) {
+    const removed = reason === REMOVED
     toast.error(reason, {
       id: OUTDATED_TOAST_ID,
-      description: 'Reload it to get the latest saved version. Changes made here aren’t being saved.',
+      description: removed
+        ? 'Changes made here aren’t being saved unless you keep it.'
+        : 'Reload it to get the latest saved version. Changes made here aren’t being saved.',
       duration: Infinity,
       toasterId: STAYING_TOASTER,
-      action: { label: 'Reload', onClick: () => reload(t.doc) },
+      action: removed
+        ? {
+            label: 'Keep it',
+            onClick: (e) => {
+              e.preventDefault()
+              keep(t)
+            },
+          }
+        : {
+            label: 'Reload',
+            onClick: (e) => {
+              e.preventDefault()
+              void reload(t.doc)
+            },
+          },
     })
   }
 
@@ -191,19 +215,89 @@ export function startAutosave(): () => void {
       description: 'Reload it to try again before you make changes.',
       duration: Infinity,
       toasterId: STAYING_TOASTER,
-      action: { label: 'Reload', onClick: () => reload(t.doc) },
+      action: {
+        label: 'Reload',
+        onClick: (e) => {
+          e.preventDefault()
+          void reload(t.doc)
+        },
+      },
     })
   }
 
-  /** Newer work on `t` is stored: stop saving this copy over it, and offer to reload. */
+  /**
+   * Nothing can be stored in this browser: say so once, before any work goes in. (An error, as
+   * every message that stays until acted on is: the popovers and dialogs that clear passing
+   * messages out of their way leave those up.)
+   */
+  function showStorageUnavailable(t: Target) {
+    if (storageNoticeFor !== null) return
+    storageNoticeFor = t.doc.id
+    toast.error('Your progress can’t be saved on this device', {
+      id: STORAGE_TOAST_ID,
+      description: `${STORAGE_BLOCKED} Download your PDF to keep your changes.`,
+      duration: Infinity,
+      toasterId: STAYING_TOASTER,
+      action: { label: 'Got it', onClick: () => {} },
+    })
+  }
+
+  /**
+   * The file couldn't be stored (no room for it): it is listed, and its work saved, but only the
+   * file opened again continues that work, so the user had better keep it. (An error: see above.)
+   */
+  function reportNotStored(t: Target, stored: Promise<void> | undefined) {
+    void stored?.catch((err: unknown) => {
+      if (t !== target || t.doc.storageUnavailable || err instanceof StorageUnavailableError) return
+      toast.error('This PDF couldn’t be stored on this device', {
+        id: NOT_STORED_TOAST_ID,
+        description: `${describeStorageError(err)} Keep your copy of the file: you’ll need to open it again to continue your work.`,
+        duration: Infinity,
+        toasterId: STAYING_TOASTER,
+        action: { label: 'Got it', onClick: () => {} },
+      })
+    })
+  }
+
+  /**
+   * The user keeps the document after it was removed from this device elsewhere: it is stored and
+   * listed again, and what is on screen is saved, from now on as before.
+   */
+  function keep(t: Target) {
+    if (t !== target || t.outdated !== REMOVED) return
+    toast.dismiss(OUTDATED_TOAST_ID)
+    const { doc } = t
+    t.outdated = null
+    t.warned = false
+    t.version = { updatedAt: 0 }
+    saver = createSaver()
+    saver.schedule({ state: useEditor.getState(), target: t })
+    markSaving()
+    const stored = rememberDocument({ id: doc.id, name: doc.name, size: doc.bytes.byteLength, pageCount: doc.pages.length }, doc.bytes)
+    void stored.then(
+      () => {
+        // Listed anew, without its page preview.
+        thumbnailRequested.delete(doc)
+        requestThumbnail(doc)
+      },
+      (err: unknown) => console.warn('[storage] could not remember document', err),
+    )
+    reportNotStored(t, stored)
+  }
+
+  /** Newer work on `t` is stored, or none any more: stop saving this copy over it, and offer a way out. */
   function outdated(t: Target, reason: string) {
-    if (t !== target) return reportLost(t, reason === NOT_LOADED ? 'Its saved work didn’t load.' : 'It was changed in another tab.')
+    if (t !== target) return reportLost(t, LOST_BECAUSE[reason] ?? LOST_BECAUSE[CHANGED_ELSEWHERE])
     if (t.outdated) return
     t.outdated = reason
     const unsaved = saver !== null && (saver.queued || saver.busy)
     saver?.dispose()
     saver = null
-    if (unsaved || useSaveStatusStore.getState().state === 'error') markNotSaved(t, reason)
+    // Removed, none of it is stored any more: the work on screen, saved or loaded, is the only copy.
+    const removedWork = reason === REMOVED && filledCount() > 0
+    if (unsaved || removedWork || useSaveStatusStore.getState().state === 'error') markNotSaved(t, reason)
+    // Nor is a removed document without any work saved: it is as good as just opened.
+    else if (reason === REMOVED) setSaveStatus(IDLE_STATUS)
     showOutdated(t, reason)
   }
 
@@ -217,32 +311,40 @@ export function startAutosave(): () => void {
   function switchTo(s: EditorState) {
     const replaced = target
     retire(saver)
+    // About the document on screen. (The one about storage goes with the document it was shown
+    // with, never to come back.)
     toast.dismiss(OUTDATED_TOAST_ID)
+    toast.dismiss(NOT_STORED_TOAST_ID)
+    if (s.doc?.id !== storageNoticeFor) toast.dismiss(STORAGE_TOAST_ID)
     target = s.doc ? { doc: s.doc, version: baseVersion(s.doc.id, replaced), outdated: null, warned: false } : null
     baseline = { elements: s.elements, formValues: s.formValues }
     saver = target ? createSaver() : null
     setSaveStatus(IDLE_STATUS)
     if (target) {
       requestThumbnail(target.doc)
-      if (target.doc.sessionLoadFailed) showNotLoaded(target)
+      // Storage that can't be used at all holds no saved work that could have failed to load.
+      if (target.doc.storageUnavailable) showStorageUnavailable(target)
+      else if (target.doc.sessionLoadFailed) showNotLoaded(target)
+      reportNotStored(target, target.doc.stored)
     }
   }
 
   function onChange(s: EditorState) {
     if (s.doc !== (target?.doc ?? null)) return switchTo(s)
     if (!target || s.revision === 0) return
+    // Back to what is already stored (an undo before the timer fired, an asset added without
+    // being placed, such as a saved signature taken up…): nothing to write, nor anything unsaved.
+    const unchanged = baseline !== null && s.elements === baseline.elements && s.formValues === baseline.formValues
     if (target.outdated) {
       // Nothing is saved here any more: make sure the user knows before putting in more work.
-      if (useSaveStatusStore.getState().state !== 'error') {
+      if (!unchanged && useSaveStatusStore.getState().state !== 'error') {
         markNotSaved(target, target.outdated)
         showOutdated(target, target.outdated)
       }
       return
     }
     if (!saver) return
-    if (baseline && s.elements === baseline.elements && s.formValues === baseline.formValues) {
-      // Back to what is already stored (an undo before the timer fired, an asset added
-      // without being placed…): nothing to write.
+    if (unchanged) {
       if (saver.queued) {
         saver.cancel()
         if (!saver.busy) {
@@ -253,13 +355,22 @@ export function startAutosave(): () => void {
       return
     }
     saver.schedule({ state: s, target })
-    markSaving()
+    // Where nothing can be stored (and nothing has been), say so at once rather than once the write
+    // fails: leaving then asks first from the very first change.
+    const { savedAt } = useSaveStatusStore.getState()
+    if (!target.doc.storageUnavailable || savedAt !== null) return markSaving()
+    setSaveStatus({ state: 'error', savedAt, error: STORAGE_BLOCKED })
   }
 
-  /** Another tab committed a session: if it's for this document, the copy here is out of date. */
+  /**
+   * Another tab committed a session, or deleted one (removing the document from this device): if
+   * it's for this document, the copy here is out of date.
+   */
   const onAnnounce = (e: MessageEvent) => {
-    const { docId, updatedAt } = (e.data ?? {}) as { docId?: unknown; updatedAt?: unknown }
-    if (!target || target.outdated || docId !== target.doc.id || typeof updatedAt !== 'number') return
+    const { docId, updatedAt, removed } = (e.data ?? {}) as { docId?: unknown; updatedAt?: unknown; removed?: unknown }
+    if (!target || target.outdated || docId !== target.doc.id) return
+    if (removed === true) return outdated(target, REMOVED)
+    if (typeof updatedAt !== 'number') return
     const known = target.version.updatedAt
     if (known === null || updatedAt > known) outdated(target, CHANGED_ELSEWHERE)
   }
@@ -345,8 +456,31 @@ function persist({ state, target }: Snapshot, blind: boolean): Promise<void> {
   })
 }
 
-/** Opens the document again from its bytes, which loads the latest saved work. */
-function reload(doc: LoadedDocument) {
+/** Why the last changes of a copy that is no longer open weren't saved, by why it stopped saving. */
+const LOST_BECAUSE: Record<string, string> = {
+  [CHANGED_ELSEWHERE]: 'It was changed in another tab.',
+  [NOT_LOADED]: 'Its saved work didn’t load.',
+  [REMOVED]: 'It was removed from this device.',
+}
+
+/**
+ * Opens the document again from its bytes, which loads the latest saved work. As when leaving it
+ * (see `confirmLeaveDocument`): changes still waiting are written first, and changes made here
+ * that couldn't be saved are only thrown away once the user agrees.
+ */
+async function reload(doc: LoadedDocument) {
+  if (useEditor.getState().doc !== doc) return
+  await flushAutosave()
+  if (useEditor.getState().doc !== doc) return
+  if (useSaveStatusStore.getState().state === 'error') {
+    const ok = await confirm({
+      title: 'Reload without your latest changes?',
+      description: 'They couldn’t be saved on this device. Download your PDF first if you want to keep them.',
+      confirmLabel: 'Reload anyway',
+      danger: true,
+    })
+    if (!ok) return
+  }
   const { doc: open, openDocument } = useEditor.getState()
   if (open === doc) void openDocument({ name: doc.name, bytes: doc.bytes })
 }

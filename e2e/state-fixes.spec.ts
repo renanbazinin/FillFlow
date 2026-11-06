@@ -1,6 +1,8 @@
+import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { basename } from 'node:path'
-import { expect, test, type Locator, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page, type Route } from '@playwright/test'
+import { PDFDocument, PDFHexString, PDFName, cmyk } from 'pdf-lib'
 import {
   SAMPLE_PDF,
   SAMPLE_SPOTS,
@@ -106,6 +108,20 @@ function failNextSessionRead(page: Page) {
   })
 }
 
+/** From now on, every read of saved work (opening a document) fails; `window.failedSessionReads` counts them. */
+function failSessionReads(page: Page) {
+  return page.evaluate(() => {
+    const w = window as unknown as { failedSessionReads: number }
+    w.failedSessionReads = 0
+    const get = IDBObjectStore.prototype.get
+    IDBObjectStore.prototype.get = function (this: IDBObjectStore, ...args: Parameters<IDBObjectStore['get']>) {
+      if (this.name !== 'sessions' || this.transaction.mode !== 'readonly') return get.apply(this, args)
+      w.failedSessionReads++
+      throw new DOMException('Data lost due to missing file.', 'NotReadableError')
+    }
+  })
+}
+
 /** Every later write of saved work fails (storage full): leaving the document then asks first. */
 function failSessionWrites(page: Page) {
   return page.evaluate(() => {
@@ -203,7 +219,9 @@ test('a tab with an out-of-date copy never overwrites newer work, and offers to 
   await page.waitForTimeout(1500)
   expect((await sampleSession(page))?.formValues).toMatchObject({ 'Full name': 'From tab B', Email: '' })
 
+  // Reloading throws away the change made here, which isn't saved: once the user agrees.
   await page.getByRole('button', { name: 'Reload' }).click()
+  await page.getByRole('alertdialog', { name: 'Reload without your latest changes?' }).getByRole('button', { name: 'Reload anyway' }).click()
   await expect(await textInput(page, 'Full name')).toHaveValue('From tab B')
 })
 
@@ -262,8 +280,10 @@ for (const [device, viewport] of [
     await expect(saved).toBeHidden()
     await expect(page.getByText(/(Click|Tap) to place your signature/)).toBeVisible()
     await page.keyboard.press('Escape') // don't place it
+    // A signature taken up but not placed changes nothing on the pages: nothing here is unsaved.
+    await expect(page.getByRole('button', { name: /not saved/i })).toHaveCount(0)
 
-    // Still up, and its Reload works.
+    // Still up, and its Reload works, without asking first: reloading loses nothing made here.
     await outdated.getByRole('button', { name: 'Reload' }).click()
     await expect(await textInput(page, 'Full name')).toHaveValue('From tab B')
     await expect(outdated).toHaveCount(0)
@@ -728,6 +748,71 @@ test('on a document’s first open in a page, the warning that its saved work di
   await expect(page.locator('[data-sonner-toast]', { hasText: /fillable fields found/ })).toBeVisible()
 })
 
+test('the warning that saved work didn’t load stays up when reloading doesn’t bring that work back', async ({ page }) => {
+  await gotoHome(page)
+  await openPdf(page, SAMPLE_PDF)
+  await fillFormField(page, 'Full name', 'Saved earlier')
+  await expect.poll(async () => (await sampleSession(page))?.formValues['Full name']).toBe('Saved earlier')
+  const notLoaded = page.locator('[data-sonner-toast]', { hasText: 'Your saved work on this document didn’t load' })
+
+  await failSessionReads(page)
+  await dropPdf(page, SAMPLE_PDF)
+  await expect(notLoaded).toBeVisible()
+  // Whether the message ever starts to close: a reload that is quick (as on a fast device) would
+  // otherwise have it go for good along with its own copy.
+  await page.evaluate(() => {
+    const w = window as unknown as { warningClosed: boolean }
+    w.warningClosed = false
+    new MutationObserver(() => {
+      for (const el of document.querySelectorAll('[data-sonner-toast][data-removed="true"]')) {
+        if (el.textContent?.includes('didn’t load')) w.warningClosed = true
+      }
+    }).observe(document.body, { attributes: true, attributeFilter: ['data-removed'], subtree: true })
+  })
+  // Opened again, its work failing to load again: the message stays up.
+  await notLoaded.getByRole('button', { name: 'Reload' }).click()
+  await expect.poll(() => page.evaluate(() => (window as unknown as { failedSessionReads: number }).failedSessionReads)).toBe(2)
+  await page.waitForTimeout(1000)
+  await expect(notLoaded).toBeVisible()
+  await expect(notLoaded.getByRole('button', { name: 'Reload' })).toBeVisible()
+  expect(await page.evaluate(() => (window as unknown as { warningClosed: boolean }).warningClosed)).toBe(false)
+  await expect(await textInput(page, 'Full name')).toHaveValue('')
+
+  // Typing on all the same never replaces the work that didn't load.
+  await fillFormField(page, 'Email', 'new@typing.test')
+  await expect(page.getByRole('button', { name: /not saved/i })).toBeVisible()
+  await page.waitForTimeout(1500)
+  expect((await sampleSession(page))?.formValues).toMatchObject({ 'Full name': 'Saved earlier', Email: '' })
+})
+
+test('reloading from a warning asks before throwing away changes that couldn’t be saved', async ({ page }) => {
+  await gotoHome(page)
+  await openPdf(page, SAMPLE_PDF)
+  await fillFormField(page, 'Full name', 'Ada Lovelace')
+  await expect.poll(async () => (await sampleSession(page))?.formValues['Full name']).toBe('Ada Lovelace')
+  const notLoaded = page.locator('[data-sonner-toast]', { hasText: 'Your saved work on this document didn’t load' })
+
+  await failNextSessionRead(page)
+  await dropPdf(page, SAMPLE_PDF)
+  await expect(notLoaded).toBeVisible()
+  // Typed on all the same: the work that didn't load is found, and not saved over.
+  await fillFormField(page, 'Email', 'ada@example.com')
+  await expect(page.getByRole('button', { name: /not saved/i })).toBeVisible()
+
+  const ask = page.getByRole('alertdialog', { name: 'Reload without your latest changes?' })
+  await notLoaded.getByRole('button', { name: 'Reload' }).click()
+  await ask.getByRole('button', { name: 'Cancel' }).click()
+  await expect(ask).toHaveCount(0)
+  await expect(await textInput(page, 'Email')).toHaveValue('ada@example.com')
+  await expect(notLoaded).toBeVisible()
+
+  await notLoaded.getByRole('button', { name: 'Reload' }).click()
+  await ask.getByRole('button', { name: 'Reload anyway' }).click()
+  await expect(await textInput(page, 'Full name')).toHaveValue('Ada Lovelace')
+  await expect(await textInput(page, 'Email')).toHaveValue('')
+  await expect(notLoaded).toHaveCount(0)
+})
+
 test('a stored file that can’t be read keeps its card and its work', async ({ page }) => {
   await gotoHome(page)
   await openPdf(page, SAMPLE_PDF)
@@ -844,7 +929,7 @@ test('removing recent documents keeps keyboard focus in place', async ({ page })
   expect(await readIndexedDb(page, 'fillflow-sessions', 'sessions')).toEqual([])
 })
 
-test('work kept for documents that dropped off the list is let go of in time, and can be deleted once the list is empty', async ({ page }) => {
+test('work kept for documents that dropped off the list is let go of in time, and can be deleted', async ({ page }) => {
   await gotoHome(page)
   await openPdf(page, SAMPLE_PDF)
   await fillFormField(page, 'Full name', 'Ada')
@@ -858,11 +943,12 @@ test('work kept for documents that dropped off the list is let go of in time, an
   await putRecord(page, 'fillflow-sessions', 'sessions', 'lately', work('lately', Date.now() - day))
   await putRecord(page, 'fillflow-sessions', 'sessions', 'long-ago', work('long-ago', Date.now() - 100 * day))
   await page.reload()
-  // The home screen lets go of the old one; the other stays (the same file opened again brings it back).
+  // The home screen lets go of the old one; the other stays (the same file opened again brings it
+  // back), and the line under the list says so.
   await expect.poll(async () => (await storedSessions(page)).map((s) => s.docId).sort()).toEqual(['lately', sampleId].sort())
-  const notice = page.getByText('Work from older documents is still saved on this device.')
+  const notice = page.getByText('Your work on documents no longer listed is still saved on this device. Open the same file again to continue.')
   await expect(page.locator('[data-recent-open]')).toHaveCount(1)
-  await expect(notice).toHaveCount(0)
+  await expect(notice).toBeVisible()
 
   // Removing the last listed document still leaves a way to delete the rest.
   await page.getByRole('button', { name: /^more options for sample-form/i }).click()
@@ -871,7 +957,7 @@ test('work kept for documents that dropped off the list is let go of in time, an
   await expect(page.locator('[data-recent-open]')).toHaveCount(0)
   await expect(notice).toBeVisible()
   await page.getByRole('button', { name: 'Delete it' }).click()
-  await page.getByRole('alertdialog').getByRole('button', { name: 'Delete', exact: true }).click()
+  await page.getByRole('alertdialog', { name: 'Delete your work on documents no longer listed?' }).getByRole('button', { name: 'Delete', exact: true }).click()
   await expect(notice).toHaveCount(0)
   await expect.poll(() => storedSessions(page)).toEqual([])
 })
@@ -889,6 +975,116 @@ test('a slow sample download never replaces a document opened meanwhile', async 
   await expect(page).toHaveTitle(/form-basic/)
 })
 
+/** The download of pdf.js's worker script (not the module that names its address). */
+const workerFetch = (url: URL, resourceType: string) => /pdf\.worker/.test(url.pathname) && resourceType === 'fetch'
+
+test('once the page has loaded, files open offline, pdf.js’s worker included', async ({ page, context }) => {
+  const fellBack: string[] = []
+  page.on('console', (m) => /fake worker/i.test(m.text()) && fellBack.push(m.text()))
+  const worker = page.waitForResponse((r) => workerFetch(new URL(r.url()), r.request().resourceType()))
+  await gotoHome(page)
+  // Downloaded with the page, before any file is opened.
+  await (await worker).finished()
+  await context.setOffline(true)
+  try {
+    await openPdf(page, SAMPLE_PDF)
+    await showPage(page, 0)
+    await expect(page).toHaveTitle(/^sample-form/)
+    await dropPdf(page, fixture('form-basic.pdf'))
+    await expect(page).toHaveTitle(/^form-basic/)
+  } finally {
+    await context.setOffline(false)
+  }
+  // Its worker started each time: pdf.js never fell back to running without one.
+  expect(fellBack).toEqual([])
+})
+
+/**
+ * Keeps count of the page's requests in flight, from before it loads: `settled()` waits until none
+ * has been for a moment.
+ */
+function requestsInFlight(page: Page) {
+  let count = 0
+  let changedAt = Date.now()
+  const change = (by: number) => () => {
+    count += by
+    changedAt = Date.now()
+  }
+  page.on('request', change(1))
+  page.on('requestfinished', change(-1))
+  page.on('requestfailed', change(-1))
+  return { settled: () => expect.poll(() => count === 0 && Date.now() - changedAt >= 500, { intervals: [100] }).toBe(true) }
+}
+
+test('once the page has loaded, documents open offline with their fields’ labels, and lay text out in the app’s own face', async ({ page, context }) => {
+  // A field that keeps its label on the field rather than on its widget (as pdf-lib writes every
+  // field): pdf.js doesn't read it there, pdf-lib does.
+  const pdf = await PDFDocument.create()
+  const field = pdf.getForm().createTextField('fld_a')
+  field.addToPage(pdf.addPage([400, 300]), { x: 50, y: 200, width: 200, height: 20 })
+  field.acroField.dict.set(PDFName.of('TU'), PDFHexString.fromText('שם פרטי'))
+
+  // Downloaded once the page has settled, before any file is opened: what reads those labels, and
+  // the face that typed text and form fields start in.
+  const requests = requestsInFlight(page)
+  const preloads = Promise.all([page.waitForRequest(/tooltips/), page.waitForResponse(/Arimo-Regular/)])
+  await gotoHome(page)
+  await preloads
+  await requests.settled()
+  await context.setOffline(true)
+  try {
+    await dropPdf(page, 'labels-on-fields.pdf', Buffer.from(await pdf.save()))
+    await showPage(page, 0)
+    await expect(await textInput(page, 'fld_a')).toHaveAttribute('aria-label', 'שם פרטי')
+    const faces = await page.evaluate(() => [...document.fonts].filter((f) => /FillFlow Sans/.test(f.family) && f.weight === '400').map((f) => f.status))
+    expect(faces).toEqual(['loaded'])
+  } finally {
+    await context.setOffline(false)
+  }
+})
+
+test('a file that can’t open for want of a connection isn’t blamed, and opens once the connection is back', async ({ page, context }) => {
+  // The connection dropped before pdf.js's worker was downloaded.
+  const blockWorker = (route: Route) => {
+    const request = route.request()
+    return workerFetch(new URL(request.url()), request.resourceType()) ? route.abort('internetdisconnected') : route.continue()
+  }
+  await page.route(/pdf\.worker/, blockWorker)
+  await gotoHome(page)
+  await context.setOffline(true)
+  await openPdf(page, SAMPLE_PDF)
+  const dialog = page.getByRole('dialog', { name: 'FillFlow couldn’t finish loading' })
+  await expect(dialog).toContainText('You’re offline, and FillFlow needs to finish downloading before it can open files. Reconnect and try again.')
+  // Nothing points at the file, nor offers to try another one.
+  await expect(dialog).not.toContainText('sample-form')
+  await expect(dialog.getByRole('button', { name: /another file/i })).toHaveCount(0)
+  await expect(page.getByText(/fake worker|Failed to fetch/i)).toHaveCount(0)
+
+  // Back online: the same file opens, without choosing it again nor reloading the page.
+  await page.unroute(/pdf\.worker/, blockWorker)
+  await context.setOffline(false)
+  await dialog.getByRole('button', { name: 'Try again' }).click()
+  await showPage(page, 0)
+  await expect(page).toHaveTitle(/^sample-form/)
+})
+
+test('pdf.js’s worker, kept in memory, still finds the files it loads as a document needs them', async ({ page }) => {
+  // Colors given in CMYK: pdf.js converts them with an ICC profile and a WebAssembly module that its
+  // worker fetches from the app's pdfjs folder (by their full address: a path doesn't resolve from
+  // where that worker runs).
+  const pdf = await PDFDocument.create()
+  pdf.addPage([300, 300]).drawRectangle({ x: 50, y: 50, width: 200, height: 200, color: cmyk(0, 0.8, 0.8, 0) })
+  const loaded: string[] = []
+  page.context().on('requestfinished', async (request) => {
+    const folder = /\/pdfjs\/(\w+)\//.exec(new URL(request.url()).pathname)?.[1]
+    if (folder && (await request.response())?.ok()) loaded.push(folder)
+  })
+  await gotoHome(page)
+  await dropPdf(page, 'colors.pdf', Buffer.from(await pdf.save()))
+  await showPage(page, 0)
+  await expect.poll(() => [...new Set(loaded)].sort()).toEqual(['iccs', 'wasm'])
+})
+
 test('documents open on a plain-http host (no Web Crypto)', async ({ page, baseURL }) => {
   const origin = new URL(baseURL ?? 'http://localhost:5299/FillFlow/').origin
   await page.route('http://fillflow.test/**', async (route) => {
@@ -899,8 +1095,9 @@ test('documents open on a plain-http host (no Web Crypto)', async ({ page, baseU
   expect(await page.evaluate(() => isSecureContext)).toBe(false)
   await page.getByRole('button', { name: /try a sample form/i }).click()
   await showPage(page, 0)
-  // Same id as Web Crypto gives the sample on a secure origin.
-  await expect
-    .poll(async () => (await storedRecents(page)).map((d) => d.id))
-    .toEqual(['e4597c37cb83b73944bb89b07ae3e708f3cee7412872593353771eb2fed6d0cc'])
+  // Same id as Web Crypto gives the sample on a secure origin: the SHA-256 of its bytes.
+  const id = createHash('sha256')
+    .update(await readFile(SAMPLE_PDF))
+    .digest('hex')
+  await expect.poll(async () => (await storedRecents(page)).map((d) => d.id)).toEqual([id])
 })
