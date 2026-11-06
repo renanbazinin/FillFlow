@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
+import { messagesFor, setLocale } from '../../i18n'
 import { parseColor } from './color'
 import { ExportError, toExportError } from './errors'
 import { parsePdfDate } from './pdfjsRewrite'
@@ -36,5 +37,19 @@ describe('toExportError', () => {
     expect(toExportError(new Error('x'))).toMatchObject({ code: 'unknown' })
     expect(toExportError(new DOMException('stop', 'AbortError'))).toMatchObject({ code: 'aborted' })
     expect(new ExportError('encrypted').message).toMatch(/encrypted/i)
+  })
+})
+
+describe('ExportError', () => {
+  afterEach(() => setLocale('en'))
+
+  it('says what went wrong in the interface language of the moment it failed', () => {
+    const before = new ExportError('fonts')
+    setLocale('he')
+    const he = messagesFor('he').export.errors
+    expect(new ExportError('fonts').message).toBe(he.fonts)
+    expect(toExportError(new Error('x')).message).toBe(he.unknown)
+    expect(new ExportError('unknown', 'Given.').message).toBe('Given.')
+    expect(before.message).toBe('The fonts needed for your text couldn’t be loaded. Check your connection and try again.')
   })
 })

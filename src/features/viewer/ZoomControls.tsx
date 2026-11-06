@@ -1,5 +1,6 @@
 import { ChevronDown, Minus, Plus } from 'lucide-react'
 import { useEditor, zoomPercent } from '../../store/editor'
+import { useT } from '../../i18n'
 import { cn, modKeyLabel } from '../../lib/utils/misc'
 import { Menu, MenuContent, MenuRadioGroup, MenuRadioItem, MenuSeparator, MenuShortcut, MenuTrigger } from '../../components/ui/menu'
 import { Tooltip } from '../../components/ui/tooltip'
@@ -18,11 +19,13 @@ const STEP_BUTTON = cn(
 
 /**
  * Compact `− [125% ▾] +` zoom group for the top bar (h-8). On touch screens its buttons are 40px
- * targets (inside the border).
+ * targets (inside the border). Right to left, it mirrors like the rest of the bar: − at the right.
  */
 export function ZoomControls({ className }: { className?: string }) {
   const scale = useEditor((s) => s.scale)
   const fitMode = useEditor((s) => s.fitMode)
+  const t = useT()
+  const z = t.editor.zoom
   const percent = zoomPercent(scale)
   const value = fitMode ?? (ZOOM_PRESETS.some((p) => p === percent) ? String(percent) : '')
 
@@ -35,14 +38,14 @@ export function ZoomControls({ className }: { className?: string }) {
   return (
     <div
       role="group"
-      aria-label="Zoom"
+      aria-label={z.label}
       className={cn(
         'inline-flex h-8 items-stretch rounded-lg border border-line bg-surface shadow-xs pointer-coarse:box-content pointer-coarse:h-10',
         className,
       )}
     >
-      <Tooltip content="Zoom out" shortcut={shortcut('−')}>
-        <button type="button" aria-label="Zoom out" disabled={!canZoomOut(scale)} onClick={() => viewer.zoomOut()} className={cn(STEP_BUTTON, 'rounded-l-[7px]')}>
+      <Tooltip content={z.out} shortcut={shortcut('−')}>
+        <button type="button" aria-label={z.out} disabled={!canZoomOut(scale)} onClick={() => viewer.zoomOut()} className={cn(STEP_BUTTON, 'rounded-s-[7px]')}>
           <Minus />
         </button>
       </Tooltip>
@@ -51,7 +54,7 @@ export function ZoomControls({ className }: { className?: string }) {
         <MenuTrigger asChild>
           <button
             type="button"
-            aria-label={`Zoom level ${percent}%${fitMode ? `, fit ${fitMode}` : ''}`}
+            aria-label={z.level(percent, fitMode)}
             className={cn(
               'inline-flex h-full min-w-[4.5rem] items-center justify-center gap-1 border-x border-line px-2 text-[13px] font-medium tabular-nums text-fg transition-colors hover:bg-surface-3 data-[state=open]:bg-surface-3',
               SEGMENT,
@@ -64,11 +67,11 @@ export function ZoomControls({ className }: { className?: string }) {
         <MenuContent align="center" className="min-w-48">
           <MenuRadioGroup value={value} onValueChange={onValueChange}>
             <MenuRadioItem value="width">
-              <span className="flex-1">Fit width</span>
+              <span className="flex-1">{z.fitWidth}</span>
               <MenuShortcut>{shortcut('0')}</MenuShortcut>
             </MenuRadioItem>
             <MenuRadioItem value="page">
-              <span className="flex-1">Fit page</span>
+              <span className="flex-1">{z.fitPage}</span>
             </MenuRadioItem>
             <MenuSeparator />
             {ZOOM_PRESETS.map((p) => (
@@ -79,8 +82,8 @@ export function ZoomControls({ className }: { className?: string }) {
           </MenuRadioGroup>
         </MenuContent>
       </Menu>
-      <Tooltip content="Zoom in" shortcut={shortcut('+')}>
-        <button type="button" aria-label="Zoom in" disabled={!canZoomIn(scale)} onClick={() => viewer.zoomIn()} className={cn(STEP_BUTTON, 'rounded-r-[7px]')}>
+      <Tooltip content={z.in} shortcut={shortcut('+')}>
+        <button type="button" aria-label={z.in} disabled={!canZoomIn(scale)} onClick={() => viewer.zoomIn()} className={cn(STEP_BUTTON, 'rounded-e-[7px]')}>
           <Plus />
         </button>
       </Tooltip>

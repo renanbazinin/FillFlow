@@ -3,13 +3,39 @@
 /* Dark mode is class-based (`.dark` on <html>), driven by src/lib/theme.ts. */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* rtl: / ltr: go by the element's own direction (src/i18n sets <html dir>). Tailwind's own variants
+   also match anything under a [dir] ancestor, so inside the document pages (kept dir="ltr" in a
+   right-to-left interface) both would apply. */
+@custom-variant rtl (&:where(:dir(rtl)));
+@custom-variant ltr (&:where(:dir(ltr)));
+
+/* Hebrew letters for the interface (Inter and Instrument Serif have none): only the Hebrew subset,
+   which the browser fetches the first time Hebrew is on screen. Latin stays with Inter. */
+@font-face {
+  font-family: "Heebo Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("@fontsource-variable/heebo/files/heebo-hebrew-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0307-0308, U+0590-05FF, U+200C-2010, U+20AA, U+25CC, U+FB1D-FB4F;
+}
+
+@font-face {
+  font-family: "Frank Ruhl Libre Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 300 900;
+  src: url("@fontsource-variable/frank-ruhl-libre/files/frank-ruhl-libre-hebrew-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0307-0308, U+0590-05FF, U+200C-2010, U+20AA, U+25CC, U+FB1D-FB4F;
+}
+
 /* ------------------------------------------------------------------------- */
 /* Design tokens                                                             */
 /* ------------------------------------------------------------------------- */
 
 @theme {
-  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans Hebrew", Arial, sans-serif;
-  --font-display: "Instrument Serif", ui-serif, Georgia, "Times New Roman", serif;
+  --font-sans: "Inter Variable", "Heebo Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans Hebrew", Arial, sans-serif;
+  --font-display: "Instrument Serif", "Frank Ruhl Libre Variable", ui-serif, Georgia, "Times New Roman", serif;
   --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
 
   /* Brand (from the FillFlow logo: azure → teal). */
@@ -328,7 +354,8 @@
 
 /* Left and right safe areas (a phone held sideways: notch, rounded corners). index.html opts into
    edge-to-edge (viewport-fit=cover), so whatever touches a side edge pads it: pl-safe is the inset,
-   pl-safe-2 the inset or at least the gutter 2 (0.5rem), whichever is wider. */
+   pl-safe-2 the inset or at least the gutter 2 (0.5rem), whichever is wider. ps-safe / pe-safe pad
+   the start / end side instead (left / right, or right / left in a right-to-left interface). */
 @utility pl-safe {
   padding-left: max(env(safe-area-inset-left), 0px);
 }
@@ -350,9 +377,40 @@
   padding-right: max(--spacing(--value(number)), env(safe-area-inset-right));
 }
 
-/* Skeleton shimmer for loading placeholders. */
+@utility ps-safe {
+  padding-inline-start: max(env(safe-area-inset-left), 0px);
+  &:dir(rtl) {
+    padding-inline-start: max(env(safe-area-inset-right), 0px);
+  }
+}
+
+@utility pe-safe {
+  padding-inline-end: max(env(safe-area-inset-right), 0px);
+  &:dir(rtl) {
+    padding-inline-end: max(env(safe-area-inset-left), 0px);
+  }
+}
+
+@utility ps-safe-* {
+  padding-inline-start: max(--spacing(--value(number)), env(safe-area-inset-left));
+  &:dir(rtl) {
+    padding-inline-start: max(--spacing(--value(number)), env(safe-area-inset-right));
+  }
+}
+
+@utility pe-safe-* {
+  padding-inline-end: max(--spacing(--value(number)), env(safe-area-inset-right));
+  &:dir(rtl) {
+    padding-inline-end: max(--spacing(--value(number)), env(safe-area-inset-left));
+  }
+}
+
+/* Skeleton shimmer for loading placeholders. It sweeps the way the interface reads. */
 @utility skeleton {
   background-image: linear-gradient(90deg, var(--ff-surface-3) 0%, var(--ff-surface-2) 50%, var(--ff-surface-3) 100%);
   background-size: 200% 100%;
   animation: var(--animate-shimmer);
+  &:dir(rtl) {
+    animation-direction: reverse;
+  }
 }

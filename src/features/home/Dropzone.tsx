@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { ArrowRight, FolderOpen, LockKeyhole } from 'lucide-react'
 import { Kbd, Spinner } from '../../components/ui/controls'
+import { richText, useT } from '../../i18n'
 import { cn, modKeyLabel } from '../../lib/utils/misc'
 import { useFileDrag } from './fileDrag'
 import { chooseAndOpenPdf, openSampleForm } from './openFile'
@@ -13,6 +14,7 @@ export function Dropzone({ className }: { className?: string }) {
   const drag = useFileDrag()
   const ready = drag.active && drag.kind !== 'other'
   const [sampleBusy, setSampleBusy] = useState(false)
+  const t = useT()
 
   const openSample = async () => {
     if (sampleBusy) return
@@ -48,16 +50,16 @@ export function Dropzone({ className }: { className?: string }) {
         <DropIllustration active={ready} />
         <span id="ff-dropzone-title" className="mt-5 text-[19px] font-semibold tracking-[-0.015em] text-fg sm:text-[21px]">
           {ready ? (
-            'Drop to open your PDF'
+            t.home.dropzone.titleDragging
           ) : (
             <>
-              <span className="pointer-coarse:hidden">Drop a PDF here</span>
-              <span className="hidden pointer-coarse:inline">Open a PDF to fill</span>
+              <span className="pointer-coarse:hidden">{t.home.dropzone.title}</span>
+              <span className="hidden pointer-coarse:inline">{t.home.dropzone.titleTouch}</span>
             </>
           )}
         </span>
         <span id="ff-dropzone-hint" className="mt-1.5 max-w-sm text-[14px] leading-relaxed text-fg-muted text-balance">
-          Forms, contracts, applications&nbsp;— any PDF works.
+          {t.home.dropzone.hint}
         </span>
         <span
           id="ff-dropzone-action"
@@ -68,31 +70,38 @@ export function Dropzone({ className }: { className?: string }) {
           )}
         >
           <FolderOpen className="size-4" />
-          Choose PDF
+          {t.home.dropzone.choose}
         </span>
         <span className={cn('mt-3.5 flex items-center gap-1.5 text-[12.5px] text-fg-subtle pointer-coarse:hidden', ready && 'opacity-0')}>
-          or paste one with
-          <Kbd>{modKeyLabel}</Kbd>
-          <Kbd>V</Kbd>
+          {richText(t.home.dropzone.paste, {
+            // The keys of one shortcut read left to right in a right-to-left interface too.
+            keys: (
+              <span dir="ltr" className="flex items-center gap-1.5">
+                <Kbd>{modKeyLabel}</Kbd>
+                <Kbd>V</Kbd>
+              </span>
+            ),
+          })}
         </span>
       </button>
 
       <div className="flex flex-col items-center justify-between gap-2.5 px-3 pb-1.5 pt-3 text-[13px] sm:flex-row sm:pb-1">
         <span className="inline-flex items-center gap-1.5 text-fg-subtle">
           <LockKeyhole className="size-3.5" />
-          Stays on your device — nothing is uploaded
+          {t.home.dropzone.private}
         </span>
         <button
           type="button"
           onClick={() => void openSample()}
           disabled={sampleBusy}
-          className="group/sample inline-flex h-8 items-center gap-1.5 rounded-lg px-2 font-medium text-accent-ink transition-colors hover:bg-accent-soft disabled:opacity-70 sm:-mr-1"
+          className="group/sample inline-flex h-8 items-center gap-1.5 rounded-lg px-2 font-medium text-accent-ink transition-colors hover:bg-accent-soft disabled:opacity-70 sm:-me-1"
         >
-          or try a sample form
+          {t.home.dropzone.sample}
           {sampleBusy ? (
             <Spinner className="size-3.5" />
           ) : (
-            <ArrowRight className="size-3.5 transition-transform duration-200 group-hover/sample:translate-x-0.5" />
+            // Onward, the way the text reads: to the right, or the left in a right-to-left interface.
+            <ArrowRight className="size-3.5 transition-transform duration-200 group-hover/sample:translate-x-0.5 rtl:-scale-x-100 rtl:group-hover/sample:-translate-x-0.5" />
           )}
         </button>
       </div>

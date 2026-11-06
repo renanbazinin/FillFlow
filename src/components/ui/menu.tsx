@@ -84,9 +84,12 @@ export function MenuItem({
   )
 }
 
-/** A row's keyboard shortcut ("Ctrl+O"); not shown on touch screens, where it means nothing. */
+/**
+ * A row's keyboard shortcut ("Ctrl+O"); not shown on touch screens, where it means nothing. Keys
+ * read left to right in a right-to-left interface too ("⇧⌘Z", not "Z⌘⇧").
+ */
 export function MenuShortcut({ className, ...props }: ComponentProps<'span'>) {
-  return <span className={cn('text-xs text-fg-subtle pointer-coarse:hidden forced-colors:text-current', className)} {...props} />
+  return <span dir="ltr" className={cn('text-xs text-fg-subtle pointer-coarse:hidden forced-colors:text-current', className)} {...props} />
 }
 
 export function MenuCheckboxItem({ className, children, ...props }: ComponentProps<typeof DropdownMenu.CheckboxItem>) {

@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 import { ImageUp, Lightbulb, RefreshCw, X } from 'lucide-react'
 import { Button } from '../../components/ui/button'
 import { Slider, Spinner, Switch } from '../../components/ui/controls'
+import { getT, richText, useT } from '../../i18n'
 import { cn, modKeyLabel } from '../../lib/utils/misc'
 import { firstImageFile } from './decode'
 import { useSignatureDraft, type UploadDraft } from './draft'
@@ -19,18 +20,22 @@ export function UploadPad({ role }: { role: SignatureRole }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [loading, setLoading] = useState(false)
   const [dragging, setDragging] = useState(false)
+  const t = useT()
+  const u = t.signature.upload
 
   const take = async (file: File | null) => {
     if (!file) return
     if (!file.type.startsWith('image/')) {
-      toast.error("That file isn't an image", { description: 'Choose a PNG or JPEG picture of your signature.' })
+      const { title, description } = getT().signature.upload.notImage
+      toast.error(title, { description })
       return
     }
     setLoading(true)
     try {
       await loadUploadFile(role, file, file.name)
     } catch {
-      toast.error("Couldn't open this image", { description: 'Try a PNG or JPEG file.' })
+      const { title, description } = getT().signature.upload.openFailed
+      toast.error(title, { description })
     } finally {
       setLoading(false)
     }
@@ -93,17 +98,20 @@ export function UploadPad({ role }: { role: SignatureRole }) {
             <span className="inline-flex size-10 items-center justify-center rounded-full bg-surface text-fg-muted shadow-xs ring-1 ring-line transition-colors group-hover:text-accent-ink">
               {loading ? <Spinner className="size-5" /> : <ImageUp className="size-5" />}
             </span>
-            <span className="text-sm font-medium text-fg">
-              {loading ? 'Opening image…' : dragging ? 'Drop to upload' : `Drop an image of your ${role === 'signature' ? 'signature' : 'initials'}`}
-            </span>
+            <span className="text-sm font-medium text-fg">{loading ? u.opening : dragging ? u.dropToUpload : u.drop[role]}</span>
             <span className="text-[13px] text-fg-muted">
-              or <span className="font-medium text-accent-ink underline-offset-2 group-hover:underline">choose a file</span>
-              <span className="[@media(hover:none)]:hidden"> · or paste with {modKeyLabel}+V</span>
+              {richText(u.orChoose, {
+                link: <span className="font-medium text-accent-ink underline-offset-2 group-hover:underline">{u.chooseFile}</span>,
+              })}
+              {/* The shortcut reads left to right in either language. */}
+              <span className="[@media(hover:none)]:hidden">
+                {richText(u.orPaste, { keys: <span dir="ltr">{`${modKeyLabel}+V`}</span> })}
+              </span>
             </span>
           </button>
           <p className="mt-2.5 flex items-start gap-1.5 text-xs text-fg-subtle">
             <Lightbulb className="mt-px size-3.5 shrink-0" />
-            Sign on plain white paper and take the photo in good light. The background is removed automatically.
+            {u.tip}
           </p>
         </>
       )}
@@ -129,6 +137,7 @@ function UploadPreview({
   const patchUpload = useSignatureDraft((s) => s.patchUpload)
   const setUpload = useSignatureDraft((s) => s.setUpload)
   const empty = useSignatureDraft((s) => s.uploadEmpty[role])
+  const u = useT().signature.upload
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const result = useRef<ProcessedImage | null>(null)
 
@@ -185,28 +194,25 @@ function UploadPreview({
         {...drop}
         className={cn('relative overflow-hidden rounded-xl border border-line bg-checker shadow-xs', PAD_FRAME[role], dragging && 'ring-3 ring-accent/40')}
       >
-        <canvas
-          ref={canvasRef}
-          role="img"
-          aria-label={empty ? 'Preview: nothing left after removing the background' : `Preview of the uploaded ${role === 'signature' ? 'signature' : 'initials'}`}
-          className="absolute inset-0 size-full"
-        />
+        {/* The picture as it will be placed: content, never mirrored. */}
+        <canvas ref={canvasRef} role="img" aria-label={empty ? u.previewEmpty : u.preview[role]} className="absolute inset-0 size-full" />
         {empty && (
           <div className="absolute inset-0 flex items-center justify-center p-4 text-center text-[13px] font-medium text-black/55">
-            Nothing left to keep. Lower the sensitivity or turn background removal off.
+            {u.nothingLeft}
           </div>
         )}
         {(loading || dragging) && (
           <div className="absolute inset-0 flex items-center justify-center bg-white/70 text-sm font-medium text-black/70 backdrop-blur-[1px]">
-            {loading ? <Spinner className="size-5" /> : 'Drop to replace'}
+            {loading ? <Spinner className="size-5" /> : u.dropToReplace}
           </div>
         )}
-        <div className="absolute right-2 top-2 flex gap-1.5">
+        {/* Its buttons sit in the corner at the end: top right, or top left in a right-to-left interface. */}
+        <div className="absolute end-2 top-2 flex gap-1.5">
           <Button size="xs" variant="secondary" onClick={onReplace} className="shadow-xs">
             <RefreshCw className="!size-3.5" />
-            Replace
+            {u.replace}
           </Button>
-          <Button size="xs" variant="secondary" onClick={() => setUpload(role, null)} aria-label="Remove image" className="w-7 px-0 shadow-xs">
+          <Button size="xs" variant="secondary" onClick={() => setUpload(role, null)} aria-label={u.remove} className="w-7 px-0 shadow-xs">
             <X className="!size-3.5" />
           </Button>
         </div>
@@ -216,17 +222,18 @@ function UploadPreview({
         <Switch
           checked={upload.removeBg}
           onCheckedChange={(removeBg) => patchUpload(role, { removeBg })}
-          label="Remove background"
-          description="Makes the paper transparent so only the ink is placed."
+          label={u.removeBackground}
+          description={u.removeBackgroundHint}
         />
         {upload.removeBg && (
           <div className="flex items-center gap-3">
-            <span className="w-20 shrink-0 text-[13px] font-medium text-fg-muted">Sensitivity</span>
+            <span className="w-20 shrink-0 text-[13px] font-medium text-fg-muted">{u.sensitivity}</span>
+            {/* More sensitive toward the end: right, or left in a right-to-left interface. */}
             <Slider
               value={sensitivity}
               min={0}
               max={100}
-              label="Background removal sensitivity"
+              label={u.sensitivityLabel}
               onValueChange={(v) => patchUpload(role, { whitePoint: sensitivityToWhitePoint(v) })}
             />
             {/* aria-disabled: going back to Auto must not take focus away from the button. */}
@@ -237,7 +244,7 @@ function UploadPreview({
               aria-disabled={isAuto || undefined}
               className={cn('shrink-0', SOFT_DISABLED)}
             >
-              Auto
+              {u.auto}
             </Button>
           </div>
         )}

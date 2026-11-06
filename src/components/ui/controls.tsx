@@ -1,11 +1,14 @@
 import { useId, type ComponentProps, type ReactNode } from 'react'
 import { Slider as RSlider, Switch as RSwitch, ToggleGroup, Separator as RSeparator } from 'radix-ui'
 import { Check, Minus, Plus } from 'lucide-react'
+import { useT, type Messages } from '../../i18n'
 import { clamp, cn } from '../../lib/utils/misc'
 
+/** A key cap. Keys read left to right in a right-to-left interface too ("⇧⌘Z", "Ctrl+Z"). */
 export function Kbd({ className, ...props }: ComponentProps<'kbd'>) {
   return (
     <kbd
+      dir="ltr"
       className={cn(
         'inline-flex h-5 min-w-5 items-center justify-center rounded border border-line-strong bg-surface-2 px-1 font-sans text-[11px] font-medium text-fg-muted',
         className,
@@ -62,7 +65,8 @@ export function Switch({ checked, onCheckedChange, label, description, disabled,
         disabled={disabled}
         className="relative mt-0.5 inline-flex h-5 w-9 shrink-0 items-center rounded-full border border-control bg-line-strong transition-colors data-[state=checked]:border-accent data-[state=checked]:bg-accent disabled:opacity-50 forced-colors:data-[state=checked]:border-[Highlight] forced-colors:data-[state=checked]:bg-[Highlight] pointer-coarse:before:absolute pointer-coarse:before:-inset-3 pointer-coarse:before:content-['']"
       >
-        <RSwitch.Thumb className="block size-4 translate-x-px rounded-full bg-white shadow-xs transition-transform data-[state=checked]:translate-x-[17px] forced-colors:bg-[CanvasText] forced-colors:data-[state=checked]:bg-[HighlightText]" />
+        {/* Off at the start, on at the end: it moves right, or left in a right-to-left interface. */}
+        <RSwitch.Thumb className="ms-px block size-4 rounded-full bg-white shadow-xs transition-[margin-inline-start] data-[state=checked]:ms-[17px] forced-colors:bg-[CanvasText] forced-colors:data-[state=checked]:bg-[HighlightText]" />
       </RSwitch.Root>
     </div>
   )
@@ -173,6 +177,7 @@ export function NumberStepper({
   format?: (v: number) => string
   className?: string
 }) {
+  const t = useT()
   const set = (v: number) => onChange(clamp(Math.round(v * 100) / 100, min, max))
   return (
     // Touch screens: the 40px height is inside the border, so the − and + buttons are 40px targets.
@@ -183,10 +188,10 @@ export function NumberStepper({
     >
       <button
         type="button"
-        aria-label={`Decrease ${label.toLowerCase()}`}
+        aria-label={t.shell.ui.decrease(label)}
         onClick={() => set(value - step)}
         disabled={value <= min}
-        className="inline-flex h-full w-7 items-center justify-center rounded-l-lg text-fg-muted hover:bg-surface-3 hover:text-fg disabled:opacity-40 pointer-coarse:w-10"
+        className="inline-flex h-full w-7 items-center justify-center rounded-s-lg text-fg-muted hover:bg-surface-3 hover:text-fg disabled:opacity-40 pointer-coarse:w-10"
       >
         <Minus className="size-3.5" />
       </button>
@@ -203,10 +208,10 @@ export function NumberStepper({
       />
       <button
         type="button"
-        aria-label={`Increase ${label.toLowerCase()}`}
+        aria-label={t.shell.ui.increase(label)}
         onClick={() => set(value + step)}
         disabled={value >= max}
-        className="inline-flex h-full w-7 items-center justify-center rounded-r-lg text-fg-muted hover:bg-surface-3 hover:text-fg disabled:opacity-40 pointer-coarse:w-10"
+        className="inline-flex h-full w-7 items-center justify-center rounded-e-lg text-fg-muted hover:bg-surface-3 hover:text-fg disabled:opacity-40 pointer-coarse:w-10"
       >
         <Plus className="size-3.5" />
       </button>
@@ -215,18 +220,21 @@ export function NumberStepper({
 }
 
 /** Plain names of the app's palette colors (model/elements.ts), read out for their swatches. */
-const COLOR_NAMES: Record<string, string> = {
-  '#111827': 'Black',
-  '#1d4ed8': 'Blue',
-  '#c81e1e': 'Red',
-  '#047857': 'Green',
-  '#7c3aed': 'Purple',
-  '#ffffff': 'White',
-  '#fde047': 'Yellow',
+const COLOR_NAMES: Record<string, keyof Messages['shell']['ui']['colors']> = {
+  '#111827': 'black',
+  '#1d4ed8': 'blue',
+  '#c81e1e': 'red',
+  '#047857': 'green',
+  '#7c3aed': 'purple',
+  '#ffffff': 'white',
+  '#fde047': 'yellow',
 }
 
 /** A color's plain name; a color the palette doesn't name (a custom one) by its hex code. */
-const colorName = (hex: string) => COLOR_NAMES[hex.toLowerCase()] ?? hex
+function colorName(hex: string, t: Messages): string {
+  const name = COLOR_NAMES[hex.toLowerCase()]
+  return name ? t.shell.ui.colors[name] : hex
+}
 
 /**
  * A round swatch (with a 1px border). On touch screens an invisible margin makes it a 40px target;
@@ -254,7 +262,7 @@ export function ColorSwatches({
   allowCustom = true,
   allowNone = false,
   size = 'md',
-  label = 'Color',
+  label,
   className,
 }: {
   value: string | null
@@ -267,16 +275,17 @@ export function ColorSwatches({
   label?: string
   className?: string
 }) {
+  const t = useT()
   const dim = SWATCH_SIZES[size]
   const isCustom = value !== null && !colors.some((c) => c.toLowerCase() === value.toLowerCase())
   return (
-    <div className={cn('flex flex-wrap items-center gap-1.5', dim.gap, className)} role="radiogroup" aria-label={label}>
+    <div className={cn('flex flex-wrap items-center gap-1.5', dim.gap, className)} role="radiogroup" aria-label={label ?? t.shell.ui.color}>
       {allowNone && (
         <button
           type="button"
           role="radio"
           aria-checked={value === null}
-          aria-label="No color"
+          aria-label={t.shell.ui.noColor}
           onClick={() => onChange(null)}
           className={cn(dim.swatch, SWATCH, 'border-control bg-surface', value === null && 'ring-2 ring-accent')}
         >
@@ -292,7 +301,7 @@ export function ColorSwatches({
             type="button"
             role="radio"
             aria-checked={selected}
-            aria-label={colorName(c)}
+            aria-label={colorName(c, t)}
             onClick={() => onChange(c)}
             className={cn(dim.swatch, SWATCH, 'inline-flex items-center justify-center', swatchEdge(c), selected && 'ring-2 ring-accent')}
             style={{ background: c }}
@@ -311,7 +320,7 @@ export function ColorSwatches({
             isCustom && 'ring-2 ring-accent',
           )}
           style={{ background: isCustom && value ? value : 'conic-gradient(#f43f5e, #f59e0b, #84cc16, #06b6d4, #6366f1, #d946ef, #f43f5e)' }}
-          aria-label="Custom color"
+          aria-label={t.shell.ui.customColor}
         >
           <input
             type="color"

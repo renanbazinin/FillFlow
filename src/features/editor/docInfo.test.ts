@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
+import { setLocale } from '../../i18n'
 import type { FormField } from '../../model/types'
 import { fillableFieldCount, formFieldsMessage } from './docInfo'
 
@@ -12,6 +13,8 @@ const field = (name: string, type: FormField['type']): FormField => ({
 })
 
 describe('docInfo', () => {
+  afterEach(() => setLocale('en'))
+
   it('counts fillable fields (not push buttons)', () => {
     expect(fillableFieldCount(undefined)).toBe(0)
     expect(fillableFieldCount([field('a', 'text'), field('b', 'checkbox'), field('c', 'button'), field('d', 'signature')])).toBe(3)
@@ -21,5 +24,12 @@ describe('docInfo', () => {
     expect(formFieldsMessage(1)).toBe('1 fillable field found — click a field to type')
     expect(formFieldsMessage(12)).toBe('12 fillable fields found — click a field to type')
     expect(formFieldsMessage(2, true)).toBe('2 fillable fields found — tap a field to type')
+  })
+
+  it('words it in Hebrew, one field in words', () => {
+    setLocale('he')
+    expect(formFieldsMessage(1)).toBe('נמצא שדה אחד למילוי — לחצו על שדה כדי להקליד')
+    expect(formFieldsMessage(12)).toBe('נמצאו 12 שדות למילוי — לחצו על שדה כדי להקליד')
+    expect(formFieldsMessage(2, true)).toBe('נמצאו 2 שדות למילוי — הקישו על שדה כדי להקליד')
   })
 })

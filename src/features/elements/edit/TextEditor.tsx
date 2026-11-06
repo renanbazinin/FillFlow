@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, type KeyboardEvent } from 'react'
+import { useDir, useT } from '../../../i18n'
 import type { TextElement } from '../../../model/types'
 import { cn } from '../../../lib/utils/misc'
 import { useEditor } from '../../../store/editor'
@@ -69,6 +70,10 @@ function pageClip(box: { left: number; top: number; width: number; height: numbe
  * a note under it says so.
  */
 export function TextEditor({ el, scale, page }: { el: TextElement; scale: number; page: Size }) {
+  const t = useT()
+  // The note is interface text on the page: it reads the interface's way (the text being typed
+  // keeps its own direction, dir="auto").
+  const dir = useDir()
   const ref = useRef<HTMLTextAreaElement>(null)
   const id = el.id
 
@@ -171,19 +176,20 @@ export function TextEditor({ el, scale, page }: { el: TextElement; scale: number
         // the bottom). The page is white in either theme, so the note keeps one red.
         <div
           role="status"
+          dir={dir}
           className="pointer-events-none absolute z-[25] -translate-x-1/2 whitespace-nowrap rounded-md bg-[#dc2626] px-1.5 py-0.5 text-[11px] font-medium leading-4 text-white shadow-[0_1px_3px_rgb(16_24_40/0.25)]"
           style={{
             left: ((Math.max(el.x, 0) + Math.min(el.x + el.width, page.width)) / 2) * scale,
             top: Math.min(el.y + el.height, page.height) * scale + 10,
           }}
         >
-          Text past the page edge won’t be in the download
+          {t.elements.textEditor.pastEdge}
         </div>
       )}
       <textarea
         ref={ref}
         value={el.text}
-        aria-label="Edit text"
+        aria-label={t.elements.textEditor.label}
         wrap="off"
         dir="auto"
         spellCheck

@@ -1,5 +1,6 @@
 import { memo } from 'react'
 import { Signature } from 'lucide-react'
+import { useDir, useT } from '../../../i18n'
 import { fieldLabel } from '../../../lib/pdf/forms/labels'
 import { cn } from '../../../lib/utils/misc'
 import { useEditor } from '../../../store/editor'
@@ -10,8 +11,13 @@ import { widgetSigned } from '../signed'
 import { useControlEvents, useIsActiveField } from '../useField'
 import type { ControlProps } from './types'
 
-/** A dashed "Sign here" target; once a signature sits inside it, only a hover outline remains. */
+/**
+ * A dashed "Sign here" target; once a signature sits inside it, only a hover outline remains. It is
+ * laid out as the page is (left to right) in every language; only its words read the interface's way.
+ */
 export const SignatureControl = memo(function SignatureControl({ field, widget, scale, interactive }: ControlProps) {
+  const t = useT()
+  const dir = useDir()
   const signed = useEditor((s) => widgetSigned(s.elements, widget))
   const active = useIsActiveField(field.name)
   const events = useControlEvents(field)
@@ -28,7 +34,7 @@ export const SignatureControl = memo(function SignatureControl({ field, widget, 
       {...{ [CONTROL_ATTR]: '' }}
       data-form-field={field.name}
       data-form-widget={widget.id}
-      aria-label={signed ? `${label}: signed — sign again` : `${label}: sign here`}
+      aria-label={signed ? t.forms.onPage.signed(label) : t.forms.onPage.unsigned(label)}
       tabIndex={interactive && !field.readOnly ? 0 : -1}
       disabled={field.readOnly}
       className={cn(
@@ -52,7 +58,7 @@ export const SignatureControl = memo(function SignatureControl({ field, widget, 
       {!signed && (
         <>
           <Signature aria-hidden strokeWidth={2.25} style={{ width: icon, height: icon }} className="shrink-0" />
-          {showText && <span>Sign here</span>}
+          {showText && <span dir={dir}>{t.forms.onPage.signHere}</span>}
         </>
       )}
     </button>

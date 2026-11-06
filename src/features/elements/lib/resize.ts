@@ -1,3 +1,4 @@
+import { getT } from '../../../i18n'
 import { MIN_ELEMENT_SIZE } from '../../../model/elements'
 import type { Element, ElementPatch, Point } from '../../../model/types'
 import type { TextMeasurer } from '../../../lib/text/layout'
@@ -35,16 +36,17 @@ export function resizeElementPatch(start: Element, target: GrabTarget, delta: Po
   return { x: r.x, y: r.y, width: r.width, height: r.height }
 }
 
-const fmt = (n: number) => (Math.round(n * 10) / 10).toString()
+const round1 = (n: number) => Math.round(n * 10) / 10
 
-/** The little readout shown under an element while it's being resized. */
+/** The little readout shown under an element while it's being resized (in the interface's language). */
 export function sizeReadout(el: Element): string {
-  if (el.kind === 'text') return `${fmt(el.fontSize)} pt`
+  const t = getT().elements
+  if (el.kind === 'text') return t.points(round1(el.fontSize))
   if (el.kind === 'shape' && el.shape === 'line') {
     const len = Math.hypot(el.width, el.height)
     const deg = Math.round((Math.atan2(el.height, el.width) * 180) / Math.PI)
     const angle = el.flip ? deg : -deg
-    return `${Math.round(len)} pt · ${angle === 0 ? 0 : angle}°`
+    return t.readout.line(Math.round(len), angle === 0 ? 0 : angle)
   }
-  return `${Math.round(el.width)} × ${Math.round(el.height)} pt`
+  return t.readout.box(Math.round(el.width), Math.round(el.height))
 }

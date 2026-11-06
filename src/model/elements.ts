@@ -1,3 +1,4 @@
+import { getT, type Messages } from '../i18n'
 import { layoutTextBlock, type TextMeasurer } from '../lib/text/layout'
 import { createId } from '../lib/utils/id'
 import type {
@@ -257,22 +258,27 @@ export function defaultDateFormat(languages: readonly string[] = browserLanguage
   return /^(en-US|en-PH|fil)\b/i.test(languages[0] ?? '') ? 'MM/dd/yyyy' : 'dd/MM/yyyy'
 }
 
-/** Short human label for lists ("“John Smith”", "Checkmark", "Signature"…). */
-export function elementLabel(el: Element): string {
+/**
+ * Short human label for lists ("“John Smith”", "Checkmark", "Signature"…), in the interface's
+ * language (`t`, by default the current one: a component passes its own, from useT()). A text
+ * item is named by what it says, quoted: people's own words, so they keep their own direction.
+ */
+export function elementLabel(el: Element, t: Messages = getT()): string {
+  const n = t.elements.names
   switch (el.kind) {
     case 'text': {
-      const t = el.text.trim().replace(/\s+/g, ' ')
-      return t ? `“${t.length > 40 ? `${t.slice(0, 40)}…` : t}”` : 'Empty text'
+      const s = el.text.trim().replace(/\s+/g, ' ')
+      return s ? n.text(s.length > 40 ? `${s.slice(0, 40)}…` : s) : n.emptyText
     }
     case 'mark':
-      return el.shape === 'check' ? 'Checkmark' : el.shape === 'cross' ? 'Cross' : 'Dot'
+      return el.shape === 'check' ? n.check : el.shape === 'cross' ? n.cross : n.dot
     case 'image':
-      return el.role === 'signature' ? 'Signature' : el.role === 'initials' ? 'Initials' : 'Image'
+      return el.role === 'signature' ? n.signature : el.role === 'initials' ? n.initials : n.image
     case 'shape':
-      if (el.fillColor === HIGHLIGHT_COLOR && el.opacity < 1) return 'Highlight'
-      if (el.fillColor === WHITEOUT_COLOR && !el.strokeColor) return 'Whiteout'
-      return el.shape === 'rect' ? 'Rectangle' : el.shape === 'ellipse' ? 'Ellipse' : 'Line'
+      if (el.fillColor === HIGHLIGHT_COLOR && el.opacity < 1) return n.highlight
+      if (el.fillColor === WHITEOUT_COLOR && !el.strokeColor) return n.whiteout
+      return el.shape === 'rect' ? n.rect : el.shape === 'ellipse' ? n.ellipse : n.line
     case 'ink':
-      return 'Drawing'
+      return n.ink
   }
 }

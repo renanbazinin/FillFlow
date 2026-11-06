@@ -1,13 +1,12 @@
 import { memo, useId, type CSSProperties } from 'react'
 import { ChevronDown } from 'lucide-react'
-import { fieldLabel } from '../../../lib/pdf/forms/labels'
 import { cn } from '../../../lib/utils/misc'
 import { cssFontFamily } from '../../../model/fonts'
 import { fieldBoxClass, frameRect, frameStyle, rectStyle } from '../fieldStyles'
 import { LINE_HEIGHT, inputScale, textLook } from '../look'
 import { useFormFontsReady } from '../measure'
 import { CONTROL_ATTR } from '../navigation'
-import { setFieldValue, useComboText, useControlEvents, useFieldValue, useIsActiveField } from '../useField'
+import { setFieldValue, useComboText, useControlEvents, useFieldLabel, useFieldValue, useIsActiveField } from '../useField'
 import type { ControlProps } from './types'
 
 function baseStyle(fontPx: number, k: number, color: string): CSSProperties {
@@ -33,6 +32,7 @@ function baseStyle(fontPx: number, k: number, color: string): CSSProperties {
 /** Combo box: a styled native <select>, or <input list> for combos that accept typed text. */
 export const DropdownControl = memo(function DropdownControl({ field, widget, scale, interactive, rotation }: ControlProps) {
   const value = String(useFieldValue(field))
+  const name = useFieldLabel(field)
   const active = useIsActiveField(field.name)
   useFormFontsReady()
   const events = useControlEvents(field, { enterAdvances: true })
@@ -62,7 +62,7 @@ export const DropdownControl = memo(function DropdownControl({ field, widget, sc
   }
   const common = {
     [CONTROL_ATTR]: '',
-    'aria-label': fieldLabel(field),
+    'aria-label': name,
     'aria-required': field.required || undefined,
     tabIndex: interactive && !readOnly ? 0 : -1,
     dir: 'auto',
@@ -134,6 +134,7 @@ export const DropdownControl = memo(function DropdownControl({ field, widget, sc
 export const ListboxControl = memo(function ListboxControl({ field, widget, scale, interactive, rotation }: ControlProps) {
   const raw = useFieldValue(field)
   const value = Array.isArray(raw) ? raw : []
+  const name = useFieldLabel(field)
   const active = useIsActiveField(field.name)
   const events = useControlEvents(field)
   const frame = frameRect(widget.rect, rotation)
@@ -177,7 +178,7 @@ export const ListboxControl = memo(function ListboxControl({ field, widget, scal
       <div className="overflow-clip" style={frameStyle(widget.rect, scale, rotation)}>
         <select
           {...{ [CONTROL_ATTR]: '' }}
-          aria-label={fieldLabel(field)}
+          aria-label={name}
           aria-required={field.required || undefined}
           tabIndex={interactive && !readOnly ? 0 : -1}
           multiple={multi}

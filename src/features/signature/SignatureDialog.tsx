@@ -5,6 +5,7 @@ import { ImageUp, PenLine, Type, type LucideIcon } from 'lucide-react'
 import { Button } from '../../components/ui/button'
 import { Spinner } from '../../components/ui/controls'
 import { Dialog } from '../../components/ui/dialog'
+import { getT, useT } from '../../i18n'
 import type { SavedSignature } from '../../lib/storage/db'
 import { cn, isEditableTarget, isMac } from '../../lib/utils/misc'
 import { useEditor } from '../../store/editor'
@@ -27,11 +28,8 @@ import { TypePad } from './TypePad'
 import { UploadPad } from './UploadPad'
 import { loadUploadFile } from './upload'
 
-const TABS: Record<SignatureTab, { label: string; icon: LucideIcon }> = {
-  draw: { label: 'Draw', icon: PenLine },
-  type: { label: 'Type', icon: Type },
-  upload: { label: 'Upload', icon: ImageUp },
-}
+/** The tabs' icons (their names are the interface language's: signature.dialog.tabs). */
+const TAB_ICONS: Record<SignatureTab, LucideIcon> = { draw: PenLine, type: Type, upload: ImageUp }
 
 const isCoarsePointer = () => typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
 const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()))
@@ -70,7 +68,8 @@ export function SignatureDialog() {
   /** It was used (or a saved one picked) from the keyboard: focus goes on to the pages, where Enter places it. */
   const keyed = useRef(false)
   const savedHeadingId = useId()
-  const noun = role === 'signature' ? 'signature' : 'initials'
+  const t = useT()
+  const d = t.signature.dialog
 
   useEffect(() => {
     if (!openRole) return
@@ -90,9 +89,10 @@ export function SignatureDialog() {
       e.preventDefault()
       e.stopPropagation()
       useSignatureDraft.getState().setTab('upload')
-      loadUploadFile(openRole, file, file.name || 'Pasted image').catch(() =>
-        toast.error("Couldn't read the pasted image", { description: 'Try saving it as a PNG or JPEG file first.' }),
-      )
+      loadUploadFile(openRole, file, file.name || 'Pasted image').catch(() => {
+        const { title, description } = getT().signature.dialog.pasteFailed
+        toast.error(title, { description })
+      })
     }
     window.addEventListener('paste', onPaste, true)
     return () => window.removeEventListener('paste', onPaste, true)
@@ -146,26 +146,31 @@ export function SignatureDialog() {
       // Closed (×) while rendering: the user changed their mind.
       if (useEditor.getState().activeDialog !== openRole) return
       if (!out) {
-        toast.error(`There's nothing to use yet`, { description: `Add your ${noun} first.` })
+        const { title, description } = getT().signature.dialog.nothingToUse
+        toast.error(title, { description: description[openRole] })
         return
       }
-      const d = useSignatureDraft.getState()
+      const draft = useSignatureDraft.getState()
       const editor = useEditor.getState()
       const id = editor.addAsset(out)
       const asset = useEditor.getState().assets[id]
-      if (d.save && asset) {
+      if (draft.save && asset) {
         useSignatureLibrary
           .getState()
           .add(openRole, asset)
-          .catch(() => toast.error("Couldn't save it for next time", { description: "This browser isn't allowing local storage." }))
+          .catch(() => {
+            const { title, description } = getT().signature.dialog.saveFailed
+            toast.error(title, { description })
+          })
       }
-      if (d.tab === 'type') d.rememberText(openRole)
-      d.consume(openRole, d.tab)
+      if (draft.tab === 'type') draft.rememberText(openRole)
+      draft.consume(openRole, draft.tab)
       editor.closeDialog()
       armPlacement(openRole, id)
     } catch (err) {
       console.error('[signature] could not create the image', err)
-      toast.error('Something went wrong', { description: 'Please try again.' })
+      const { title, description } = getT().signature.dialog.failed
+      toast.error(title, { description })
     } finally {
       setBusy(false)
     }
@@ -209,15 +214,16 @@ export function SignatureDialog() {
   }
 
   const footer = (
+    // "Save for next time" at the start (left, or right in a right-to-left interface), the buttons at the end.
     <div className="flex w-full flex-wrap items-center gap-x-2 gap-y-3" onKeyDown={onKeyDown}>
-      <SaveCheckbox checked={save} onCheckedChange={setSave} className="mr-auto max-sm:w-full" />
+      <SaveCheckbox checked={save} onCheckedChange={setSave} className="me-auto max-sm:w-full" />
       <Button variant="secondary" onClick={close} className="max-sm:flex-1">
-        Cancel
+        {t.common.cancel}
       </Button>
       {/* Pressing Enter or Space on a button fires a click with no click count. */}
       <Button variant="primary" onClick={(e) => void confirm(e.detail === 0)} disabled={!canUse || busy} className="min-w-32 max-sm:flex-1">
         {busy && <Spinner />}
-        {role === 'signature' ? 'Use signature' : 'Use initials'}
+        {d.use[role]}
       </Button>
     </div>
   )
@@ -226,9 +232,9 @@ export function SignatureDialog() {
     <Dialog
       open={openRole !== null}
       onOpenChange={(next) => !next && close()}
-      title={role === 'signature' ? 'Add your signature' : 'Add your initials'}
+      title={d.title[role]}
       // A short screen has no room to spare for it: there it's only read out.
-      description={<span className={cn(short && 'sr-only')}>Draw, type or upload it. It never leaves your device.</span>}
+      description={<span className={cn(short && 'sr-only')}>{d.description}</span>}
       size="lg"
       dismissible={!busy}
       onOpenAutoFocus={onOpenAutoFocus}
@@ -246,8 +252,9 @@ export function SignatureDialog() {
         {saved.length > 0 && (
           <section aria-labelledby={savedHeadingId} className="mb-5">
             <h3 id={savedHeadingId} className="mb-2 text-[13px] font-medium text-fg-muted">
-              {role === 'signature' ? 'Use a saved signature' : 'Use your saved initials'}
+              {d.useSaved[role]}
             </h3>
+            {/* Newest first, from the start of the row (the right, in a right-to-left interface). */}
             <div data-saved-row className="-m-1 flex gap-2.5 overflow-x-auto p-1 scrollbar-thin">
               {saved.map((item) => (
                 <SavedTile
@@ -261,7 +268,7 @@ export function SignatureDialog() {
             </div>
             <div className="mt-5 flex items-center gap-3 text-xs font-medium text-fg-subtle">
               <span className="h-px flex-1 bg-line" />
-              or create a new one
+              {d.createNew[role]}
               <span className="h-px flex-1 bg-line" />
             </div>
           </section>
@@ -270,29 +277,30 @@ export function SignatureDialog() {
         <Tabs.Root ref={fitPadInDialog} value={tab} onValueChange={(v) => setTab(v as SignatureTab)}>
           <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
             <Tabs.List
-              aria-label={`How to create your ${noun}`}
+              aria-label={d.tabsLabel[role]}
               // A pressed tab focuses itself. Without this, Radix takes the press for a click on the
               // list, and the next Tab into the list stops on the list itself (unseen), not the tab.
               onMouseDown={(e) => e.preventDefault()}
               // Touch screens: 40px tabs.
               className="grid h-10 w-full grid-cols-3 items-center rounded-lg bg-surface-3 p-0.5 sm:inline-grid sm:h-9 sm:w-auto pointer-coarse:min-h-11"
             >
-              {SIGNATURE_TABS.map((t) => {
-                const { label, icon: Icon } = TABS[t]
+              {SIGNATURE_TABS.map((id) => {
+                const Icon = TAB_ICONS[id]
                 return (
                   <Tabs.Trigger
-                    key={t}
-                    value={t}
+                    key={id}
+                    value={id}
                     className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md px-4 text-[13px] font-medium text-fg-muted transition-colors hover:text-fg data-[state=active]:bg-surface data-[state=active]:text-fg data-[state=active]:shadow-xs sm:h-8 pointer-coarse:min-h-10"
                   >
                     {!short && <Icon className="size-4" />}
-                    {label}
+                    {d.tabs[id]}
                   </Tabs.Trigger>
                 )
               })}
             </Tabs.List>
-            {/* Short screen: the drawing controls sit up here, where the pad can't push them out of view. */}
-            {short && tab === 'draw' && <DrawControls role={role} compact className="ml-auto" />}
+            {/* Short screen: the drawing controls sit up here, where the pad can't push them out of view
+                (at the end of the row: right, or left in a right-to-left interface). */}
+            {short && tab === 'draw' && <DrawControls role={role} compact className="ms-auto" />}
           </div>
           <Tabs.Content value="draw" className="mt-4">
             <DrawPad role={role} controls={!short} />

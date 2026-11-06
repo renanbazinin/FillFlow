@@ -1,3 +1,4 @@
+import { getT } from '../i18n'
 import type { FontId } from './types'
 import arimoRegular from '../assets/fonts/Arimo-Regular.ttf?url'
 import arimoBold from '../assets/fonts/Arimo-Bold.ttf?url'
@@ -18,7 +19,8 @@ import cousineBold from '../assets/fonts/Cousine-Bold.ttf?url'
  */
 export interface FontDef {
   id: FontId
-  label: string
+  /** Its name in the interface language, by how it looks (read when shown: it follows the language). */
+  readonly label: string
   /** Family name registered with `document.fonts` (internal, never a system font). */
   cssFamily: string
   /** CSS fallback stack used while the face loads or for missing glyphs. */
@@ -31,37 +33,44 @@ export interface FontDef {
   descent: number
 }
 
+/** A font whose `label` is read in the current language each time (src/i18n/<language>/elements.ts). */
+function font(def: Omit<FontDef, 'label'>): FontDef {
+  return {
+    ...def,
+    get label() {
+      return getT().elements.fonts[def.id]
+    },
+  }
+}
+
 export const FONTS: Record<FontId, FontDef> = {
-  sans: {
+  sans: font({
     id: 'sans',
-    label: 'Sans',
     cssFamily: 'FillFlow Sans',
     cssFallback: 'Arial, Helvetica, sans-serif',
     files: { regular: arimoRegular, bold: arimoBold },
     unitsPerEm: 2048,
     ascent: 1854,
     descent: 434,
-  },
-  serif: {
+  }),
+  serif: font({
     id: 'serif',
-    label: 'Serif',
     cssFamily: 'FillFlow Serif',
     cssFallback: '"Times New Roman", Times, serif',
     files: { regular: tinosRegular, bold: tinosBold },
     unitsPerEm: 2048,
     ascent: 1825,
     descent: 443,
-  },
-  mono: {
+  }),
+  mono: font({
     id: 'mono',
-    label: 'Mono',
     cssFamily: 'FillFlow Mono',
     cssFallback: '"Courier New", Courier, monospace',
     files: { regular: cousineRegular, bold: cousineBold },
     unitsPerEm: 2048,
     ascent: 1705,
     descent: 615,
-  },
+  }),
 }
 
 export const FONT_IDS = Object.keys(FONTS) as FontId[]

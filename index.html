@@ -46,6 +46,27 @@
       } catch (e) { /* storage unavailable */ }
     })();
   </script>
+  <!-- Set the interface language and direction before first paint, so a right-to-left page doesn't
+       flash left-to-right: the language picked on this device, else the first of the browser's
+       languages the interface comes in, else English. Keep in sync with src/i18n/locale.ts -->
+  <script>
+    (function () {
+      var locale = null;
+      try {
+        var saved = localStorage.getItem('fillflow:locale');
+        if (saved === 'en' || saved === 'he') locale = saved;
+      } catch (e) { /* storage unavailable */ }
+      var langs = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language || ''];
+      for (var i = 0; !locale && i < langs.length; i++) {
+        var base = String(langs[i]).toLowerCase().split(/[-_]/)[0];
+        if (base === 'iw') base = 'he';
+        if (base === 'en' || base === 'he') locale = base;
+      }
+      locale = locale || 'en';
+      document.documentElement.lang = locale;
+      document.documentElement.dir = locale === 'he' ? 'rtl' : 'ltr';
+    })();
+  </script>
 </head>
 
 <body>

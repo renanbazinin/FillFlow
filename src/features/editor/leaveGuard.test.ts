@@ -12,6 +12,7 @@ vi.mock('../../components/ui/confirm', () => ({ confirm: vi.fn(async () => false
 vi.mock('../../lib/storage/autosave', () => ({ flushAutosave: vi.fn(async () => {}) }))
 
 const { useEditor } = await import('../../store/editor')
+const { setLocale } = await import('../../i18n')
 const { confirm } = await import('../../components/ui/confirm')
 const { flushAutosave } = await import('../../lib/storage/autosave')
 const { setSaveStatus } = await import('../../lib/storage/saveStatus')
@@ -44,6 +45,23 @@ describe('confirmLeaveDocument', () => {
     setSaveStatus({ state: 'saving', savedAt: null })
     vi.mocked(flushAutosave).mockImplementation(async () => setSaveStatus({ state: 'error', savedAt: null, error: 'Full.' }))
     expect(await confirmLeaveDocument()).toBe(false)
-    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ title: 'Leave without your latest changes?' }))
+    expect(confirm).toHaveBeenCalledWith({
+      title: 'Leave without your latest changes?',
+      description: 'They couldn’t be saved on this device. Download your PDF first if you want to keep them.',
+      confirmLabel: 'Leave anyway',
+      cancelLabel: 'Stay',
+      danger: true,
+    })
+  })
+
+  it('asks in the interface language', async () => {
+    setSaveStatus({ state: 'error', savedAt: null, error: 'Full.' })
+    setLocale('he')
+    try {
+      await confirmLeaveDocument()
+    } finally {
+      setLocale('en')
+    }
+    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ title: 'לצאת בלי השינויים האחרונים שלכם?', confirmLabel: 'יציאה בכל זאת' }))
   })
 })

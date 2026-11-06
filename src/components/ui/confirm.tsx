@@ -1,5 +1,6 @@
 import { useSyncExternalStore, type ReactNode } from 'react'
 import { AlertDialog } from 'radix-ui'
+import { useT } from '../../i18n'
 import { Button } from './button'
 import { onModalClose, onModalOpen } from './modal'
 
@@ -38,6 +39,7 @@ function close(ok: boolean) {
 
 /** Mount once near the app root. */
 export function ConfirmHost() {
+  const t = useT()
   const current = useSyncExternalStore(
     (l) => {
       listeners.add(l)
@@ -58,11 +60,11 @@ export function ConfirmHost() {
           <AlertDialog.Description className="mt-2 text-sm text-fg-muted">{current?.description ?? ''}</AlertDialog.Description>
           <div className="mt-6 flex justify-end gap-2">
             <AlertDialog.Cancel asChild>
-              <Button variant="secondary">{current?.cancelLabel ?? 'Cancel'}</Button>
+              <Button variant="secondary">{current?.cancelLabel ?? t.common.cancel}</Button>
             </AlertDialog.Cancel>
             <AlertDialog.Action asChild>
               <Button variant={current?.danger ? 'danger' : 'primary'} onClick={() => close(true)}>
-                {current?.confirmLabel ?? 'Continue'}
+                {current?.confirmLabel ?? t.common.continue}
               </Button>
             </AlertDialog.Action>
           </div>

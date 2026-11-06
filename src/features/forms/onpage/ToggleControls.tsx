@@ -1,10 +1,11 @@
 import { memo } from 'react'
+import { useT } from '../../../i18n'
 import { fieldLabel, radioOptions } from '../../../lib/pdf/forms/labels'
 import { cn } from '../../../lib/utils/misc'
 import { MARK_PATHS, MARK_VIEWBOX } from '../../../model/elements'
 import { fieldBoxClass, rectStyle } from '../fieldStyles'
 import { CONTROL_ATTR, findControl } from '../navigation'
-import { setFieldValue, useControlEvents, useFieldValue, useIsActiveField } from '../useField'
+import { setFieldValue, useControlEvents, useFieldLabel, useFieldValue, useIsActiveField } from '../useField'
 import type { ControlProps } from './types'
 
 /** Tiny boxes are hard to hit with a finger: grow the hit area (not the visuals) on touch screens. */
@@ -17,6 +18,7 @@ function stopActivationKeys(e: React.KeyboardEvent) {
 
 export const CheckboxControl = memo(function CheckboxControl({ field, widget, scale, interactive }: ControlProps) {
   const checked = useFieldValue(field) === true
+  const name = useFieldLabel(field)
   const active = useIsActiveField(field.name)
   const events = useControlEvents(field)
   const readOnly = field.readOnly
@@ -25,7 +27,7 @@ export const CheckboxControl = memo(function CheckboxControl({ field, widget, sc
       type="button"
       role="checkbox"
       aria-checked={checked}
-      aria-label={fieldLabel(field)}
+      aria-label={name}
       aria-readonly={readOnly || undefined}
       aria-required={field.required || undefined}
       {...{ [CONTROL_ATTR]: '' }}
@@ -59,6 +61,7 @@ export const CheckboxControl = memo(function CheckboxControl({ field, widget, sc
 
 /** One radio option (a PDF radio group has one widget per option). Roving tabindex per group. */
 export const RadioControl = memo(function RadioControl({ field, widget, scale, interactive }: ControlProps) {
+  const t = useT()
   const value = useFieldValue(field)
   const active = useIsActiveField(field.name)
   const events = useControlEvents(field)
@@ -81,7 +84,7 @@ export const RadioControl = memo(function RadioControl({ field, widget, scale, i
       type="button"
       role="radio"
       aria-checked={selected}
-      aria-label={`${fieldLabel(field)}: ${radioOptions(field).find((o) => o.value === (widget.exportValue ?? ''))?.label}`}
+      aria-label={t.forms.onPage.option(fieldLabel(field), radioOptions(field).find((o) => o.value === (widget.exportValue ?? ''))?.label ?? '')}
       aria-readonly={readOnly || undefined}
       {...{ [CONTROL_ATTR]: '' }}
       data-form-field={field.name}

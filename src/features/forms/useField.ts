@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useLocale } from '../../i18n'
+import { fieldLabel, radioOptions } from '../../lib/pdf/forms/labels'
 import { coerceValue, storedValue } from '../../lib/pdf/forms/values'
 import { isMac } from '../../lib/utils/misc'
-import type { FormField, FormValue } from '../../model/types'
+import type { FormField, FormFieldOption, FormValue } from '../../model/types'
 import { useEditor } from '../../store/editor'
 import { shortcutLetter } from '../elements/lib/keys'
 import { focusAdjacentField } from './navigation'
@@ -11,6 +13,21 @@ import { fieldSigned } from './signed'
 export function useFieldValue(field: FormField): FormValue {
   const raw = useEditor((s) => storedValue(s.formValues, field.name))
   return coerceValue(field, raw === undefined ? field.defaultValue : raw)
+}
+
+/**
+ * The field's label (see fieldLabel): the PDF's words, or ours for a field it leaves unnamed. Those
+ * are in the interface's language, so the caller re-renders when it changes.
+ */
+export function useFieldLabel(field: FormField): string {
+  useLocale()
+  return fieldLabel(field)
+}
+
+/** A radio field's choices (see radioOptions); one with an empty value is named in the interface's language. */
+export function useRadioOptions(field: FormField): FormFieldOption[] {
+  useLocale()
+  return radioOptions(field)
 }
 
 /**

@@ -1,3 +1,4 @@
+import { getT } from '../../i18n'
 import { downloadBytes } from '../../lib/utils/misc'
 
 /** Ways to hand the exported file to the user: download, system share sheet, print. */
@@ -69,7 +70,7 @@ export function printPdf(bytes: Uint8Array, fileName: string): PrintResult {
   const url = URL.createObjectURL(asBlob(bytes))
   if (canPrintInFrame()) {
     const iframe = document.createElement('iframe')
-    iframe.title = 'Print preview'
+    iframe.title = getT().export.printFrame
     iframe.setAttribute('aria-hidden', 'true')
     iframe.tabIndex = -1
     // Not display:none — hidden frames don't get a layout to print.

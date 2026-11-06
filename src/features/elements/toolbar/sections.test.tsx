@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { TooltipProvider } from '../../../components/ui/tooltip'
+import { setLocale } from '../../../i18n'
 import type { FontId, MarkElement, TextElement } from '../../../model/types'
 import { CommonActions, MarkControls, TextControls } from './sections'
 
@@ -59,5 +60,29 @@ describe('the text toolbar', () => {
     expect(edit).toMatch(/^<button/)
     expect(edit).not.toContain('hidden')
     expect(tags(render(<CommonActions selected={[text('sans'), { ...text('sans'), id: 'u' }]} />), 'aria-label="Edit text"')).toEqual([])
+  })
+})
+
+/** The names of the options in `html`, in document order (the order the toolbar reads them in). */
+const options = (html: string) => tags(html, 'role="radio"').map(name)
+
+describe('the text toolbar in a right-to-left interface', () => {
+  afterEach(() => setLocale('en'))
+
+  it('keeps left at the left: its alignment options run from the right', () => {
+    expect(options(render(<TextControls texts={[text('sans')]} />)).slice(-3)).toEqual(['Align left', 'Align center', 'Align right'])
+    setLocale('he')
+    const html = render(<TextControls texts={[text('sans')]} />)
+    expect(tags(html, 'role="radiogroup"').map(name)).toEqual(['גופן', 'יישור טקסט'])
+    // Laid out right to left, so the first is at the right: right, center, left on screen.
+    expect(options(html).slice(-3)).toEqual(['יישור לימין', 'יישור למרכז', 'יישור לשמאל'])
+    expect(options(html).slice(0, 3)).toEqual(['גופן סנס', 'גופן סריף', 'גופן מונו'])
+    expect(html).toContain('aria-label="גופן: סנס"')
+  })
+
+  it('names its actions in Hebrew', () => {
+    setLocale('he')
+    const html = render(<CommonActions selected={[{ ...text('sans'), locked: true }]} />)
+    expect(tags(html, '<button').map(name)).toEqual(['עריכת טקסט', 'שכפול', 'ביטול נעילה', 'פעולות נוספות', 'אי אפשר למחוק פריטים נעולים'])
   })
 })

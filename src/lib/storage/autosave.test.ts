@@ -2,8 +2,10 @@ import 'fake-indexeddb/auto'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { toast } from 'sonner'
 import { confirm } from '../../components/ui/confirm'
+import { setLocale } from '../../i18n'
 import type { FormField, ImageElement, MarkElement, TextElement } from '../../model/types'
 import { useEditor, type LoadedDocument } from '../../store/editor'
+import { bidiIsolate } from '../utils/misc'
 import { AUTOSAVE_DELAY_MS, SESSIONS_CHANNEL, flushAutosave, startAutosave } from './autosave'
 import {
   StorageUnavailableError,
@@ -138,6 +140,8 @@ let visibility: 'visible' | 'hidden' = 'visible'
 beforeAll(() => {
   const doc = new EventTarget()
   Object.defineProperty(doc, 'visibilityState', { get: () => visibility })
+  // Where switching the interface language sets <html lang dir>.
+  Object.defineProperty(doc, 'documentElement', { value: { lang: 'en', dir: 'ltr' } })
   vi.stubGlobal('document', doc)
   vi.stubGlobal('window', new EventTarget())
 })
@@ -806,6 +810,43 @@ describe('autosave', () => {
     await settle()
     expect(saveMock).toHaveBeenCalledTimes(3)
     expect(toast.error).toHaveBeenCalledTimes(1)
+  })
+
+  describe('in Hebrew', () => {
+    beforeEach(() => setLocale('he'))
+    afterEach(() => setLocale('en'))
+
+    it('says why saving failed, and keeps the status, in the interface language', async () => {
+      await openRemembered('lang')
+      stop = startAutosave()
+      useEditor.getState().addElement(mark())
+      await waitForSave()
+      expect(status().state).toBe('saved')
+      saveMock.mockRejectedValueOnce(quota)
+      useEditor.getState().addElement(mark())
+      await waitForSave()
+      expect(status()).toMatchObject({ state: 'error', error: 'האחסון במכשיר הזה מלא.' })
+      expect(toast.error).toHaveBeenCalledWith('לא ניתן היה לשמור את ההתקדמות שלכם במכשיר הזה', {
+        id: 'autosave-error',
+        description: 'האחסון במכשיר הזה מלא. כדי לא לאבד את השינויים, הורידו את ה-PDF.',
+      })
+      // Saved again (and the next failure is news again).
+      useEditor.getState().addElement(mark())
+      await waitForSave()
+      expect(status().state).toBe('saved')
+    })
+
+    it('names a closed document that lost its last changes as it is, inside the Hebrew sentence', async () => {
+      await openRemembered('טופס')
+      stop = startAutosave()
+      saveMock.mockRejectedValueOnce(quota)
+      useEditor.getState().addElement(mark())
+      useEditor.getState().closeDocument()
+      await settle()
+      expect(toast.error).toHaveBeenCalledWith(`השינויים האחרונים שלכם במסמך "${bidiIsolate('טופס.pdf')}" לא נשמרו`, {
+        description: 'האחסון במכשיר הזה מלא.',
+      })
+    })
   })
 
   it('writes a long burst of changes without waiting for a pause', async () => {

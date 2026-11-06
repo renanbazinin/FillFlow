@@ -54,6 +54,15 @@ export default defineConfig({
     target: 'es2022',
     chunkSizeWarningLimit: 1600,
   },
+  css: {
+    lightningcss: {
+      // The CSS minifier would rewrite :dir(rtl) as :lang(he, ar…) and logical properties as
+      // physical ones for older browsers: both ignore a dir="ltr" part of a right-to-left page (the
+      // document pages stay left to right). Tailwind leaves them as written for the same reason.
+      // Features.DirSelector | Features.LogicalProperties (lightningcss, Vite's own dependency).
+      exclude: 4 | 524288,
+    },
+  },
   test: {
     environment: 'node',
     include: ['src/**/*.test.{ts,tsx}'],

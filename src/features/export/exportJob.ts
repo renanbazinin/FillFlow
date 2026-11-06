@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { getT } from '../../i18n'
 import { ExportError } from '../../lib/export/errors'
 import type { ExportProgress } from '../../lib/export/types'
 import { useEditor } from '../../store/editor'
@@ -56,15 +57,16 @@ function jobKey(flatten: boolean): string | null {
   return doc ? `${doc.id}:${revision}:${flatten ? 1 : 0}` : null
 }
 
+/** What to tell people about a failure, in the interface language (an ExportError's message already is). */
 export function errorMessage(err: unknown): string {
   if (err instanceof ExportError) return err.message
-  return 'Something went wrong while creating the PDF. Please try again.'
+  return getT().export.errors.generic
 }
 
 /** Starts (or reuses) the export for the current document state. */
 export function prepareExport(flatten: boolean): Promise<Uint8Array> {
   const key = jobKey(flatten)
-  if (!key) return Promise.reject(new ExportError('unknown', 'Open a document first.'))
+  if (!key) return Promise.reject(new ExportError('unknown', getT().export.errors.noDocument))
   if (current?.key === key) return current.promise
 
   current?.ctrl.abort()

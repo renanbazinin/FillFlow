@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { FileUp, FileX } from 'lucide-react'
 import { OPEN_OVERLAY } from '../../components/ui/modal'
+import { richText, useT } from '../../i18n'
 import { useSaveStatusStore } from '../../lib/storage/saveStatus'
 import { cn } from '../../lib/utils/misc'
 import { useEditor } from '../../store/editor'
@@ -27,6 +28,7 @@ export function FileDropOverlay() {
   const drag = useFileDrag()
   const docName = useEditor((s) => s.doc?.name ?? null)
   const saveFailed = useSaveStatusStore((s) => s.state === 'error')
+  const t = useT()
 
   useEffect(() => {
     let hideTimer = 0
@@ -88,18 +90,11 @@ export function FileDropOverlay() {
             <div className="grid size-12 place-items-center rounded-2xl bg-brand-gradient text-white shadow-float">
               <FileUp className="size-6" strokeWidth={1.75} />
             </div>
-            <div className="mt-4 text-[17px] font-semibold tracking-[-0.01em] text-fg">Drop your PDF to open it</div>
+            <div className="mt-4 text-[17px] font-semibold tracking-[-0.01em] text-fg">{t.home.dropOverlay.title}</div>
             <div className="mt-1.5 text-[13.5px] leading-relaxed text-fg-muted">
-              {saveFailed ? (
-                <>
-                  Your latest changes to <bdi className="font-medium text-fg">{displayName(docName)}</bdi> couldn’t be saved on this
-                  device.
-                </>
-              ) : (
-                <>
-                  Your work on <bdi className="font-medium text-fg">{displayName(docName)}</bdi> is saved on this device.
-                </>
-              )}
+              {richText(saveFailed ? t.home.dropOverlay.saveFailed : t.home.dropOverlay.workSaved, {
+                name: <bdi className="font-medium text-fg">{displayName(docName)}</bdi>,
+              })}
             </div>
           </div>
         </div>
@@ -112,7 +107,7 @@ export function FileDropOverlay() {
             )}
           >
             {notPdf ? <FileX className="size-4" /> : <FileUp className="size-4" />}
-            {notPdf ? 'Only PDF files can be opened' : 'Drop your PDF to open it'}
+            {notPdf ? t.home.dropOverlay.notPdf : t.home.dropOverlay.title}
           </div>
         </div>
       )}

@@ -30,6 +30,7 @@ import {
   PopoverTrigger,
 } from '../../../components/ui/menu'
 import { Tooltip } from '../../../components/ui/tooltip'
+import { useDir, useT, type Direction, type Messages } from '../../../i18n'
 import { HIGHLIGHT_COLOR, INK_COLORS, MAX_FONT_SIZE, MIN_FONT_SIZE } from '../../../model/elements'
 import { cssFontFamily, FONT_IDS, FONTS, fontDef, loadFont } from '../../../model/fonts'
 import type { Element, FontId, ImageElement, InkElement, MarkElement, MarkShape, ShapeElement, TextAlign, TextElement } from '../../../model/types'
@@ -57,23 +58,37 @@ import {
   toggleBold,
 } from './styleActions'
 
-const ALIGN_OPTIONS: SegmentedOption<TextAlign>[] = [
-  { value: 'left', label: <TextAlignStart />, ariaLabel: 'Align left' },
-  { value: 'center', label: <TextAlignCenter />, ariaLabel: 'Align center' },
-  { value: 'right', label: <TextAlignEnd />, ariaLabel: 'Align right' },
-]
+/**
+ * Where text sits on the page, which reads left to right whatever the interface does: the icons
+ * don't mirror, and left stays at the left. A right-to-left toolbar lays its options out from the
+ * right, so they come right, center, left there (and the arrow keys go along them as they show).
+ */
+function alignOptions(t: Messages, dir: Direction): SegmentedOption<TextAlign>[] {
+  const m = t.elements.toolbar
+  const options: SegmentedOption<TextAlign>[] = [
+    { value: 'left', label: <TextAlignStart />, ariaLabel: m.alignLeft },
+    { value: 'center', label: <TextAlignCenter />, ariaLabel: m.alignCenter },
+    { value: 'right', label: <TextAlignEnd />, ariaLabel: m.alignRight },
+  ]
+  return dir === 'rtl' ? options.reverse() : options
+}
 
-const FONT_OPTIONS: SegmentedOption<FontId>[] = FONT_IDS.map((id) => ({
-  value: id,
-  label: <span style={{ fontFamily: cssFontFamily(id) }}>{FONTS[id].label}</span>,
-  ariaLabel: `${FONTS[id].label} font`,
-}))
+/** The fonts, each named in itself (a font's label follows the interface language). */
+function fontOptions(t: Messages): SegmentedOption<FontId>[] {
+  return FONT_IDS.map((id) => ({
+    value: id,
+    label: <span style={{ fontFamily: cssFontFamily(id) }}>{FONTS[id].label}</span>,
+    ariaLabel: t.elements.toolbar.fontOption(FONTS[id].label),
+  }))
+}
 
-const MARK_OPTIONS: SegmentedOption<MarkShape>[] = (['check', 'cross', 'dot'] as const).map((shape) => ({
-  value: shape,
-  label: <MarkGlyph shape={shape} color="currentColor" className="block size-4" />,
-  ariaLabel: shape === 'check' ? 'Checkmark' : shape === 'cross' ? 'Cross' : 'Dot',
-}))
+function markOptions(t: Messages): SegmentedOption<MarkShape>[] {
+  return (['check', 'cross', 'dot'] as const).map((shape) => ({
+    value: shape,
+    label: <MarkGlyph shape={shape} color="currentColor" className="block size-4" />,
+    ariaLabel: t.elements.names[shape],
+  }))
+}
 
 const FILL_COLORS = [...INK_COLORS, HIGHLIGHT_COLOR] as const
 
@@ -82,6 +97,8 @@ const round1 = (n: number) => Math.round(n * 10) / 10
 // --- text --------------------------------------------------------------------
 
 function FontPicker({ value }: { value: FontId }) {
+  const t = useT()
+  const m = t.elements.toolbar
   useEffect(() => {
     // Labels are drawn in the fonts themselves.
     for (const id of FONT_IDS) void loadFont(id, false)
@@ -92,17 +109,17 @@ function FontPicker({ value }: { value: FontId }) {
   const side = usePopoverSide()
   return (
     <>
-      <Segmented size="sm" label="Font" className="max-sm:hidden" value={font.id} onValueChange={(fontId) => setTextStyle({ fontId })} options={FONT_OPTIONS} />
+      <Segmented size="sm" label={m.font} className="max-sm:hidden" value={font.id} onValueChange={(fontId) => setTextStyle({ fontId })} options={fontOptions(t)} />
       <Menu {...menu.root}>
-        <Tooltip content="Font">
+        <Tooltip content={m.font}>
           <MenuTrigger asChild {...menu.trigger}>
-            <TriggerButton label={`Font: ${font.label}`} className="px-2 text-[13px] font-medium text-fg sm:hidden">
+            <TriggerButton label={m.fontButton(font.label)} className="px-2 text-[13px] font-medium text-fg sm:hidden">
               <span style={{ fontFamily: cssFontFamily(font.id) }}>{font.label}</span>
             </TriggerButton>
           </MenuTrigger>
         </Tooltip>
         <MenuContent side={side} align="start" className="min-w-40" onCloseAutoFocus={preventFocusWhileEditing}>
-          <MenuLabel>Font</MenuLabel>
+          <MenuLabel>{m.font}</MenuLabel>
           <MenuRadioGroup value={font.id} onValueChange={(v) => setTextStyle({ fontId: v as FontId })}>
             {FONT_IDS.map((id) => (
               <MenuRadioItem key={id} value={id}>
@@ -117,15 +134,18 @@ function FontPicker({ value }: { value: FontId }) {
 }
 
 function SpacingButton({ text }: { text: TextElement }) {
+  const t = useT()
+  const dir = useDir()
+  const m = t.elements.toolbar
   const trigger = useRef<HTMLButtonElement>(null)
   const content = useRef<HTMLDivElement>(null)
   const away = useAwayPopover(trigger, content)
   return (
     <Popover {...away.root}>
       <PopoverAnchor virtualRef={away.virtualRef} />
-      <Tooltip content="Alignment & spacing">
+      <Tooltip content={m.spacingTip}>
         <PopoverTrigger asChild>
-          <TriggerButton ref={trigger} label="Alignment and spacing">
+          <TriggerButton ref={trigger} label={m.spacing}>
             <SlidersHorizontal className="size-4" />
           </TriggerButton>
         </PopoverTrigger>
@@ -134,33 +154,33 @@ function SpacingButton({ text }: { text: TextElement }) {
         ref={content}
         side={away.side}
         align="end"
-        aria-label="Alignment and spacing"
+        aria-label={m.spacing}
         className={cn('grid w-64 gap-4', POPOVER_FIT)}
         onOpenAutoFocus={preventFocusWhileEditing}
         onCloseAutoFocus={preventFocusWhileEditing}
       >
         <div className="grid gap-2 sm:hidden">
-          <span className="text-[13px] font-medium text-fg-muted">Alignment</span>
+          <span className="text-[13px] font-medium text-fg-muted">{m.alignment}</span>
           <Segmented
             size="sm"
-            label="Text alignment"
+            label={m.textAlignment}
             className="w-full [&>*]:flex-1"
             value={text.align}
             onValueChange={(align) => setTextStyle({ align })}
-            options={ALIGN_OPTIONS}
+            options={alignOptions(t, dir)}
           />
         </div>
         <SliderRow
-          label="Letter spacing"
+          label={m.letterSpacing}
           value={text.letterSpacing}
-          display={`${round1(text.letterSpacing)} pt`}
+          display={t.elements.points(round1(text.letterSpacing))}
           onChange={(v) => setTextStyle({ letterSpacing: v }, 'style:letter-spacing')}
           min={0}
           max={20}
           step={0.5}
         />
         <SliderRow
-          label="Line height"
+          label={m.lineHeight}
           value={text.lineHeight}
           display={`${text.lineHeight.toFixed(2)}×`}
           onChange={(v) => setTextStyle({ lineHeight: Math.round(v * 100) / 100 }, 'style:line-height')}
@@ -174,36 +194,39 @@ function SpacingButton({ text }: { text: TextElement }) {
 }
 
 export function TextControls({ texts }: { texts: TextElement[] }) {
+  const t = useT()
+  const dir = useDir()
+  const m = t.elements.toolbar
   const first = texts[0]
-  const bold = texts.every((t) => t.bold)
+  const bold = texts.every((x) => x.bold)
   return (
     <>
       <FontPicker value={first.fontId} />
       <SizeField
-        label="Font size"
+        label={m.fontSize}
         value={first.fontSize}
         min={MIN_FONT_SIZE}
         max={MAX_FONT_SIZE}
-        locked={texts.every((t) => t.locked)}
+        locked={texts.every((x) => x.locked)}
         onChange={(v) => setTextStyle({ fontSize: v }, 'style:font-size')}
       />
       <IconButton
         size="icon-sm"
-        label="Bold"
+        label={m.bold}
         shortcut={`${modKeyLabel}+B`}
         active={bold}
         icon={<span className="font-sans text-[15px] font-bold leading-none">B</span>}
         onClick={toggleBold}
       />
-      <ColorButton label="Text color" variant="text" value={first.color} onChange={(c) => c && setTextStyle({ color: c }, 'style:text-color')} />
+      <ColorButton label={m.textColor} variant="text" value={first.color} onChange={(c) => c && setTextStyle({ color: c }, 'style:text-color')} />
       <ToolbarSeparator className="max-sm:hidden" />
       <Segmented
         size="sm"
-        label="Text alignment"
+        label={m.textAlignment}
         className="max-sm:hidden"
         value={first.align}
         onValueChange={(align) => setTextStyle({ align })}
-        options={ALIGN_OPTIONS}
+        options={alignOptions(t, dir)}
       />
       <SpacingButton text={first} />
     </>
@@ -213,12 +236,14 @@ export function TextControls({ texts }: { texts: TextElement[] }) {
 // --- marks -------------------------------------------------------------------
 
 export function MarkControls({ marks }: { marks: MarkElement[] }) {
+  const t = useT()
+  const m = t.elements.toolbar
   const first = marks[0]
   return (
     <>
-      <Segmented size="sm" label="Mark shape" value={first.shape} onValueChange={setMarkShape} options={MARK_OPTIONS} />
-      <ColorButton label="Color" value={first.color} onChange={(c) => c && setMarkColor(c)} />
-      <SizeField label="Size" value={round1(first.width)} min={6} max={96} locked={marks.every((m) => m.locked)} onChange={setMarkSize} />
+      <Segmented size="sm" label={m.markShape} value={first.shape} onValueChange={setMarkShape} options={markOptions(t)} />
+      <ColorButton label={m.markColor} value={first.color} onChange={(c) => c && setMarkColor(c)} />
+      <SizeField label={m.markSize} value={round1(first.width)} min={6} max={96} locked={marks.every((x) => x.locked)} onChange={setMarkSize} />
     </>
   )
 }
@@ -226,6 +251,8 @@ export function MarkControls({ marks }: { marks: MarkElement[] }) {
 // --- shapes ------------------------------------------------------------------
 
 export function ShapeControls({ shapes }: { shapes: ShapeElement[] }) {
+  const t = useT()
+  const m = t.elements.toolbar
   const first = shapes[0]
   const allLines = shapes.every((s) => s.shape === 'line')
   const filled = shapes.find((s) => s.shape !== 'line')
@@ -233,16 +260,16 @@ export function ShapeControls({ shapes }: { shapes: ShapeElement[] }) {
   return (
     <>
       <ColorButton
-        label={allLines ? 'Line color' : 'Border'}
+        label={allLines ? m.lineColor : m.border}
         variant="stroke"
         value={stroked?.strokeColor ?? null}
         allowNone={!allLines}
         onChange={setShapeStroke}
       />
-      {filled && <ColorButton label="Fill" value={filled.fillColor} allowNone colors={FILL_COLORS} onChange={setShapeFill} />}
+      {filled && <ColorButton label={m.fill} value={filled.fillColor} allowNone colors={FILL_COLORS} onChange={setShapeFill} />}
       {stroked && (
         <SizeField
-          label={allLines ? 'Line width' : 'Border width'}
+          label={allLines ? m.lineWidth : m.borderWidth}
           value={stroked.strokeWidth}
           min={0.5}
           max={24}
@@ -256,11 +283,13 @@ export function ShapeControls({ shapes }: { shapes: ShapeElement[] }) {
 }
 
 export function InkControls({ inks }: { inks: InkElement[] }) {
+  const t = useT()
+  const m = t.elements.toolbar
   const first = inks[0]
   return (
     <>
-      <ColorButton label="Pen color" value={first.color} onChange={(c) => c && setInkColor(c)} />
-      <SizeField label="Pen width" value={first.strokeWidth} min={0.5} max={24} step={0.5} locked={inks.every((k) => k.locked)} onChange={setInkWidth} />
+      <ColorButton label={m.penColor} value={first.color} onChange={(c) => c && setInkColor(c)} />
+      <SizeField label={m.penWidth} value={first.strokeWidth} min={0.5} max={24} step={0.5} locked={inks.every((k) => k.locked)} onChange={setInkWidth} />
     </>
   )
 }
@@ -273,16 +302,18 @@ export function ImageControls({ images }: { images: ImageElement[] }) {
 
 /** The actions, kept in view when the style controls scroll (narrow screens): Edit text comes first. */
 export function CommonActions({ selected }: { selected: Element[] }) {
+  const t = useT()
+  const a = t.elements.actions
   const editingId = useEditor((s) => s.editingId)
   const menu = useTapMenu()
   const side = usePopoverSide()
   const allLocked = selected.every((e) => e.locked)
-  const lockLabel = allLocked ? 'Unlock' : 'Lock'
+  const lockLabel = allLocked ? a.unlock : a.lock
   const text = selected.length === 1 && selected[0].kind === 'text' && selected[0].id !== editingId ? selected[0] : null
   return (
     <>
-      {text && <IconButton size="icon-sm" label="Edit text" shortcut="Enter" icon={<PencilLine />} onClick={() => editText(text.id)} />}
-      <IconButton size="icon-sm" className="max-sm:hidden" label="Duplicate" shortcut={`${modKeyLabel}+D`} icon={<Copy />} onClick={duplicateSelection} />
+      {text && <IconButton size="icon-sm" label={a.editText} shortcut="Enter" icon={<PencilLine />} onClick={() => editText(text.id)} />}
+      <IconButton size="icon-sm" className="max-sm:hidden" label={a.duplicate} shortcut={`${modKeyLabel}+D`} icon={<Copy />} onClick={duplicateSelection} />
       <IconButton
         size="icon-sm"
         className="max-sm:hidden"
@@ -293,23 +324,23 @@ export function CommonActions({ selected }: { selected: Element[] }) {
         onClick={toggleLockSelection}
       />
       <Menu {...menu.root}>
-        <Tooltip content="More">
+        <Tooltip content={a.more}>
           <MenuTrigger asChild {...menu.trigger}>
-            <TriggerButton label="More actions">
+            <TriggerButton label={a.moreActions}>
               <Ellipsis className="size-4" />
             </TriggerButton>
           </MenuTrigger>
         </Tooltip>
         <MenuContent side={side} align="end" onCloseAutoFocus={preventFocusWhileEditing}>
           <MenuItem icon={<BringToFront />} shortcut={`${modKeyLabel}+]`} onSelect={() => reorderSelection('front')}>
-            Bring to front
+            {a.bringToFront}
           </MenuItem>
           <MenuItem icon={<SendToBack />} shortcut={`${modKeyLabel}+[`} onSelect={() => reorderSelection('back')}>
-            Send to back
+            {a.sendToBack}
           </MenuItem>
           <MenuSeparator className="sm:hidden" />
           <MenuItem className="sm:hidden" icon={<Copy />} onSelect={duplicateSelection}>
-            Duplicate
+            {a.duplicate}
           </MenuItem>
           <MenuItem className="sm:hidden" icon={allLocked ? <LockOpen /> : <Lock />} onSelect={toggleLockSelection}>
             {lockLabel}
@@ -318,7 +349,7 @@ export function CommonActions({ selected }: { selected: Element[] }) {
       </Menu>
       <IconButton
         size="icon-sm"
-        label={allLocked ? 'Locked items can’t be deleted' : 'Delete'}
+        label={allLocked ? a.lockedCantDelete : a.delete}
         shortcut={allLocked ? undefined : 'Del'}
         icon={<Trash />}
         disabled={allLocked}

@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { ImageOff } from 'lucide-react'
+import { useDir, useT } from '../../i18n'
 import { useEditor, type LoadedDocument } from '../../store/editor'
 import type { PDFDocumentProxy } from '../../lib/pdf/pdfjs'
 import type { PageInfo } from '../../model/types'
@@ -84,6 +85,8 @@ function ThumbnailList({ doc, onNavigate, active }: { doc: LoadedDocument; onNav
   const revealed = useRef(false)
   const [registry] = useState(() => new VisibilityRegistry('320px 0px'))
   const pageCount = doc.pages.length
+  const t = useT()
+  const dir = useDir()
 
   useLayoutEffect(() => {
     registry.setRoot(scrollParent(listRef.current))
@@ -118,12 +121,15 @@ function ThumbnailList({ doc, onNavigate, active }: { doc: LoadedDocument; onNav
     [onNavigate],
   )
 
+  // Left and right go to the next page the way the interface reads: right to left, ArrowLeft.
+  const [forward, back] = dir === 'rtl' ? ['ArrowLeft', 'ArrowRight'] : ['ArrowRight', 'ArrowLeft']
+
   const onKeyDown = (e: KeyboardEvent<HTMLOListElement>) => {
     const from = Number((e.target as HTMLElement).closest<HTMLElement>('[data-thumb-index]')?.dataset.thumbIndex)
     if (!Number.isFinite(from)) return
     let to: number | null = null
-    if (e.key === 'ArrowDown' || e.key === 'ArrowRight') to = from + 1
-    else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') to = from - 1
+    if (e.key === 'ArrowDown' || e.key === forward) to = from + 1
+    else if (e.key === 'ArrowUp' || e.key === back) to = from - 1
     else if (e.key === 'PageDown') to = from + 5
     else if (e.key === 'PageUp') to = from - 5
     else if (e.key === 'Home') to = 0
@@ -137,7 +143,7 @@ function ThumbnailList({ doc, onNavigate, active }: { doc: LoadedDocument; onNav
   }
 
   return (
-    <ol ref={listRef} role="list" aria-label="Pages" className="flex flex-col items-stretch gap-1 px-3 py-3" onKeyDown={onKeyDown}>
+    <ol ref={listRef} role="list" aria-label={t.editor.thumbnails.label} className="flex flex-col items-stretch gap-1 px-3 py-3" onKeyDown={onKeyDown}>
       {doc.pages.map((info) => (
         <ThumbnailItem
           key={info.index}
@@ -188,6 +194,7 @@ const ThumbnailItem = memo(function ThumbnailItem({
   const [failed, setFailed] = useState(false)
   const [near, setNear] = useState(false)
   const boxRef = useRef<HTMLDivElement>(null)
+  const t = useT()
 
   useEffect(() => {
     const el = boxRef.current
@@ -225,7 +232,7 @@ const ThumbnailItem = memo(function ThumbnailItem({
   }, [url, failed, near, active, pdf, info, docId, index, width, height])
 
   const buttonRef = useCallback((el: HTMLButtonElement | null) => setButton(index, el), [setButton, index])
-  const label = `Page ${index + 1} of ${pageCount}${count ? `, ${count} ${count === 1 ? 'edit' : 'edits'}` : ''}`
+  const label = t.editor.thumbnails.page(index + 1, pageCount, count)
 
   return (
     <li className="flex justify-center">
@@ -262,10 +269,11 @@ const ThumbnailItem = memo(function ThumbnailItem({
               )
             )}
           </div>
+          {/* In the top corner at the end: the right, or the left in a right-to-left interface. */}
           {count > 0 && (
             <span
               aria-hidden
-              className="absolute -right-2 -top-2 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-accent px-1 text-[10px] font-semibold leading-none tabular-nums text-accent-fg shadow-xs ring-2 ring-surface"
+              className="absolute -end-2 -top-2 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-accent px-1 text-[10px] font-semibold leading-none tabular-nums text-accent-fg shadow-xs ring-2 ring-surface"
             >
               {count > 99 ? '99+' : count}
             </span>

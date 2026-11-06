@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { toast } from 'sonner'
+import { getT } from '../../i18n'
 import { TOOL_BY_ID, toolForShortcut } from '../../model/tools'
 import { getSelectedElements, useEditor } from '../../store/editor'
 import { isEditableTarget } from '../../lib/utils/misc'
@@ -229,7 +230,8 @@ export function useEditingShortcuts(): void {
       if (isClipboardMarker(text)) {
         // Items copied in another tab (or before a reload): they only live in that tab's memory.
         e.preventDefault()
-        toast('Copy the items again to paste them here', { description: 'Copied items can only be pasted in the same tab, before it’s reloaded.' })
+        const m = getT().elements.toasts
+        toast(m.copyAgain, { description: m.copyAgainBody })
         return
       }
       if (text.trim()) {

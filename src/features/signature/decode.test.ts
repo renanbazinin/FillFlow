@@ -39,6 +39,8 @@ interface FakeCanvas {
   drawn?: { source: unknown; width: number; height: number }
 }
 vi.stubGlobal('document', {
+  // Where the interface language is set (<html lang dir>), by a module on the way.
+  documentElement: {},
   createElement: () => {
     const canvas: FakeCanvas = { width: 0, height: 0 }
     const ctx = {

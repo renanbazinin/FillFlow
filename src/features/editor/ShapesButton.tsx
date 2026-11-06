@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { Kbd } from '../../components/ui/controls'
 import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/menu'
 import { dismissPassingToasts } from '../../components/ui/toasts'
+import { useT } from '../../i18n'
 import { cn } from '../../lib/utils/misc'
 import { TOOL_BY_ID } from '../../model/tools'
 import { useEditor } from '../../store/editor'
@@ -15,6 +16,7 @@ export function ShapesButton() {
   const tool = useEditor((s) => s.tool)
   const locked = useEditor((s) => s.toolLocked)
   const last = useLastShape()
+  const t = useT()
   const [open, setOpen] = useState(false)
   const closeHandlers = usePointerAwareClose()
   /** The last shape was picked from the keyboard. */
@@ -40,7 +42,7 @@ export function ShapesButton() {
       <Popover open={open} onOpenChange={toggle}>
         <PopoverTrigger asChild>
           <ToolButton
-            tool={{ label: 'Shapes', hint: 'Rectangle, ellipse or line', icon: TOOL_BY_ID[current].icon }}
+            tool={{ label: t.editor.dock.shapes, hint: t.editor.dock.shapesHint, icon: TOOL_BY_ID[current].icon }}
             active={active}
             badge={active && locked}
             aria-haspopup="dialog"
@@ -54,7 +56,7 @@ export function ShapesButton() {
         <PopoverContent
           side="top"
           sideOffset={12}
-          aria-label="Shapes"
+          aria-label={t.editor.dock.shapes}
           className="w-56 p-1"
           {...closeHandlers}
           onCloseAutoFocus={(e) => {
@@ -67,7 +69,7 @@ export function ShapesButton() {
             viewer.getScrollContainer()?.focus({ preventScroll: true })
           }}
         >
-          <div className="px-2.5 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wide text-fg-subtle">Shapes</div>
+          <div className="px-2.5 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wide text-fg-subtle">{t.editor.dock.shapes}</div>
           {SHAPE_TOOLS.map((id) => {
             const def = TOOL_BY_ID[id]
             const Icon = def.icon
@@ -80,7 +82,7 @@ export function ShapesButton() {
                 // Pressing Enter or Space on a button fires a click with no click count.
                 onClick={(e) => pick(id, e.detail === 0)}
                 className={cn(
-                  'flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] text-fg transition-colors hover:bg-surface-3 pointer-coarse:h-11',
+                  'flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-start text-[13px] text-fg transition-colors hover:bg-surface-3 pointer-coarse:h-11',
                   selected && 'bg-accent-soft text-accent-ink hover:bg-accent-soft',
                 )}
               >

@@ -3,12 +3,12 @@ import { PanelLeftClose, PanelRightClose } from 'lucide-react'
 import { Tabs } from 'radix-ui'
 import { IconButton } from '../../components/ui/button'
 import { Sheet } from '../../components/ui/dialog'
+import { useT } from '../../i18n'
 import { getFormDocumentInfo } from '../../lib/pdf/formFields'
 import { cn } from '../../lib/utils/misc'
 import { useEditor } from '../../store/editor'
 import { ItemsPanel as ItemsPanelView } from '../elements/ItemsPanel'
 import { FormPanel as FormPanelView } from '../forms/FormPanel'
-import { pluralize } from '../home/recentMeta'
 import { Thumbnails as ThumbnailsView } from '../viewer/Thumbnails'
 import { fillableFieldCount } from './docInfo'
 import { LEFT_PANEL_INLINE, RIGHT_PANEL_INLINE, useMediaQuery } from './useMediaQuery'
@@ -23,9 +23,14 @@ const closePagesSheet = () => window.setTimeout(() => useEditor.getState().setLe
 export const LEFT_PANEL_WIDTH = 216
 export const RIGHT_PANEL_WIDTH = 340
 
+/** The panel-side icons show the side the panel sits at: mirrored in a right-to-left interface. */
+const MIRRORED = 'rtl:-scale-x-100'
+
 /**
  * A docked side panel that collapses by animating its width; the content keeps its width and
- * is anchored to the outer edge, so it slides out instead of reflowing.
+ * is anchored to the outer edge, so it slides out instead of reflowing. The pages panel ('left')
+ * sits at the start and the form and items panel ('right') at the end: right to left, they swap
+ * sides, borders and anchoring with them.
  */
 function DockedPanel({
   side,
@@ -56,11 +61,11 @@ function DockedPanel({
       style={{ width: open ? width : 0 }}
       className={cn(
         'relative z-10 shrink-0 overflow-hidden bg-surface transition-[width,border-color] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]',
-        side === 'left' ? 'border-r' : 'border-l',
+        side === 'left' ? 'border-e' : 'border-s',
         open ? 'border-line' : 'border-transparent',
       )}
     >
-      <div className={cn('absolute inset-y-0 flex flex-col', side === 'left' ? 'left-0' : 'right-0')} style={{ width }}>
+      <div className={cn('absolute inset-y-0 flex flex-col', side === 'left' ? 'start-0' : 'end-0')} style={{ width }}>
         {children}
       </div>
     </aside>
@@ -85,8 +90,8 @@ function PanelHeader({
     <IconButton label={closeLabel} icon={closeIcon} size="icon-sm" onClick={onClose} tooltip={!sheet} className="order-last pointer-coarse:size-10" />
   )
   return (
-    <div className="flex h-12 shrink-0 items-center gap-2 border-b border-line pl-3 pr-2">
-      {/* In a sheet the close button comes first in Tab order (it still shows on the right): Shift+Tab
+    <div className="flex h-12 shrink-0 items-center gap-2 border-b border-line ps-3 pe-2">
+      {/* In a sheet the close button comes first in Tab order (it still shows at the end): Shift+Tab
           from a tab moves past the whole tab list, and with nothing before the list, focus would leave
           the sheet and be pulled back. The focus trap only wraps around from its first Tab stop. */}
       {sheet && closeButton}
@@ -110,13 +115,14 @@ export function PagesPanel() {
   const open = useEditor((s) => s.leftPanelOpen)
   const pageCount = useEditor((s) => s.doc?.pages.length ?? 0)
   const docked = useMediaQuery(LEFT_PANEL_INLINE)
+  const t = useT()
   const close = () => useEditor.getState().setLeftPanelOpen(false)
   useCloseWhenUndocked(docked, close)
 
   const body = (
     <>
-      <PanelHeader onClose={close} closeLabel="Hide pages" closeIcon={<PanelLeftClose />}>
-        <h2 className="text-[13px] font-semibold text-fg">Pages</h2>
+      <PanelHeader onClose={close} closeLabel={t.editor.panels.hidePages} closeIcon={<PanelLeftClose className={MIRRORED} />}>
+        <h2 className="text-[13px] font-semibold text-fg">{t.editor.panels.pages}</h2>
         <span className="text-[12px] tabular-nums text-fg-subtle">{pageCount}</span>
       </PanelHeader>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain scrollbar-thin">
@@ -128,17 +134,23 @@ export function PagesPanel() {
 
   if (docked) {
     return (
-      <DockedPanel side="left" open={open} width={LEFT_PANEL_WIDTH} label="Pages">
+      <DockedPanel side="left" open={open} width={LEFT_PANEL_WIDTH} label={t.editor.panels.pages}>
         {body}
       </DockedPanel>
     )
   }
   return (
-    <Sheet side="left" open={open} onOpenChange={(o) => useEditor.getState().setLeftPanelOpen(o)} title="Pages" className="w-[min(80vw,280px)]">
+    <Sheet
+      side="start"
+      open={open}
+      onOpenChange={(o) => useEditor.getState().setLeftPanelOpen(o)}
+      title={t.editor.panels.pages}
+      className="w-[min(80vw,280px)]"
+    >
       <div className="flex h-full min-h-0 flex-col pt-[env(safe-area-inset-top)]">
-        <PanelHeader onClose={close} closeLabel="Close pages" closeIcon={<PanelLeftClose />} sheet>
-          <h2 className="text-[13px] font-semibold text-fg">Pages</h2>
-          <span className="text-[12px] tabular-nums text-fg-subtle">{pluralize(pageCount, 'page')}</span>
+        <PanelHeader onClose={close} closeLabel={t.editor.panels.closePages} closeIcon={<PanelLeftClose className={MIRRORED} />} sheet>
+          <h2 className="text-[13px] font-semibold text-fg">{t.editor.panels.pages}</h2>
+          <span className="text-[12px] tabular-nums text-fg-subtle">{t.common.pages(pageCount)}</span>
         </PanelHeader>
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-safe scrollbar-thin">
           {/* On small screens, jumping to a page should also reveal it. */}
@@ -163,6 +175,8 @@ export function InspectorPanel() {
   const hasForm = (doc?.formFields.length ?? 0) > 0 || getFormDocumentInfo(doc?.pdf)?.pureXfa === true
   const current: InspectorTab = hasForm ? tab : 'items'
   const docked = useMediaQuery(RIGHT_PANEL_INLINE)
+  const t = useT()
+  const p = t.editor.panels
   const close = () => useEditor.getState().setRightPanelOpen(false)
   useCloseWhenUndocked(docked, close)
 
@@ -172,25 +186,30 @@ export function InspectorPanel() {
       onValueChange={(v) => useEditor.getState().setRightPanelOpen(true, v as InspectorTab)}
       className="flex h-full min-h-0 flex-col"
     >
-      <PanelHeader onClose={close} closeLabel={docked ? 'Hide panel' : 'Close panel'} closeIcon={<PanelRightClose />} sheet={!docked}>
+      <PanelHeader
+        onClose={close}
+        closeLabel={docked ? p.hidePanel : p.closePanel}
+        closeIcon={<PanelRightClose className={MIRRORED} />}
+        sheet={!docked}
+      >
         {hasForm ? (
           <Tabs.List
-            aria-label="Panel"
+            aria-label={p.tabs}
             // A pressed tab focuses itself. Without this, Radix takes the press for a click on the
             // list, and the next Tab into the list stops on the list itself (unseen), not the tab.
             onMouseDown={(e) => e.preventDefault()}
             className="inline-flex items-center gap-0.5 rounded-[10px] bg-surface-3 p-[3px]"
           >
             <TabTrigger value="form" count={fieldCount}>
-              Form
+              {p.form}
             </TabTrigger>
             <TabTrigger value="items" count={itemCount}>
-              Items
+              {p.items}
             </TabTrigger>
           </Tabs.List>
         ) : (
           <>
-            <h2 className="text-[13px] font-semibold text-fg">Items</h2>
+            <h2 className="text-[13px] font-semibold text-fg">{p.items}</h2>
             <span className="text-[12px] tabular-nums text-fg-subtle">{itemCount}</span>
           </>
         )}
@@ -215,17 +234,17 @@ export function InspectorPanel() {
 
   if (docked) {
     return (
-      <DockedPanel side="right" open={open} width={RIGHT_PANEL_WIDTH} label={hasForm ? 'Form and items' : 'Items'}>
+      <DockedPanel side="right" open={open} width={RIGHT_PANEL_WIDTH} label={hasForm ? p.formAndItems : p.items}>
         {body}
       </DockedPanel>
     )
   }
   return (
     <Sheet
-      side="right"
+      side="end"
       open={open}
       onOpenChange={(o) => useEditor.getState().setRightPanelOpen(o)}
-      title={hasForm ? 'Form and items' : 'Items'}
+      title={hasForm ? p.formAndItems : p.items}
       className="w-[min(92vw,380px)]"
     >
       <div className="flex h-full min-h-0 flex-col pb-safe pt-[env(safe-area-inset-top)]">{body}</div>

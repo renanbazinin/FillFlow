@@ -1,6 +1,7 @@
 import type { ComponentProps, FocusEvent, ReactNode } from 'react'
-import { Slot, Tooltip as RTooltip } from 'radix-ui'
+import { Direction, Slot, Tooltip as RTooltip } from 'radix-ui'
 import { Kbd } from './controls'
+import { physicalSide, type Side } from './side'
 
 /**
  * Radix opens a tooltip whenever its trigger gains focus without a press. Focus handed back by
@@ -31,7 +32,7 @@ export interface TooltipProps {
   content: ReactNode
   /** Keyboard shortcut shown next to the label, e.g. "V" or "Ctrl+Z". */
   shortcut?: string
-  side?: 'top' | 'bottom' | 'left' | 'right'
+  side?: Side
   align?: 'start' | 'center' | 'end'
   children: ReactNode
   disabled?: boolean
@@ -39,6 +40,7 @@ export interface TooltipProps {
 
 /** Wraps a single focusable child. */
 export function Tooltip({ content, shortcut, side = 'bottom', align = 'center', children, disabled }: TooltipProps) {
+  const dir = Direction.useDirection()
   if (disabled || !content) return <>{children}</>
   return (
     <RTooltip.Root>
@@ -47,7 +49,7 @@ export function Tooltip({ content, shortcut, side = 'bottom', align = 'center', 
       </RTooltip.Trigger>
       <RTooltip.Portal>
         <RTooltip.Content
-          side={side}
+          side={physicalSide(side, dir)}
           align={align}
           sideOffset={8}
           collisionPadding={8}

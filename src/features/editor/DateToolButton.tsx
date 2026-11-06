@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/menu'
 import { dismissPassingToasts } from '../../components/ui/toasts'
+import { useT } from '../../i18n'
 import { cn } from '../../lib/utils/misc'
 import { TOOL_BY_ID } from '../../model/tools'
 import type { DateFormat } from '../../model/types'
@@ -19,6 +20,7 @@ export function DateToolButton() {
   const active = useEditor((s) => s.tool === 'date')
   const locked = useEditor((s) => s.tool === 'date' && s.toolLocked)
   const format = useEditor((s) => s.styles.dateFormat)
+  const t = useT()
   const [open, setOpen] = useState(false)
   const closeHandlers = usePointerAwareClose()
   /** The last format was picked from the keyboard. */
@@ -61,7 +63,7 @@ export function DateToolButton() {
         <PopoverContent
           side="top"
           sideOffset={12}
-          aria-label="Date format"
+          aria-label={t.editor.dock.dateFormat}
           className="w-60 p-1"
           {...closeHandlers}
           onCloseAutoFocus={(e) => {
@@ -81,7 +83,9 @@ export function DateToolButton() {
             current.focus()
           }}
         >
-          <div className="px-2.5 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wide text-fg-subtle">Date format</div>
+          <div className="px-2.5 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wide text-fg-subtle">{t.editor.dock.dateFormat}</div>
+          {/* The dates (and their patterns) are what gets written on the page: they read left to
+              right in a right-to-left interface too ("5 Nov 2026", not "Nov 2026 5"). */}
           {dateFormatChoices(new Date()).map(({ format: f, example, pattern }) => {
             const selected = f === format
             return (
@@ -94,12 +98,18 @@ export function DateToolButton() {
                 // Pressing Enter or Space on a button fires a click with no click count.
                 onClick={(e) => pick(f, e.detail === 0)}
                 className={cn(
-                  'flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] text-fg transition-colors hover:bg-surface-3 pointer-coarse:h-11',
+                  'flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-start text-[13px] text-fg transition-colors hover:bg-surface-3 pointer-coarse:h-11',
                   selected && 'bg-accent-soft text-accent-ink hover:bg-accent-soft',
                 )}
               >
-                <span className="flex-1 tabular-nums">{example}</span>
-                {pattern && <span className={cn('text-[11px] tabular-nums', selected ? 'text-accent-ink' : 'text-fg-subtle')}>{pattern}</span>}
+                <span className="flex-1 tabular-nums">
+                  <span dir="ltr">{example}</span>
+                </span>
+                {pattern && (
+                  <span dir="ltr" className={cn('text-[11px] tabular-nums', selected ? 'text-accent-ink' : 'text-fg-subtle')}>
+                    {pattern}
+                  </span>
+                )}
               </button>
             )
           })}

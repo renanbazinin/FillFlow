@@ -63,7 +63,8 @@ describe('the face that typed text and form fields start in', () => {
         }
       },
     )
-    vi.stubGlobal('document', { fonts: { add: () => {} } })
+    // documentElement: the interface language (src/i18n, which names the fonts) sets <html lang dir>.
+    vi.stubGlobal('document', { fonts: { add: () => {} }, documentElement: {} })
     vi.resetModules()
     await import('./fonts')
     expect(idle).toHaveLength(1)
