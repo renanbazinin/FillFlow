@@ -3,31 +3,55 @@
 
 <head>
   <meta charset="UTF-8" />
-  <link rel="icon" type="image/svg+xml" href="https://i.imgur.com/xEcrHAK.png" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>FillFlow - Free PDF Filler</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>FillFlow — Fill &amp; sign PDFs in your browser</title>
+  <meta name="description"
+    content="Fill out PDF forms, add text, checkmarks and signatures right in your browser. Free, private — your files never leave your device." />
+  <link rel="icon" type="image/svg+xml" href="/FillFlow/favicon.svg" />
+  <link rel="apple-touch-icon" href="/FillFlow/apple-touch-icon.png" />
+  <meta name="application-name" content="FillFlow" />
+  <meta name="apple-mobile-web-app-title" content="FillFlow" />
+  <meta name="color-scheme" content="light dark" />
+  <!-- Canvas colors from src/styles/index.css; App keeps these in sync with the chosen theme. -->
+  <meta name="theme-color" content="#eceef2" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#0c0f15" media="(prefers-color-scheme: dark)" />
 
   <!-- Open Graph / Facebook -->
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://renanbazinin.github.io/FillFlow/" />
-  <meta property="og:title" content="FillFlow - Free PDF Filler" />
+  <meta property="og:title" content="FillFlow — Fill & sign PDFs in your browser" />
   <meta property="og:description"
-    content="Easily fill out PDF forms, add text, checks, and signatures directly in your browser. No signup required." />
-  <meta property="og:image" content="https://i.imgur.com/xEcrHAK.png" />
+    content="Fill out PDF forms, add text, checkmarks and signatures right in your browser. Free, private, no signup." />
+  <meta property="og:image" content="https://renanbazinin.github.io/FillFlow/og-image.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="FillFlow — Fill &amp; sign any PDF, right in your browser." />
+  <meta property="og:site_name" content="FillFlow" />
 
   <!-- Twitter -->
   <meta property="twitter:card" content="summary_large_image" />
   <meta property="twitter:url" content="https://renanbazinin.github.io/FillFlow/" />
-  <meta property="twitter:title" content="FillFlow - Free PDF Filler" />
+  <meta property="twitter:title" content="FillFlow — Fill & sign PDFs in your browser" />
   <meta property="twitter:description"
-    content="Easily fill out PDF forms, add text, checks, and signatures directly in your browser. No signup required." />
-  <meta property="twitter:image" content="https://i.imgur.com/xEcrHAK.png" />
-  <script type="module" crossorigin src="/FillFlow/assets/index-DaMw8AOM.js"></script>
-  <link rel="stylesheet" crossorigin href="/FillFlow/assets/index-BJPXBEzr.css">
+    content="Fill out PDF forms, add text, checkmarks and signatures right in your browser. Free, private, no signup." />
+  <meta property="twitter:image" content="https://renanbazinin.github.io/FillFlow/og-image.png" />
+
+  <!-- Apply the saved theme before first paint to avoid a flash. Keep in sync with src/lib/theme.ts -->
+  <script>
+    (function () {
+      try {
+        var pref = localStorage.getItem('fillflow:theme') || 'system';
+        var dark = pref === 'dark' || (pref === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.classList.toggle('dark', dark);
+      } catch (e) { /* storage unavailable */ }
+    })();
+  </script>
+  <script type="module" crossorigin src="/FillFlow/assets/index-C6z-kGRV.js"></script>
+  <link rel="stylesheet" crossorigin href="/FillFlow/assets/index-X9WEAQhK.css">
 </head>
 
 <body>
-  <div id="root"></div>
+  <div id="root"></div>
 </body>
 
 </html>
