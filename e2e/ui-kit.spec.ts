@@ -508,6 +508,89 @@ test.describe('with motion', () => {
   })
 })
 
+/**
+ * Clicks `opener`, which asks for a confirmation, and presses the confirmation's backdrop in the
+ * same task, as it appears: before the modal under it has caught up with no longer being on top.
+ * A real press lands in that gap on a slow device (or a busy test runner).
+ */
+async function pressBackdropAsConfirmationOpens(opener: Locator): Promise<void> {
+  await opener.evaluate(async (button: HTMLElement) => {
+    button.click()
+    // React shows the confirmation in a microtask; the modal under it catches up in a later task.
+    const shown = () => document.querySelector('[role="alertdialog"]')
+    for (let i = 0; i < 100 && !shown(); i++) await Promise.resolve()
+    if (!shown()) throw new Error('No confirmation opened')
+    const backdrop = document.elementFromPoint(8, 8)
+    if (!backdrop) throw new Error('Nothing to press at the top left corner')
+    const at = { bubbles: true, cancelable: true, composed: true, button: 0, clientX: 8, clientY: 8 }
+    const pointer = { ...at, pointerId: 1, pointerType: 'mouse', isPrimary: true }
+    backdrop.dispatchEvent(new PointerEvent('pointerdown', pointer))
+    backdrop.dispatchEvent(new MouseEvent('mousedown', at))
+    backdrop.dispatchEvent(new PointerEvent('pointerup', pointer))
+    backdrop.dispatchEvent(new MouseEvent('mouseup', at))
+    backdrop.dispatchEvent(new MouseEvent('click', at))
+  })
+}
+
+test.describe('a press on a confirmation that has only just opened', () => {
+  test('leaves the dialog under it open', async ({ page }) => {
+    const errors = trackPageErrors(page)
+    await openSample(page)
+    // A saved signature, to have one to delete from the signature dialog.
+    const signature = page.getByRole('button', { name: 'Signature', exact: true }).filter({ visible: true }).first()
+    const dialog = page.getByRole('dialog', { name: 'Add your signature' })
+    await signature.click()
+    await dialog.getByRole('tab', { name: 'Type' }).click()
+    await dialog.getByLabel('Your full name').fill('Ada Lovelace')
+    await dialog.getByRole('button', { name: 'Use signature' }).click()
+    await expect(dialog).toBeHidden()
+    await page.keyboard.press('Escape') // don't place it
+    await signature.click()
+    await page.getByRole('button', { name: 'New signature' }).click()
+    await expect(dialog).toBeVisible()
+
+    await pressBackdropAsConfirmationOpens(dialog.getByRole('button', { name: /^Delete signature saved/ }))
+    const confirmation = page.getByRole('alertdialog')
+    await expect(confirmation).toBeVisible()
+    await confirmation.getByRole('button', { name: 'Cancel' }).click()
+    await expect(confirmation).toBeHidden()
+    await expect(dialog).toBeVisible()
+    // A press on the dialog's own backdrop still closes it.
+    await page.mouse.click(8, 8)
+    await expect(dialog).toBeHidden()
+    expect(errors).toEqual([])
+  })
+
+  test.describe('on a screen where the side panel is a sheet', () => {
+    test.use({ viewport: { width: 800, height: 900 } })
+
+    test('leaves the sheet under it open', async ({ page }) => {
+      const errors = trackPageErrors(page)
+      await openSample(page)
+      await page.getByRole('button', { name: 'Form & items' }).click()
+      const sheet = page.getByRole('dialog', { name: 'Form and items' })
+      const fullName = sheet.getByRole('textbox', { name: /^Full name/ })
+      await fullName.fill('Ada Lovelace')
+      const reset = sheet.getByRole('button', { name: 'Reset form' })
+      await expect(reset).toBeEnabled()
+      // Out of the field first: leaving it updates the panel, which would bring the sheet up to date.
+      await reset.focus()
+
+      await pressBackdropAsConfirmationOpens(reset)
+      const confirmation = page.getByRole('alertdialog')
+      await expect(confirmation).toBeVisible()
+      await confirmation.getByRole('button', { name: 'Cancel' }).click()
+      await expect(confirmation).toBeHidden()
+      await expect(sheet).toBeVisible()
+      await expect(fullName).toHaveValue('Ada Lovelace')
+      // A press on the sheet's own backdrop still closes it.
+      await page.mouse.click(8, 8)
+      await expect(sheet).toBeHidden()
+      expect(errors).toEqual([])
+    })
+  })
+})
+
 test('a toast on its way out lets presses through to what is under it', async ({ page }) => {
   const errors = trackPageErrors(page)
   await openSample(page)

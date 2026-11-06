@@ -49,7 +49,13 @@ export function onModalClose(e: Event): void {
   if (opener?.isConnected && (!current || current === document.body)) opener.focus({ preventScroll: true })
 }
 
-/** A press on a toast (they float above modals) is meant for the toast, not to dismiss the modal. */
-export function isToastTarget(e: Event): boolean {
-  return e.target instanceof Element && e.target.closest('[data-sonner-toast]') !== null
+/**
+ * Whether a press outside a modal is meant to close it: only a press on its own backdrop is. A
+ * press on a toast (they float above modals) is meant for the toast, and one on a confirmation
+ * opened over the modal for the confirmation. Radix goes by which layer was on top when the modal
+ * last rendered, so for a moment after a confirmation opens (longer on a slow device), it would
+ * still close the modal under it on a press anywhere on the confirmation, its buttons included.
+ */
+export function isBackdropPress(e: Event, backdrop: Element | null): boolean {
+  return backdrop !== null && e.target instanceof Node && backdrop.contains(e.target)
 }

@@ -2,7 +2,7 @@ import { useRef, type FocusEvent, type ReactNode } from 'react'
 import { Dialog as RDialog } from 'radix-ui'
 import { X } from 'lucide-react'
 import { cn } from '../../lib/utils/misc'
-import { isToastTarget, onModalClose, onModalOpen } from './modal'
+import { isBackdropPress, onModalClose, onModalOpen } from './modal'
 
 export interface DialogProps {
   open: boolean
@@ -82,10 +82,11 @@ export function Dialog({
   onCloseAutoFocus,
 }: DialogProps) {
   const focusMoves = useKeepFocusMoves()
+  const backdropRef = useRef<HTMLDivElement>(null)
   return (
     <RDialog.Root open={open} onOpenChange={onOpenChange}>
       <RDialog.Portal>
-        <RDialog.Overlay className={cn('fixed inset-0 z-[80] bg-overlay backdrop-blur-[2px]', OVERLAY_FADE)} />
+        <RDialog.Overlay ref={backdropRef} className={cn('fixed inset-0 z-[80] bg-overlay backdrop-blur-[2px]', OVERLAY_FADE)} />
         <RDialog.Content
           {...focusMoves}
           onOpenAutoFocus={(e) => {
@@ -96,7 +97,7 @@ export function Dialog({
             onCloseAutoFocus?.(e)
             onModalClose(e)
           }}
-          onPointerDownOutside={(e) => (!dismissible || isToastTarget(e)) && e.preventDefault()}
+          onPointerDownOutside={(e) => (!dismissible || !isBackdropPress(e, backdropRef.current)) && e.preventDefault()}
           onEscapeKeyDown={(e) => !dismissible && e.preventDefault()}
           className={cn(
             'fixed z-[81] flex max-h-[min(92dvh,900px)] w-full flex-col overflow-hidden border border-line bg-surface text-fg shadow-overlay outline-none',
@@ -149,11 +150,12 @@ export interface SheetProps {
 /** Slide-over panel (used for side panels on small screens). */
 export function Sheet({ open, onOpenChange, side = 'right', title, children, className }: SheetProps) {
   const contentRef = useRef<HTMLDivElement>(null)
+  const backdropRef = useRef<HTMLDivElement>(null)
   const focusMoves = useKeepFocusMoves()
   return (
     <RDialog.Root open={open} onOpenChange={onOpenChange}>
       <RDialog.Portal>
-        <RDialog.Overlay className={cn('fixed inset-0 z-[70] bg-overlay', OVERLAY_FADE)} />
+        <RDialog.Overlay ref={backdropRef} className={cn('fixed inset-0 z-[70] bg-overlay', OVERLAY_FADE)} />
         <RDialog.Content
           ref={contentRef}
           {...focusMoves}
@@ -165,7 +167,7 @@ export function Sheet({ open, onOpenChange, side = 'right', title, children, cla
             contentRef.current?.focus()
           }}
           onCloseAutoFocus={onModalClose}
-          onPointerDownOutside={(e) => isToastTarget(e) && e.preventDefault()}
+          onPointerDownOutside={(e) => !isBackdropPress(e, backdropRef.current) && e.preventDefault()}
           className={cn(
             'fixed z-[71] flex flex-col bg-surface text-fg shadow-overlay outline-none',
             // The side at the screen's edge is padded with its safe-area inset (a phone held sideways:
