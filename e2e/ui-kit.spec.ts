@@ -532,6 +532,16 @@ async function pressBackdropAsConfirmationOpens(opener: Locator): Promise<void> 
   })
 }
 
+/**
+ * Presses a modal's backdrop (the top left corner) once the modal takes such presses. Radix starts
+ * listening for them a task after the modal opens (or after a modal over it closes), and on a busy
+ * runner a press can come first.
+ */
+async function pressBackdrop(page: Page): Promise<void> {
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 0)))))
+  await page.mouse.click(8, 8)
+}
+
 test.describe('a press on a confirmation that has only just opened', () => {
   test('leaves the dialog under it open', async ({ page }) => {
     const errors = trackPageErrors(page)
@@ -545,19 +555,23 @@ test.describe('a press on a confirmation that has only just opened', () => {
     await dialog.getByRole('button', { name: 'Use signature' }).click()
     await expect(dialog).toBeHidden()
     await page.keyboard.press('Escape') // don't place it
-    await signature.click()
-    await page.getByRole('button', { name: 'New signature' }).click()
-    await expect(dialog).toBeVisible()
+    const openDialog = async () => {
+      await signature.click()
+      await page.getByRole('button', { name: 'New signature' }).click()
+      await expect(dialog).toBeVisible()
+    }
+    // A press on the dialog's own backdrop still closes it.
+    await openDialog()
+    await pressBackdrop(page)
+    await expect(dialog).toBeHidden()
 
+    await openDialog()
     await pressBackdropAsConfirmationOpens(dialog.getByRole('button', { name: /^Delete signature saved/ }))
     const confirmation = page.getByRole('alertdialog')
     await expect(confirmation).toBeVisible()
     await confirmation.getByRole('button', { name: 'Cancel' }).click()
     await expect(confirmation).toBeHidden()
     await expect(dialog).toBeVisible()
-    // A press on the dialog's own backdrop still closes it.
-    await page.mouse.click(8, 8)
-    await expect(dialog).toBeHidden()
     expect(errors).toEqual([])
   })
 
@@ -567,8 +581,17 @@ test.describe('a press on a confirmation that has only just opened', () => {
     test('leaves the sheet under it open', async ({ page }) => {
       const errors = trackPageErrors(page)
       await openSample(page)
-      await page.getByRole('button', { name: 'Form & items' }).click()
       const sheet = page.getByRole('dialog', { name: 'Form and items' })
+      const openSheet = async () => {
+        await page.getByRole('button', { name: 'Form & items' }).click()
+        await expect(sheet).toBeVisible()
+      }
+      // A press on the sheet's own backdrop still closes it.
+      await openSheet()
+      await pressBackdrop(page)
+      await expect(sheet).toBeHidden()
+
+      await openSheet()
       const fullName = sheet.getByRole('textbox', { name: /^Full name/ })
       await fullName.fill('Ada Lovelace')
       const reset = sheet.getByRole('button', { name: 'Reset form' })
@@ -583,9 +606,6 @@ test.describe('a press on a confirmation that has only just opened', () => {
       await expect(confirmation).toBeHidden()
       await expect(sheet).toBeVisible()
       await expect(fullName).toHaveValue('Ada Lovelace')
-      // A press on the sheet's own backdrop still closes it.
-      await page.mouse.click(8, 8)
-      await expect(sheet).toBeHidden()
       expect(errors).toEqual([])
     })
   })
