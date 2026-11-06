@@ -1,4 +1,5 @@
 import { useCallback, useLayoutEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useT } from '../../i18n'
 import { useEditor } from '../../store/editor'
 import { cn } from '../../lib/utils/misc'
 import { textAtRight } from '../forms/navigation'
@@ -28,10 +29,15 @@ import { VisibilityRegistry } from './visibility'
  * Attributes on the scroll container for other layers: `data-pan-ready` (hand tool or Space held),
  * `data-panning` (dragging), `data-pinching` (two-finger touch gesture), `data-zooming`
  * (continuous zoom in progress).
+ *
+ * The pages stay left to right in a right-to-left interface (dir="ltr" on the scroll container):
+ * their layout, scrolling and everything on them are as in English. Interface text shown in there
+ * takes the interface's direction on its own element.
  */
 export function Viewer() {
   const doc = useEditor((s) => s.doc)
   const scale = useEditor((s) => s.scale)
+  const t = useT()
   const [controller] = useState(() => new ViewerController())
   const [visibility] = useState(() => new VisibilityRegistry(`${NEAR_VIEWPORTS * 100}% 100%`))
   const context = useMemo<ViewerContextValue>(() => ({ controller, visibility }), [controller, visibility])
@@ -82,7 +88,8 @@ export function Viewer() {
       <div
         ref={containerRef}
         role="region"
-        aria-label="Document pages"
+        aria-label={t.editor.viewer.label}
+        dir="ltr"
         tabIndex={0}
         className={cn(
           'relative min-h-0 min-w-0 flex-1 overflow-auto overscroll-contain bg-canvas-dots scrollbar-thin',

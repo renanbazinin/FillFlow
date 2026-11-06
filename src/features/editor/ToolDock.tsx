@@ -1,4 +1,5 @@
 import { memo, useEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
+import { useDir, useT, type Direction } from '../../i18n'
 import { cn } from '../../lib/utils/misc'
 import { scrollBehavior } from '../../lib/utils/motion'
 import { TOOL_BY_ID } from '../../model/tools'
@@ -14,12 +15,15 @@ import { COMPACT_LAYOUT, useMediaQuery } from './useMediaQuery'
 
 /**
  * The floating tool dock (bottom-center over the viewer). On phones it becomes a full-width,
- * horizontally scrollable bar pinned to the bottom edge.
+ * horizontally scrollable bar pinned to the bottom edge. Right to left, the tools run from the
+ * right, and so do the arrow keys and the bar's scrolling.
  */
 export const ToolDock = memo(function ToolDock() {
   const compact = useMediaQuery(COMPACT_LAYOUT)
+  const t = useT()
+  const dir = useDir()
   const barRef = useRef<HTMLDivElement>(null)
-  const fades = useScrollFades(barRef, compact)
+  const fades = useScrollFades(barRef, compact, dir)
 
   // Keep the active tool in view on phones (e.g. after a keyboard shortcut or placing an item).
   useEffect(() => {
@@ -49,11 +53,13 @@ export const ToolDock = memo(function ToolDock() {
     >
       {/* A tool's choices (date formats, shapes, signatures) open over the hint: it makes way meanwhile. */}
       <ToolHint className="absolute inset-x-0 bottom-full mb-2.5 px-3 transition-opacity group-has-[[aria-expanded=true]]/dock:opacity-0" />
+      {/* data-tool-dock: how the viewer finds it, whatever its name in the interface language. */}
       <div
         ref={barRef}
         role="toolbar"
-        aria-label="Tools"
-        onKeyDown={onToolbarKeyDown}
+        aria-label={t.editor.dock.label}
+        data-tool-dock
+        onKeyDown={(e) => onToolbarKeyDown(e, dir)}
         style={compact ? { maskImage: fades, WebkitMaskImage: fades } : undefined}
         className={cn(
           'pointer-events-auto flex items-center gap-1 border-line bg-surface/90 shadow-float backdrop-blur-xl backdrop-saturate-150',
@@ -94,7 +100,7 @@ export const ToolDock = memo(function ToolDock() {
 })
 
 function Group({ children }: { children: ReactNode }) {
-  return <div className="flex shrink-0 snap-start scroll-ml-2 items-center gap-1 sm:max-md:gap-0.5">{children}</div>
+  return <div className="flex shrink-0 snap-start scroll-ms-2 items-center gap-1 sm:max-md:gap-0.5">{children}</div>
 }
 
 function Divider() {
@@ -122,8 +128,11 @@ const PlainTool = memo(function PlainTool({ id }: { id: ToolId }) {
   )
 })
 
-/** Arrow keys / Home / End move focus between the dock's buttons. */
-function onToolbarKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+/**
+ * Arrow keys / Home / End move focus between the dock's buttons, the way they are on screen: right
+ * to left, ArrowLeft goes to the next one.
+ */
+function onToolbarKeyDown(e: KeyboardEvent<HTMLDivElement>, dir: Direction) {
   if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return
   const buttons = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'))
   const i = buttons.indexOf(document.activeElement as HTMLButtonElement)
@@ -132,32 +141,39 @@ function onToolbarKeyDown(e: KeyboardEvent<HTMLDivElement>) {
   // Don't let the editor nudge the selection while moving through the toolbar.
   e.stopPropagation()
   const n = buttons.length
-  const next = e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : (i + (e.key === 'ArrowRight' ? 1 : -1) + n) % n
+  const forward = dir === 'rtl' ? 'ArrowLeft' : 'ArrowRight'
+  const next = e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : (i + (e.key === forward ? 1 : -1) + n) % n
   buttons[next].focus()
 }
 
-/** Edge fades that only appear where the bar can scroll further. */
-function useScrollFades(ref: RefObject<HTMLDivElement | null>, enabled: boolean): string | undefined {
+/**
+ * Edge fades that only appear where the bar can scroll further. Right to left, the bar starts at
+ * its right edge: scrollLeft is 0 there and negative toward the end, and the fades swap sides.
+ */
+function useScrollFades(ref: RefObject<HTMLDivElement | null>, enabled: boolean, dir: Direction): string | undefined {
   const [edges, setEdges] = useState({ start: false, end: false })
   useEffect(() => {
     const el = ref.current
     if (!enabled || !el) return
     const update = () => {
-      const start = el.scrollLeft > 2
-      const end = el.scrollLeft + el.clientWidth < el.scrollWidth - 2
+      const scrolled = Math.abs(el.scrollLeft)
+      const start = scrolled > 2
+      const end = scrolled + el.clientWidth < el.scrollWidth - 2
       setEdges((prev) => (prev.start === start && prev.end === end ? prev : { start, end }))
     }
     el.addEventListener('scroll', update, { passive: true })
-    // Also fires once right after observe(), which sets the initial state.
+    // Also fires once right after observe(), which sets the initial state (again when the bar
+    // changes direction: it then starts over at its other edge).
     const ro = new ResizeObserver(update)
     ro.observe(el)
     return () => {
       el.removeEventListener('scroll', update)
       ro.disconnect()
     }
-  }, [ref, enabled])
+  }, [ref, enabled, dir])
   if (!enabled || (!edges.start && !edges.end)) return undefined
   const a = edges.start ? 'transparent 0, #000 28px' : '#000 0'
   const b = edges.end ? '#000 calc(100% - 28px), transparent 100%' : '#000 100%'
-  return `linear-gradient(to right, ${a}, ${b})`
+  // From the start edge to the end one.
+  return `linear-gradient(to ${dir === 'rtl' ? 'left' : 'right'}, ${a}, ${b})`
 }

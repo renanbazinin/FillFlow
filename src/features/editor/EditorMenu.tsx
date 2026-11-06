@@ -1,4 +1,5 @@
 import { Ellipsis, Eraser, FolderOpen, Keyboard, MoveHorizontal, PanelLeft, PanelRight, X, ZoomIn, ZoomOut } from 'lucide-react'
+import { LanguageMenuItems } from '../../components/LanguageSwitch'
 import { IconButton } from '../../components/ui/button'
 import { confirm } from '../../components/ui/confirm'
 import {
@@ -11,6 +12,7 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from '../../components/ui/menu'
+import { getT, useT } from '../../i18n'
 import { setThemePreference, useTheme, type ThemePreference } from '../../lib/theme'
 import { filledCount, useEditor } from '../../store/editor'
 import { chooseAndOpenPdf } from '../home/openFile'
@@ -35,26 +37,34 @@ const afterMenuCloses = (fn: () => void) => window.setTimeout(() => window.setTi
  */
 export function EditorMenu({ compact }: { compact: boolean }) {
   const { preference } = useTheme()
+  const t = useT()
   const hasForm = useEditor((s) => (s.doc?.formFields.length ?? 0) > 0)
   const zoomInMenu = useMediaQuery(ZOOM_IN_MENU)
   const closeHandlers = usePointerAwareClose()
   return (
     <Menu>
       <MenuTrigger asChild>
-        <IconButton label="More" icon={<Ellipsis />} />
+        <IconButton label={t.shell.topBar.more} icon={<Ellipsis />} />
       </MenuTrigger>
       <MenuContent className="w-60" {...closeHandlers}>
         <MenuItem icon={<FolderOpen />} shortcut={shortcutLabel(SHORTCUTS.open)} onSelect={() => void chooseAndOpenPdf()}>
-          Open another PDF…
+          {t.shell.menu.openAnother}
         </MenuItem>
         {compact && (
           <>
             <MenuSeparator />
-            <MenuItem icon={<PanelLeft />} onSelect={() => afterMenuCloses(() => useEditor.getState().setLeftPanelOpen(true))}>
-              Pages
+            {/* The panels' sides: the pages at the start, the form and items at the end. */}
+            <MenuItem
+              icon={<PanelLeft className="rtl:-scale-x-100" />}
+              onSelect={() => afterMenuCloses(() => useEditor.getState().setLeftPanelOpen(true))}
+            >
+              {t.shell.menu.pages}
             </MenuItem>
-            <MenuItem icon={<PanelRight />} onSelect={() => afterMenuCloses(() => useEditor.getState().setRightPanelOpen(true))}>
-              {hasForm ? 'Form & items' : 'Items'}
+            <MenuItem
+              icon={<PanelRight className="rtl:-scale-x-100" />}
+              onSelect={() => afterMenuCloses(() => useEditor.getState().setRightPanelOpen(true))}
+            >
+              {hasForm ? t.shell.menu.formAndItems : t.shell.menu.items}
             </MenuItem>
           </>
         )}
@@ -70,22 +80,24 @@ export function EditorMenu({ compact }: { compact: boolean }) {
           className="pointer-coarse:hidden"
           onSelect={() => afterMenuCloses(() => useEditor.getState().openDialog('shortcuts'))}
         >
-          Keyboard shortcuts
+          {t.shell.menu.shortcuts}
         </MenuItem>
         <MenuSeparator />
-        <MenuLabel>Theme</MenuLabel>
+        <MenuLabel>{t.shell.theme.label}</MenuLabel>
         <MenuRadioGroup value={preference} onValueChange={(v) => setThemePreference(v as ThemePreference)}>
           {THEME_OPTIONS.map(({ value, label, icon: Icon }) => (
             <MenuRadioItem key={value} value={value} onSelect={(e) => e.preventDefault()}>
               <Icon className="size-4 text-fg-muted" />
-              {label}
+              {label(t)}
             </MenuRadioItem>
           ))}
         </MenuRadioGroup>
         <MenuSeparator />
+        <LanguageMenuItems />
+        <MenuSeparator />
         <ClearEverythingItem />
         <MenuItem icon={<X />} onSelect={() => afterMenuCloses(() => void closeDocumentSafely())}>
-          Close document
+          {t.shell.menu.closeDocument}
         </MenuItem>
       </MenuContent>
     </Menu>
@@ -95,6 +107,7 @@ export function EditorMenu({ compact }: { compact: boolean }) {
 /** Zoom steps keep the menu open, so they can be repeated. Only mounted while the menu is open. */
 function ZoomItems() {
   const scale = useEditor((s) => s.scale)
+  const t = useT()
   return (
     <>
       <MenuItem
@@ -106,7 +119,7 @@ function ZoomItems() {
           viewer.zoomIn()
         }}
       >
-        Zoom in
+        {t.shell.menu.zoomIn}
       </MenuItem>
       <MenuItem
         icon={<ZoomOut />}
@@ -117,10 +130,10 @@ function ZoomItems() {
           viewer.zoomOut()
         }}
       >
-        Zoom out
+        {t.shell.menu.zoomOut}
       </MenuItem>
       <MenuItem icon={<MoveHorizontal />} shortcut={shortcutLabel(SHORTCUTS.fitWidth)} onSelect={() => viewer.fitWidth()}>
-        Fit to width
+        {t.shell.menu.fitWidth}
       </MenuItem>
     </>
   )
@@ -134,6 +147,7 @@ function ZoomItems() {
 function ClearEverythingItem() {
   // Locked items stay, so they aren't something to clear.
   const hasWork = useEditor((s) => filledCount(s) > s.elements.filter((e) => e.locked).length)
+  const t = useT()
   return (
     <MenuItem
       icon={<Eraser />}
@@ -142,20 +156,18 @@ function ClearEverythingItem() {
       onSelect={() =>
         afterMenuCloses(async () => {
           const locked = useEditor.getState().elements.filter((e) => e.locked).length
+          const m = getT().shell.menu
           const ok = await confirm({
-            title: 'Clear everything you added?',
-            description:
-              'This removes all items from every page and resets the form fields to how they were.' +
-              (locked ? ` ${locked === 1 ? 'One locked item stays' : `${locked} locked items stay`}.` : '') +
-              ' You can undo this.',
-            confirmLabel: 'Clear all',
+            title: m.clearTitle,
+            description: m.clearBody(locked),
+            confirmLabel: m.clearConfirm,
             danger: true,
           })
           if (ok) useEditor.getState().clearAll()
         })
       }
     >
-      Clear everything…
+      {t.shell.menu.clearEverything}
     </MenuItem>
   )
 }

@@ -1,5 +1,6 @@
 import { memo } from 'react'
 import { Lock } from 'lucide-react'
+import { useT } from '../../../i18n'
 import type { Element } from '../../../model/types'
 import { cn } from '../../../lib/utils/misc'
 import { handleCursor, handlePoint, handlesFor, lineEndpoints } from '../lib/geometry'
@@ -192,12 +193,13 @@ function Handles({ el, scale }: { el: Element; scale: number }) {
 }
 
 function LockBadge({ el, scale }: { el: Element; scale: number }) {
+  const t = useT()
   const b = box(el, scale)
   return (
     <div
       className="pointer-events-none absolute z-[22] flex size-[18px] items-center justify-center rounded-full border border-selection/30 bg-white text-selection shadow-[0_1px_3px_rgb(16_24_40/0.2)]"
       style={{ left: b.left + b.width - 4, top: b.top - 14 }}
-      title="Locked"
+      title={t.elements.panel.locked}
     >
       <Lock className="size-[10px]" strokeWidth={2.5} />
     </div>

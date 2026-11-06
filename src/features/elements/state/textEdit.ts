@@ -1,5 +1,6 @@
 import { flushSync } from 'react-dom'
 import { toast } from 'sonner'
+import { getT } from '../../../i18n'
 import { firstStrongDirection } from '../../../lib/text/direction'
 import { keepTextInPage, TEXT_ANCHOR, withTextLayout } from '../../../model/elements'
 import type { ElementPatch, TextElement } from '../../../model/types'
@@ -286,7 +287,8 @@ export function finishTextEdit(id: string): void {
     // Locked items can't be deleted: the text comes back.
     if (!own?.before.trim()) return
     s.updateElement(id, { text: own.before }, { history: false })
-    toast('This item is locked', { description: 'Unlock it to delete it.' })
+    const m = getT().elements.toasts
+    toast(m.lockedTitle(1), { description: m.lockedBody(1) })
     return
   }
   // Emptied by typing: removing it is part of the undo step that still shows its text, so one

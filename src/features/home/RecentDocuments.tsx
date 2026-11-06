@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import { Button } from '../../components/ui/button'
 import { confirm } from '../../components/ui/confirm'
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../../components/ui/menu'
+import { getT, richText, useDir, useT } from '../../i18n'
 import {
   forgetDocument,
   forgetStaleSessions,
@@ -20,13 +21,14 @@ import { cn } from '../../lib/utils/misc'
 import { useEditor } from '../../store/editor'
 import { usePointerAwareClose } from '../editor/usePointerAwareClose'
 import { displayName } from './pdfFiles'
-import { pluralize, recentMetaLine } from './recentMeta'
+import { missingFileMetaLine, recentMetaLine } from './recentMeta'
 
 /**
  * Recently opened documents (stored only in this browser), followed by a line about the work still
  * saved for documents that dropped off the list, if any, which offers to delete it.
  */
 export function RecentDocuments({ className }: { className?: string }) {
+  const t = useT()
   const [docs, setDocs] = useState<RecentDocument[] | null>(null)
   const [showSkeleton, setShowSkeleton] = useState(false)
   /** Work is still saved for documents that are no longer listed. */
@@ -86,14 +88,11 @@ export function RecentDocuments({ className }: { className?: string }) {
   }, [docs, olderWork])
 
   const remove = async (doc: RecentDocument) => {
+    const m = getT().home.recent.remove
     const ok = await confirm({
-      title: (
-        <>
-          Remove “<bdi>{displayName(doc.name)}</bdi>”?
-        </>
-      ),
-      description: 'The file and the work you’ve done on it will be deleted from this device. This can’t be undone.',
-      confirmLabel: 'Remove',
+      title: richText(m.title, { name: <bdi>{displayName(doc.name)}</bdi> }),
+      description: m.body,
+      confirmLabel: m.confirm,
       danger: true,
     })
     if (!ok) return
@@ -101,18 +100,19 @@ export function RecentDocuments({ className }: { className?: string }) {
       await forgetDocument(doc.id)
       focusAfterRemoval.current = Math.max(0, docs?.findIndex((d) => d.id === doc.id) ?? 0)
       setDocs((list) => list?.filter((d) => d.id !== doc.id) ?? null)
-      toast.success('Removed from this device')
+      toast.success(getT().home.recent.remove.done)
     } catch {
-      toast.error('Couldn’t remove the document')
+      toast.error(getT().home.recent.remove.failed)
     }
   }
 
   const clearAll = async () => {
     if (!docs?.length) return
+    const m = getT().home.recent.clear
     const ok = await confirm({
-      title: 'Clear all recent documents?',
-      description: `${pluralize(docs.length, 'document')} and the work you’ve done on ${docs.length === 1 ? 'it' : 'them'} will be deleted from this device. This can’t be undone.`,
-      confirmLabel: 'Clear all',
+      title: m.title,
+      description: m.body(docs.length),
+      confirmLabel: m.confirm,
       danger: true,
     })
     if (!ok) return
@@ -124,15 +124,16 @@ export function RecentDocuments({ className }: { className?: string }) {
       .catch((err) => console.warn('[recents] could not delete saved work', err))
     focusAfterRemoval.current = 0
     setDocs(kept)
-    if (kept.length) toast.error('Some documents couldn’t be removed')
-    else toast.success('Recent documents cleared')
+    if (kept.length) toast.error(getT().home.recent.clear.failed)
+    else toast.success(getT().home.recent.clear.done)
   }
 
   const deleteOlderWork = async () => {
+    const m = getT().home.recent.olderWork
     const ok = await confirm({
-      title: 'Delete your work on documents no longer listed?',
-      description: 'What you filled in, typed or signed on them will be deleted from this device. This can’t be undone.',
-      confirmLabel: 'Delete',
+      title: m.title,
+      description: m.body,
+      confirmLabel: m.confirm,
       danger: true,
     })
     if (!ok) return
@@ -140,9 +141,9 @@ export function RecentDocuments({ className }: { className?: string }) {
       await forgetUnlistedSessions()
       focusAfterRemoval.current = 0
       setOlderWork(false)
-      toast.success('Work deleted from this device')
+      toast.success(getT().home.recent.olderWork.done)
     } catch {
-      toast.error('Couldn’t delete the work')
+      toast.error(getT().home.recent.olderWork.failed)
     }
   }
 
@@ -176,13 +177,13 @@ export function RecentDocuments({ className }: { className?: string }) {
       <div className="mb-4 flex items-end justify-between gap-4">
         <div>
           <h2 id="ff-recents-title" className="text-[15px] font-semibold tracking-[-0.01em] text-fg">
-            Recent documents
+            {t.home.recent.title}
           </h2>
-          <p className="mt-0.5 text-[13px] text-fg-subtle">Saved in this browser only.</p>
+          <p className="mt-0.5 text-[13px] text-fg-subtle">{t.home.recent.subtitle}</p>
         </div>
         {docs && (
-          <Button variant="ghost" size="sm" onClick={() => void clearAll()} className="-mr-2 text-fg-subtle">
-            Clear all
+          <Button variant="ghost" size="sm" onClick={() => void clearAll()} className="-me-2 text-fg-subtle">
+            {t.home.recent.clear.button}
           </Button>
         )}
       </div>
@@ -211,6 +212,8 @@ function RecentCard({
   onMissing: () => void
 }) {
   const name = displayName(doc.name)
+  const t = useT()
+  const dir = useDir()
   const closeHandlers = usePointerAwareClose()
   const open = async () => {
     const ok = await useEditor.getState().openRecent(doc.id, doc.name)
@@ -231,23 +234,28 @@ function RecentCard({
             <PagePlaceholder />
           )}
         </div>
+        {/* Interface chrome over the thumbnail (the page itself never mirrors): the count at the
+            start, the menu at the end. */}
         {filled > 0 && (
-          <span className="absolute bottom-2 left-2 inline-flex h-[22px] items-center gap-1 rounded-full border border-line bg-surface/95 px-2 text-[11px] font-semibold text-success shadow-xs backdrop-blur">
+          <span className="absolute bottom-2 start-2 inline-flex h-[22px] items-center gap-1 rounded-full border border-line bg-surface/95 px-2 text-[11px] font-semibold text-success shadow-xs backdrop-blur">
             <Check className="size-3" strokeWidth={3} />
-            {filled} filled
+            {t.home.recent.filled(filled)}
           </span>
         )}
       </div>
       <div className="min-w-0 px-3 pb-3 pt-2.5">
-        <div className="truncate text-left text-[13.5px] font-medium text-fg" title={doc.name} dir="auto">
+        {/* The name keeps its own direction (dir="auto": a long one is cut at its own end), yet lines
+            up with the interface's start like the line below it: text-start would follow the name. */}
+        <div
+          className={cn('truncate text-[13.5px] font-medium text-fg', dir === 'rtl' ? 'text-right' : 'text-left')}
+          title={doc.name}
+          dir="auto"
+        >
           {name}
         </div>
         {doc.fileMissing ? (
-          <div
-            className="mt-0.5 truncate text-[12px] text-warning"
-            title="Its file isn’t stored on this device. Open the same file again to continue."
-          >
-            {pluralize(doc.pageCount, 'page')} · file not stored
+          <div className="mt-0.5 truncate text-[12px] text-warning" title={t.home.recent.fileNotStoredHint}>
+            {missingFileMetaLine(doc.pageCount)}
           </div>
         ) : (
           <div className="mt-0.5 truncate text-[12px] text-fg-subtle">{recentMetaLine(doc.pageCount, doc)}</div>
@@ -259,7 +267,7 @@ function RecentCard({
         type="button"
         data-recent-open
         onClick={() => void open()}
-        aria-label={`Open ${name}`}
+        aria-label={t.home.recent.openNamed(name)}
         title={doc.name}
         className="absolute inset-0 rounded-2xl focus-visible:outline-offset-[-2px]"
       />
@@ -268,19 +276,19 @@ function RecentCard({
         <MenuTrigger asChild>
           <button
             type="button"
-            aria-label={`More options for ${name}`}
-            className="absolute right-2 top-2 z-10 inline-flex size-8 items-center justify-center rounded-lg border border-line bg-surface/95 text-fg-muted opacity-0 shadow-xs backdrop-blur transition-[opacity,color,background-color] duration-150 hover:bg-surface-3 hover:text-fg focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100 pointer-coarse:size-10 pointer-coarse:opacity-100"
+            aria-label={t.home.recent.moreFor(name)}
+            className="absolute end-2 top-2 z-10 inline-flex size-8 items-center justify-center rounded-lg border border-line bg-surface/95 text-fg-muted opacity-0 shadow-xs backdrop-blur transition-[opacity,color,background-color] duration-150 hover:bg-surface-3 hover:text-fg focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100 pointer-coarse:size-10 pointer-coarse:opacity-100"
           >
             <Ellipsis className="size-4" />
           </button>
         </MenuTrigger>
         <MenuContent align="end" className="min-w-56" {...closeHandlers}>
           <MenuItem icon={<FolderOpen />} onSelect={() => void open()}>
-            Open
+            {t.home.recent.open}
           </MenuItem>
           <MenuSeparator />
           <MenuItem icon={<Trash />} danger onSelect={onRemove}>
-            Remove from this device
+            {t.home.recent.remove.menu}
           </MenuItem>
         </MenuContent>
       </Menu>
@@ -290,11 +298,12 @@ function RecentCard({
 
 /** The work on documents that dropped off the list is kept for a while: it can be continued, or deleted. */
 function OlderWorkNotice({ className, onDelete }: { className?: string; onDelete: () => void }) {
+  const t = useT()
   return (
     <p className={cn('text-center text-[13px] text-fg-subtle text-pretty', className)}>
-      Your work on documents no longer listed is still saved on this device. Open the same file again to continue.{' '}
+      {t.home.recent.olderWork.notice}{' '}
       <button type="button" onClick={onDelete} className="font-medium text-fg-muted underline-offset-4 hover:text-fg hover:underline">
-        Delete it
+        {t.home.recent.olderWork.delete}
       </button>
     </p>
   )

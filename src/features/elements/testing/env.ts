@@ -12,6 +12,8 @@ const g = globalThis as unknown as { document?: unknown }
 if (typeof g.document === 'undefined') {
   g.document = {
     createElement: () => ({ getContext: () => fakeContext }),
+    // Where the interface language puts <html lang dir> (src/i18n), once a document exists.
+    documentElement: {},
   }
 }
 

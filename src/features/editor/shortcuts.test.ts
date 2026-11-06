@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
+import { messagesFor, setLocale } from '../../i18n'
 import { TOOLS } from '../../model/tools'
-import { keyLabels, orderKeys, shellCommandFor, shortcutGroups, shortcutLabel, SHORTCUTS } from './shortcuts'
+import { isPointerAction, keyLabels, orderKeys, shellCommandFor, shortcutGroups, shortcutLabel, SHORTCUTS } from './shortcuts'
 
 const key = (k: string, mods: Partial<Record<'ctrl' | 'meta' | 'alt' | 'shift', boolean>> = {}, code = '') => ({
   key: k,
@@ -51,6 +52,40 @@ describe('shortcutGroups', () => {
   it('has no duplicate single-key tool shortcuts', () => {
     const keys = TOOLS.map((t) => t.shortcut).filter(Boolean)
     expect(new Set(keys).size).toBe(keys.length)
+  })
+
+  describe('in Hebrew', () => {
+    afterEach(() => setLocale('en'))
+
+    it('reads its words in the language of the moment, keys as they are', () => {
+      setLocale('he')
+      const groups = shortcutGroups(false)
+      expect(groups.map((g) => g.title)).toEqual(['כלים', 'עריכה', 'תצוגה', 'קובץ'])
+      expect(groups[0].rows[0]).toMatchObject({ label: 'בחירה', combos: [['V']] })
+      const redo = groups[1].rows.find((r) => r.label === 'ביצוע מחדש')!
+      expect(redo.combos.map((c) => shortcutLabel(c, false))).toEqual(['Ctrl+Shift+Z', 'Ctrl+Y'])
+      setLocale('en')
+      expect(shortcutGroups(false)[0].title).toBe('Tools')
+    })
+
+    it('takes the strings it is given', () => {
+      const groups = shortcutGroups(true, messagesFor('he'))
+      expect(groups[3].rows.map((r) => r.label)).toEqual(['הורדת ה-PDF', 'פתיחת PDF אחר', 'קיצורי מקלדת'])
+    })
+
+    it('has a row label for every row, unique within its group, and a word for every pointer action', () => {
+      const he = messagesFor('he')
+      for (const g of shortcutGroups(false, he)) {
+        const labels = g.rows.map((r) => r.label)
+        expect(new Set(labels).size, g.title).toBe(labels.length)
+        for (const r of g.rows) {
+          expect(r.label).toBeTruthy()
+          for (const combo of r.combos) {
+            for (const key of combo.filter(isPointerAction)) expect(he.editor.shortcuts.pointer[key]).toBeTruthy()
+          }
+        }
+      }
+    })
   })
 })
 

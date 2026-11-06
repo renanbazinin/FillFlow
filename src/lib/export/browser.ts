@@ -1,3 +1,4 @@
+import { getT } from '../../i18n'
 import { cssFontFamily, fontFileUrl, loadFont } from '../../model/fonts'
 import type { FontId, TextElement } from '../../model/types'
 import type { TextBlockLayout } from '../text/layout'
@@ -110,7 +111,7 @@ export function pdfjsRewriter(open?: PdfjsDocument | null): Pick<ExportDeps, 'de
       pdf = await openPdf(bytes)
     } catch (err) {
       if (err instanceof PasswordRequiredError) {
-        throw new ExportError('encrypted', 'This PDF is password-protected. Open it in FillFlow with its password, then export again.')
+        throw new ExportError('encrypted', getT().export.errors.passwordProtected)
       }
       throw err
     }

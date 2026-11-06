@@ -1,3 +1,4 @@
+import { getT } from '../../i18n'
 import { loadFont } from '../../model/fonts'
 import type { Element, FontId } from '../../model/types'
 import { useEditor } from '../../store/editor'
@@ -42,7 +43,7 @@ export type ExportHooks = Pick<ExportDeps, 'onProgress' | 'onUnwrittenFields' | 
 /** Exports the document currently open in the editor. */
 export async function exportCurrentDocument(options: ExportOptions, hooks: ExportHooks = {}): Promise<Uint8Array> {
   const { doc, elements, assets, formValues } = useEditor.getState()
-  if (!doc) throw new ExportError('unknown', 'Open a document first.')
+  if (!doc) throw new ExportError('unknown', getT().export.errors.noDocument)
   await loadFontsIn(elements)
   return exportPdf(
     { bytes: doc.bytes, pages: doc.pages, elements, assets, formFields: doc.formFields, formValues, options },

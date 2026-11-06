@@ -1,6 +1,7 @@
 import { useEffect, useRef, type RefObject } from 'react'
 import { toast } from 'sonner'
 import { confirm } from '../../components/ui/confirm'
+import { getT } from '../../i18n'
 import type { SavedSignature } from '../../lib/storage/db'
 import type { ImageRole } from '../../model/types'
 import { useEditor } from '../../store/editor'
@@ -25,12 +26,13 @@ export function armPlacement(role: ImageRole, assetId: string): void {
   useEditor.getState().startPlacingAsset(role, assetId)
   setTimeout(() => {
     if (useEditor.getState().placingAssetId !== assetId) return
+    const t = getT()
     // Enter places it in the middle of the view (useEditingShortcuts).
-    toast(isCoarsePointer() ? 'Tap where you want to place it' : 'Click where you want to place it, or press Enter', {
+    toast(isCoarsePointer() ? t.signature.place.touchHint : t.signature.place.hint, {
       id: PLACE_TOAST_ID,
       duration: 4000,
       action: {
-        label: 'Cancel',
+        label: t.common.cancel,
         onClick: () => {
           const s = useEditor.getState()
           if (s.placingAssetId === assetId) s.setTool('select')
@@ -56,10 +58,11 @@ export function placeSavedSignature(item: SavedSignature): void {
 
 /** Asks, then removes a saved item from this device. Resolves true when it was deleted. */
 export async function deleteSavedSignature(item: SavedSignature): Promise<boolean> {
+  const m = getT().signature.saved
   const ok = await confirm({
-    title: item.role === 'signature' ? 'Delete this signature?' : 'Delete these initials?',
-    description: 'It will be removed from this device. Documents you already signed are not affected.',
-    confirmLabel: 'Delete',
+    title: m.confirmDelete.title[item.role],
+    description: m.confirmDelete.description[item.role],
+    confirmLabel: m.confirmDelete.confirm,
     danger: true,
   })
   if (!ok) return false
@@ -67,7 +70,8 @@ export async function deleteSavedSignature(item: SavedSignature): Promise<boolea
     await useSignatureLibrary.getState().remove(item.id)
     return true
   } catch {
-    toast.error("Couldn't delete it", { description: 'Please try again.' })
+    const { title, description } = getT().signature.saved.deleteFailed
+    toast.error(title, { description })
     return false
   }
 }

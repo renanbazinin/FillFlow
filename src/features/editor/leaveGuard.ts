@@ -1,4 +1,5 @@
 import { confirm } from '../../components/ui/confirm'
+import { getT } from '../../i18n'
 import { flushAutosave } from '../../lib/storage/autosave'
 import { useSaveStatusStore } from '../../lib/storage/saveStatus'
 import { useEditor } from '../../store/editor'
@@ -12,11 +13,12 @@ export async function confirmLeaveDocument(): Promise<boolean> {
   if (!useEditor.getState().doc) return true
   await flushAutosave()
   if (useSaveStatusStore.getState().state !== 'error') return true
+  const m = getT().editor.unsaved
   return confirm({
-    title: 'Leave without your latest changes?',
-    description: 'They couldn’t be saved on this device. Download your PDF first if you want to keep them.',
-    confirmLabel: 'Leave anyway',
-    cancelLabel: 'Stay',
+    title: m.leaveTitle,
+    description: m.body,
+    confirmLabel: m.leave,
+    cancelLabel: m.stay,
     danger: true,
   })
 }

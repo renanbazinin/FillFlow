@@ -25,6 +25,7 @@ import type {
   TextAlign,
   ToolId,
 } from '../model/types'
+import { getT } from '../i18n'
 import { defaultFormValues, extractFormFields, getFormDocumentInfo } from '../lib/pdf/formFields'
 import { storedValue } from '../lib/pdf/forms/values'
 import {
@@ -333,24 +334,24 @@ class OpenError extends Error {
 
 type LoadError = Omit<Extract<LoadState, { status: 'error' }>, 'status' | 'fileName'>
 
-/** What the user is told about an open that failed (the details go to the console). */
+/**
+ * What the user is told about an open that failed (the details go to the console), in the
+ * interface language of the moment it failed.
+ */
 function describeOpenFailure(err: unknown): LoadError {
+  const m = getT().home.openError
   // pdf.js couldn't start its worker after all, and won't for the rest of the page's life.
   const workerFailed = err instanceof Error && err.message.startsWith('Setting up fake worker failed')
   if (err instanceof WorkerUnavailableError || workerFailed) {
     const offline = typeof navigator !== 'undefined' && navigator.onLine === false
     return {
       reason: 'unavailable',
-      message: offline
-        ? 'You’re offline, and FillFlow needs to finish downloading before it can open files. Reconnect and try again.'
-        : err instanceof WorkerUnavailableError && err.network
-          ? 'FillFlow needs to finish downloading before it can open files. Check your connection and try again.'
-          : 'FillFlow couldn’t download what it needs to open files. Reload the page and try again.',
+      message: offline ? m.offline : err instanceof WorkerUnavailableError && err.network ? m.notDownloaded : m.downloadFailed,
     }
   }
   if (err instanceof OpenError) return { message: err.message }
-  if (err instanceof Error && err.name === 'InvalidPDFException') return { message: 'This PDF is damaged or not a valid PDF file.' }
-  return { message: 'This PDF couldn’t be read. It may be damaged, or use features FillFlow doesn’t support.' }
+  if (err instanceof Error && err.name === 'InvalidPDFException') return { message: m.invalid }
+  return { message: m.unreadable }
 }
 
 /** Pending input while waiting for a password, or to try again (see `retryOpen`). */
@@ -446,7 +447,7 @@ export const useEditor = create<EditorStore>()(
       let opening: Promise<PDFDocumentProxy> | null = null
       let pdf: PDFDocumentProxy | null = null
       try {
-        if (!looksLikePdf(bytes)) throw new OpenError('This file doesn’t look like a PDF.')
+        if (!looksLikePdf(bytes)) throw new OpenError(getT().home.openError.notPdf)
         opening = openPdf(bytes, password, signal)
         const [id, opened] = await Promise.all([sha256Hex(bytes), opening])
         pdf = opened
@@ -561,7 +562,7 @@ export const useEditor = create<EditorStore>()(
           try {
             bytes = input instanceof File ? new Uint8Array(await input.arrayBuffer()) : input.bytes
           } catch {
-            if (token === openToken) set({ load: { status: 'error', fileName: name, message: 'Could not read the file.' } })
+            if (token === openToken) set({ load: { status: 'error', fileName: name, message: getT().home.openError.readFailed } })
             return false
           }
           return finishOpen(token, signal, name, bytes, password)
@@ -585,7 +586,7 @@ export const useEditor = create<EditorStore>()(
             // The record may still be there (and the work saved with it): don't call it gone.
             console.warn('[storage] could not read document', err)
             if (token === openToken) {
-              set({ load: { status: 'error', fileName: name, message: 'Couldn’t read this document from this device’s storage.' } })
+              set({ load: { status: 'error', fileName: name, message: getT().home.openError.storageReadFailed } })
             }
             return false
           }
@@ -595,9 +596,7 @@ export const useEditor = create<EditorStore>()(
             // opening the same file again continues it.
             const workKept = await hasSession(id).catch(() => false)
             if (token !== openToken) return false
-            const message = workKept
-              ? 'It isn’t stored on this device, but your work on it is. Choose the same file to pick up where you left off.'
-              : 'It isn’t stored on this device. Choose it again to open it.'
+            const message = workKept ? getT().home.openError.missingWithWork : getT().home.openError.missing
             set({ load: { status: 'error', fileName: name, message, reason: 'missing' } })
             return false
           }

@@ -23,6 +23,7 @@ import {
   setStrokingRgbColor,
   stroke,
 } from 'pdf-lib'
+import { getLocale } from '../../i18n'
 import { HIGHLIGHT_COLOR, MARK_PATHS, MARK_VIEWBOX, elementLabel } from '../../model/elements'
 import type { ImageElement, InkElement, MarkElement, ShapeElement } from '../../model/types'
 import { parseColor } from './color'
@@ -34,8 +35,11 @@ import type { ContentTag } from './pageResources'
 /** Bézier circle constant. */
 const KAPPA = 0.5522847498307936
 
-/** Marks and pictures, in a tagged PDF: described by the names the app gives them ("Checkmark", "Signature"…). */
-const figure = (el: MarkElement | ImageElement): ContentTag => ({ role: 'Figure', alt: elementLabel(el), lang: 'en' })
+/**
+ * Marks and pictures, in a tagged PDF: described by the names the app gives them ("Checkmark",
+ * "Signature"…), in the interface's language, which the tag names.
+ */
+const figure = (el: MarkElement | ImageElement): ContentTag => ({ role: 'Figure', alt: elementLabel(el), lang: getLocale() })
 
 /** Shapes, highlights, whiteout and drawings, which screen readers skip. */
 const ARTIFACT: ContentTag = { role: 'Artifact' }

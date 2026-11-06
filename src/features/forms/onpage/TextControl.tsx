@@ -1,17 +1,17 @@
 import { memo, type CSSProperties } from 'react'
-import { fieldLabel } from '../../../lib/pdf/forms/labels'
 import { cn } from '../../../lib/utils/misc'
 import { cssFontFamily } from '../../../model/fonts'
 import { fieldBoxClass, frameRect, frameStyle, rectStyle } from '../fieldStyles'
 import { LINE_HEIGHT, inputScale, textLook } from '../look'
 import { useFormFontsReady } from '../measure'
 import { CONTROL_ATTR } from '../navigation'
-import { setFieldValue, useControlEvents, useFieldValue, useIsActiveField } from '../useField'
+import { setFieldValue, useControlEvents, useFieldLabel, useFieldValue, useIsActiveField } from '../useField'
 import type { ControlProps } from './types'
 
 /** Single-line, multi-line, comb and password text fields, laid out exactly like the export. */
 export const TextControl = memo(function TextControl({ field, widget, scale, interactive, rotation }: ControlProps) {
   const value = String(useFieldValue(field))
+  const name = useFieldLabel(field)
   const active = useIsActiveField(field.name)
   useFormFontsReady() // re-measure once the field font has loaded
   const events = useControlEvents(field, { enterAdvances: !field.multiline })
@@ -59,7 +59,7 @@ export const TextControl = memo(function TextControl({ field, widget, scale, int
 
   const common = {
     [CONTROL_ATTR]: '',
-    'aria-label': fieldLabel(field),
+    'aria-label': name,
     'aria-required': field.required || undefined,
     readOnly,
     tabIndex: interactive && !readOnly ? 0 : -1,

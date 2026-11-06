@@ -1,40 +1,27 @@
 import { RotateCcwClock, ShieldCheck, Signature, TextCursorInput, type LucideIcon } from 'lucide-react'
+import { useT } from '../../i18n'
 import { cn } from '../../lib/utils/misc'
 
-const FEATURES: { icon: LucideIcon; title: string; body: string }[] = [
-  {
-    icon: TextCursorInput,
-    title: 'Fill any form',
-    body: 'Fillable fields are detected automatically — or click anywhere on the page to type.',
-  },
-  {
-    icon: Signature,
-    title: 'Sign in seconds',
-    body: 'Draw, type or upload your signature. It’s saved for next time.',
-  },
-  {
-    icon: ShieldCheck,
-    title: 'Private by design',
-    body: 'Everything happens on your device. Your files are never uploaded.',
-  },
-  {
-    icon: RotateCcwClock,
-    title: 'Pick up where you left off',
-    body: 'Your progress is auto-saved in this browser as you work.',
-  },
+/** The tiles, by their words in `home.features`. */
+const FEATURES: { id: 'fill' | 'sign' | 'private' | 'resume'; icon: LucideIcon }[] = [
+  { id: 'fill', icon: TextCursorInput },
+  { id: 'sign', icon: Signature },
+  { id: 'private', icon: ShieldCheck },
+  { id: 'resume', icon: RotateCcwClock },
 ]
 
 export function FeatureTiles({ className }: { className?: string }) {
+  const t = useT()
   return (
     <section aria-labelledby="ff-features-title" className={className}>
       {/* The tiles' headings sit under this one, not under whatever section comes before. */}
       <h2 id="ff-features-title" className="sr-only">
-        Why FillFlow
+        {t.home.features.heading}
       </h2>
       <ul className="grid gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
-        {FEATURES.map(({ icon: Icon, title, body }, i) => (
+        {FEATURES.map(({ id, icon: Icon }, i) => (
           <li
-            key={title}
+            key={id}
             className={cn(
               'flex gap-3.5 rounded-2xl border border-line bg-surface/70 p-4 shadow-xs backdrop-blur-sm sm:flex-col sm:gap-0 sm:p-5',
               'animate-slide-up [animation-fill-mode:both]',
@@ -45,8 +32,8 @@ export function FeatureTiles({ className }: { className?: string }) {
               <Icon className="size-[18px]" strokeWidth={1.9} />
             </div>
             <div className="min-w-0 sm:mt-4">
-              <h3 className="text-[14.5px] font-semibold tracking-[-0.01em] text-fg">{title}</h3>
-              <p className="mt-1 text-[13.5px] leading-relaxed text-fg-muted">{body}</p>
+              <h3 className="text-[14.5px] font-semibold tracking-[-0.01em] text-fg">{t.home.features[id].title}</h3>
+              <p className="mt-1 text-[13.5px] leading-relaxed text-fg-muted">{t.home.features[id].body}</p>
             </div>
           </li>
         ))}

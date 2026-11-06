@@ -1,4 +1,5 @@
 import { memo } from 'react'
+import { useT } from '../../../i18n'
 import { elementLabel } from '../../../model/elements'
 import type { Element } from '../../../model/types'
 import { useEditor } from '../../../store/editor'
@@ -24,6 +25,8 @@ interface ElementViewProps {
  * z-20 (above the form layer) so the highlight's multiply blend reaches the PDF canvas below.
  */
 export const ElementView = memo(function ElementView({ el, scale, interactive, editing, dimmed }: ElementViewProps) {
+  // The accessible name is in the interface's language.
+  const t = useT()
   const w = el.width * scale
   const h = el.height * scale
   const highlight = isHighlight(el)
@@ -32,7 +35,7 @@ export const ElementView = memo(function ElementView({ el, scale, interactive, e
       data-element-id={el.id}
       data-kind={el.kind}
       role={el.kind === 'text' ? undefined : 'img'}
-      aria-label={el.kind === 'text' ? undefined : elementLabel(el)}
+      aria-label={el.kind === 'text' ? undefined : elementLabel(el, t)}
       className="pointer-events-none absolute z-20"
       style={{
         left: el.x * scale,

@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { Eraser, Undo2 } from 'lucide-react'
 import { Button } from '../../components/ui/button'
+import { useT } from '../../i18n'
 import { cn, modKeyLabel } from '../../lib/utils/misc'
 import { Tooltip } from '../../components/ui/tooltip'
 import { useSignatureDraft } from './draft'
@@ -51,6 +52,7 @@ export function DrawPad({
   const color = useSignatureDraft((s) => s.color)
   const pen = useSignatureDraft((s) => s.pen)
   const [inking, setInking] = useState(false)
+  const t = useT()
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const live = useRef<Live | null>(null)
@@ -174,12 +176,12 @@ export function DrawPad({
   }
 
   const empty = strokes.length === 0 && !inking
-  const noun = role === 'signature' ? 'signature' : 'initials'
 
   return (
     <div>
       <div data-signing-pad className={cn('relative select-none overflow-hidden rounded-xl border border-line bg-white shadow-xs', PAD_FRAME[role])}>
-        {/* Guides: part of the pad, never of the output. */}
+        {/* Guides: part of the pad, never of the output. The pad is the paper, not the interface: it
+            isn't mirrored in a right-to-left one (the × marks the line's left end there too). */}
         <div aria-hidden className="pointer-events-none absolute inset-x-[6%] top-[68%] h-px bg-black/15" />
         <div
           aria-hidden
@@ -194,12 +196,12 @@ export function DrawPad({
             !empty && 'opacity-0',
           )}
         >
-          {role === 'signature' ? 'Sign above the line' : 'Initial above the line'}
+          {t.signature.draw.hint[role]}
         </div>
         <canvas
           ref={canvasRef}
           role="img"
-          aria-label={`Drawing area for your ${noun}. Draw with a mouse, finger or stylus${strokes.length ? `; ${strokes.length} ${strokes.length === 1 ? 'stroke' : 'strokes'} so far` : ''}.`}
+          aria-label={t.signature.draw.area[role](strokes.length)}
           className="absolute inset-0 size-full cursor-crosshair touch-none"
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
@@ -223,39 +225,43 @@ export function DrawControls({ role, compact, className }: { role: SignatureRole
   const setPen = useSignatureDraft((s) => s.setPen)
   const undo = useSignatureDraft((s) => s.undoStroke)
   const clear = useSignatureDraft((s) => s.clearStrokes)
+  const t = useT()
+  const d = t.signature.draw
 
   return (
     // Touch screens: bigger targets, so tighter spacing (and no divider) to keep them on one line.
+    // Undo and Clear go to the end of the row (right, or left in a right-to-left interface).
     <div className={cn('flex flex-wrap items-center gap-x-3 gap-y-2 pointer-coarse:gap-x-2', className)}>
       <InkSwatches value={color} onChange={setColor} />
       <span aria-hidden className="h-5 w-px bg-line pointer-coarse:hidden" />
       <PenWidthPicker value={pen} onChange={setPen} />
       {/* aria-disabled: emptying the pad must not take focus away from the button just used. */}
-      <div className="ml-auto flex items-center gap-0.5">
-        <Tooltip content="Undo last stroke" shortcut={`${modKeyLabel}+Z`} side="top">
+      <div className="ms-auto flex items-center gap-0.5">
+        <Tooltip content={d.undoStroke} shortcut={`${modKeyLabel}+Z`} side="top">
           <Button
             variant="ghost"
             size="sm"
             onClick={() => canUndo && undo(role)}
             aria-disabled={!canUndo || undefined}
-            aria-label="Undo last stroke"
+            aria-label={d.undoStroke}
             className={SOFT_DISABLED}
           >
-            <Undo2 />
-            {!compact && <span className="max-sm:hidden">Undo</span>}
+            {/* It points back: the other way round right to left. */}
+            <Undo2 className="rtl:-scale-x-100" />
+            {!compact && <span className="max-sm:hidden">{d.undo}</span>}
           </Button>
         </Tooltip>
-        <Tooltip content="Clear drawing" side="top">
+        <Tooltip content={d.clearDrawing} side="top">
           <Button
             variant="ghost"
             size="sm"
             onClick={() => canUndo && clear(role)}
             aria-disabled={!canUndo || undefined}
-            aria-label="Clear drawing"
+            aria-label={d.clearDrawing}
             className={SOFT_DISABLED}
           >
             <Eraser />
-            {!compact && <span className="max-sm:hidden">Clear</span>}
+            {!compact && <span className="max-sm:hidden">{d.clear}</span>}
           </Button>
         </Tooltip>
       </div>

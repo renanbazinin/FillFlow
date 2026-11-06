@@ -1,4 +1,6 @@
+import { getT } from '../../../i18n'
 import type { FormField, FormFieldOption } from '../../../model/types'
+import { isUnnamedField } from './extract'
 
 /** Lowercase widget-type prefixes form designers glue onto names ("txtFirstName", "chkAgree"). */
 const TYPE_PREFIX = /^(?:txt|tf|chk|chkbx|cbx|cb|rb|rdo|ddl|dd|cmb|lst|lb|btn|fld|sig)(?=[A-Z])/
@@ -16,12 +18,21 @@ const CONTAINER = /^(?:form|page|subform|topmostsubform|root|fields?|data|sectio
 const ACRONYMS = new Set(['id', 'ssn', 'dob', 'zip', 'pin', 'iban', 'bic', 'vat', 'tin', 'ein', 'url', 'po', 'uk', 'us', 'usa', 'eu', 'cvv', 'atm', 'gp', 'md', 'hr'])
 
 /**
+ * A field's name as labels show it: our placeholder for a field the PDF left unnamed ("(unnamed
+ * 12R)", see extract.ts) in the interface's language, any other name as it is.
+ */
+function shownName(name: string): string {
+  return isUnnamedField(name) ? getT().forms.names.unnamed(name.slice('(unnamed '.length, -1)) : name
+}
+
+/**
  * Turns a technical field name into a readable label:
  * "applicant.first_name" → "First name", "form1[0].txtDateOfBirth[0]" → "Date of birth",
- * "Check Box12" → "Check box 12", "SSNNumber" → "SSN number".
+ * "Check Box12" → "Check box 12", "SSNNumber" → "SSN number". The names of fields the PDF leaves
+ * unnamed are ours, in the interface's language.
  */
 export function humanizeFieldName(name: string): string {
-  const segments = name
+  const segments = shownName(name)
     .split('.')
     .map((s) => s.replace(SUBSCRIPT, '').trim())
     .filter(Boolean)
@@ -45,7 +56,7 @@ export function humanizeFieldName(name: string): string {
     .map((w) => (ACRONYMS.has(w.toLowerCase()) ? w.toUpperCase() : w.length > 1 && w === w.toUpperCase() ? w : w.toLowerCase()))
 
   const text = words.join(' ')
-  if (!text) return 'Untitled field'
+  if (!text) return getT().forms.names.untitled
   return text.charAt(0).toUpperCase() + text.slice(1)
 }
 
@@ -55,10 +66,10 @@ export function fieldLabel(field: Pick<FormField, 'name' | 'label'>): string {
   return label || humanizeFieldName(field.name)
 }
 
-/** Readable text for a radio export value ("Choice_1" → "Choice 1"). */
+/** Readable text for a radio export value ("Choice_1" → "Choice 1"); an empty one is named in the interface's language. */
 export function optionLabel(value: string): string {
-  const t = value.replace(/[_]+/g, ' ').replace(/\s+/g, ' ').trim()
-  return t || '(blank)'
+  const text = value.replace(/[_]+/g, ' ').replace(/\s+/g, ' ').trim()
+  return text || getT().forms.names.blank
 }
 
 /**

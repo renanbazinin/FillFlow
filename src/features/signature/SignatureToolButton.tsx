@@ -4,6 +4,7 @@ import { Plus } from 'lucide-react'
 import { Button } from '../../components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/menu'
 import { dismissPassingToasts } from '../../components/ui/toasts'
+import { getT, useT } from '../../i18n'
 import type { SavedSignature } from '../../lib/storage/db'
 import { cn } from '../../lib/utils/misc'
 import { TOOL_BY_ID } from '../../model/tools'
@@ -49,7 +50,9 @@ export function SignatureToolButton({
   const keyed = useRef(false)
   /** The last activation came from a mouse / touch press on the button. */
   const pressed = useRef(false)
-  const noun = role === 'signature' ? 'signature' : 'initials'
+  // The tool's own name and hint come from TOOL_BY_ID, read as it renders: this re-renders it.
+  const t = useT()
+  const s = t.signature.saved
 
   const activate = useCallback(() => {
     void useSignatureLibrary
@@ -138,7 +141,7 @@ export function SignatureToolButton({
       <PopoverContent
         ref={contentRef}
         side={popoverSide}
-        aria-label={role === 'signature' ? 'Saved signatures' : 'Saved initials'}
+        aria-label={s.label[role]}
         onFocusOutside={keepOpen}
         onInteractOutside={keepOpen}
         onCloseAutoFocus={(e) => {
@@ -151,8 +154,8 @@ export function SignatureToolButton({
         className="w-[min(calc(100vw-16px),344px)] p-0"
       >
         <div className="flex items-baseline justify-between gap-3 px-3 pb-2 pt-3">
-          <div className="text-[13px] font-semibold text-fg">{role === 'signature' ? 'Your signatures' : 'Your initials'}</div>
-          {items.length > 0 && <div className="text-xs text-fg-subtle">Pick one to place it</div>}
+          <div className="text-[13px] font-semibold text-fg">{s.title[role]}</div>
+          {items.length > 0 && <div className="text-xs text-fg-subtle">{s.pick}</div>}
         </div>
         {items.length > 0 ? (
           <div
@@ -172,17 +175,17 @@ export function SignatureToolButton({
             ))}
           </div>
         ) : (
-          <p className="px-3 pb-3 text-[13px] text-fg-muted">Nothing saved yet. Create one and tick “Save for next time”.</p>
+          <p className="px-3 pb-3 text-[13px] text-fg-muted">{s.empty[role]}</p>
         )}
         <div className="border-t border-line p-1.5">
           {/* Pressing Enter or Space on a button fires a click with no click count. */}
           <Button data-new variant="ghost" size="sm" onClick={(e) => createNew(e.detail === 0)} className="w-full justify-start text-fg">
             <Plus />
-            {role === 'signature' ? 'New signature' : 'New initials'}
+            {s.new[role]}
           </Button>
         </div>
         <span className="sr-only" aria-live="polite">
-          {items.length} saved {noun}
+          {s.count[role](items.length)}
         </span>
       </PopoverContent>
     </Popover>
@@ -201,6 +204,8 @@ export function ImageToolButton({ showLabel, tooltipSide = 'top', className }: D
   const pressed = useRef(false)
   /** The button was pressed from the keyboard: once a picture is chosen, focus goes on to the pages. */
   const keyed = useRef(false)
+  // The tool's own name and hint come from TOOL_BY_ID, read as it renders: this re-renders it.
+  useT()
 
   const openPicker = useCallback((fromShortcut: boolean, byKeyboard = false) => {
     const input = inputRef.current
@@ -220,7 +225,8 @@ export function ImageToolButton({ showLabel, tooltipSide = 'top', className }: D
       // No user activation (the shortcut didn't come from a key press we can use).
       if (fromShortcut) {
         releaseTool('image')
-        toast('Choose a picture with the Image button', { description: 'Your browser blocked opening the file picker from the shortcut.' })
+        const { title, description } = getT().signature.image.blocked
+        toast(title(TOOL_BY_ID.image.label), { description })
       } else {
         input.click()
       }
@@ -242,7 +248,7 @@ export function ImageToolButton({ showLabel, tooltipSide = 'top', className }: D
     const file = e.target.files?.[0]
     if (!file) return
     setBusy(true)
-    const slow = setTimeout(() => toast.loading('Preparing image…', { id: 'fillflow:image-import' }), 300)
+    const slow = setTimeout(() => toast.loading(getT().signature.image.preparing, { id: 'fillflow:image-import' }), 300)
     try {
       if (file.type && !file.type.startsWith('image/')) throw new Error('not an image')
       const asset = await importImageAsset(file)
@@ -254,7 +260,8 @@ export function ImageToolButton({ showLabel, tooltipSide = 'top', className }: D
       if (keyed.current && (focused === buttonRef.current || focused === document.body)) viewer.getScrollContainer()?.focus({ preventScroll: true })
     } catch {
       releaseTool('image')
-      toast.error("This image couldn't be opened", { description: 'Try a PNG, JPEG, WebP or GIF file.' })
+      const { title, description } = getT().signature.image.openFailed
+      toast.error(title, { description })
     } finally {
       clearTimeout(slow)
       toast.dismiss('fillflow:image-import')

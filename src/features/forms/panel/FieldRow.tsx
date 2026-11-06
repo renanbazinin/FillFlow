@@ -39,7 +39,8 @@ export const FieldRow = memo(function FieldRow({ field }: { field: FormField }) 
       }}
       onKeyDown={routeHistoryKeys}
     >
-      {active && <span aria-hidden className="absolute inset-y-2.5 left-0 w-[3px] rounded-full bg-accent forced-colors:bg-[Highlight]" />}
+      {/* The active field's mark, at the row's start edge: the right, in a right-to-left interface. */}
+      {active && <span aria-hidden className="absolute inset-y-2.5 start-0 w-[3px] rounded-full bg-accent forced-colors:bg-[Highlight]" />}
       <FieldInput field={field} />
     </div>
   )

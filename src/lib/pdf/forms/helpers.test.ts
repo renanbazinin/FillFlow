@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
+import { setLocale } from '../../../i18n'
 import type { FormField } from '../../../model/types'
 import { baseDirection, bidiParagraph, hasRtl, visualOrder } from './bidi'
-import { fieldLabel, humanizeFieldName, optionLabel } from './labels'
+import { fieldLabel, humanizeFieldName, optionLabel, radioOptions } from './labels'
 import { readingOrder } from './order'
 import {
   combLayout,
@@ -38,6 +39,24 @@ describe('humanizeFieldName', () => {
     expect(fieldLabel({ name: 'f1_01', label: '  Your  first name ' })).toBe('Your first name')
     expect(fieldLabel({ name: 'f1_01' })).toBe('F 1 01')
     expect(optionLabel('Choice_1')).toBe('Choice 1')
+  })
+})
+
+describe('names for what the PDF leaves unnamed', () => {
+  afterEach(() => setLocale('en'))
+  const rect = { x: 0, y: 0, width: 10, height: 10 }
+  const radio = (...values: string[]) => ({ widgets: values.map((exportValue, i) => ({ id: `w${i}`, page: 0, rect, exportValue })) })
+
+  it('are in the interface’s language, while the PDF’s own names stay as they are', () => {
+    // A field without a name gets ours from extract.ts ("(unnamed 12R)").
+    expect(humanizeFieldName('(unnamed 12R)')).toBe('(unnamed 12 R)')
+    expect(optionLabel(' _ ')).toBe('(blank)')
+    setLocale('he')
+    expect(humanizeFieldName('')).toBe('שדה ללא שם')
+    expect(humanizeFieldName('(unnamed 12R)')).toBe('(ללא שם 12 R)')
+    expect(radioOptions(radio('', 'Yes', 'Yes')).map((o) => o.label)).toEqual(['(ריק)', 'Yes'])
+    expect(fieldLabel({ name: 'applicant.first_name' })).toBe('First name')
+    expect(fieldLabel({ name: '(unnamed 3R)', label: 'שם פרטי' })).toBe('שם פרטי')
   })
 })
 

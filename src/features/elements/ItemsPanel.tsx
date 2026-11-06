@@ -2,9 +2,11 @@ import { memo, useCallback, useMemo, useRef, type KeyboardEvent, type MouseEvent
 import { Lock, LockOpen, Trash } from 'lucide-react'
 import { Button, IconButton } from '../../components/ui/button'
 import { confirm } from '../../components/ui/confirm'
+import { getT, useT } from '../../i18n'
 import { elementLabel } from '../../model/elements'
 import type { Element } from '../../model/types'
 import { useEditor } from '../../store/editor'
+import { firstStrongDirection } from '../../lib/text/direction'
 import { cn } from '../../lib/utils/misc'
 import { ItemsEmptyState } from './items/ItemsEmptyState'
 import { ItemThumb } from './items/ItemThumb'
@@ -21,6 +23,7 @@ import { clearHovered, setHovered } from './state/ui'
  * page, double-clicking a text item edits it (from the keyboard: Enter once it's selected, or F2).
  */
 export function ItemsPanel() {
+  const t = useT()
   const elements = useEditor((s) => s.elements)
   const selection = useEditor((s) => s.selection)
   const pdf = useEditor((s) => s.doc?.pdf ?? null)
@@ -78,13 +81,11 @@ export function ItemsPanel() {
     const locked = s.elements.filter((e) => e.locked).length
     const removable = s.elements.length - locked
     if (!removable) return
+    const m = getT().elements.panel
     const ok = await confirm({
-      title: 'Clear all items?',
-      description:
-        `This removes ${removable === 1 ? 'the item' : `all ${removable} items`} you added to this document.` +
-        (locked ? ` ${locked === 1 ? 'One locked item stays' : `${locked} locked items stay`}.` : '') +
-        ' You can undo this.',
-      confirmLabel: 'Clear all',
+      title: m.clearTitle,
+      description: m.clearBody(removable, locked),
+      confirmLabel: m.clearConfirm,
       danger: true,
     })
     if (!ok) return
@@ -99,9 +100,9 @@ export function ItemsPanel() {
     <div data-items-panel="" className="flex min-h-full flex-col">
       <div className="flex-1 pb-2" onKeyDown={onListKeyDown}>
         {groups.map((g) => (
-          <section key={g.page} aria-label={`Page ${g.page + 1}`}>
+          <section key={g.page} aria-label={t.elements.panel.page(g.page + 1)}>
             <h3 className="sticky top-0 z-10 flex items-center justify-between bg-surface/95 px-4 pb-1.5 pt-3 text-[11px] font-semibold uppercase tracking-[0.06em] text-fg-subtle backdrop-blur-sm">
-              <span>Page {g.page + 1}</span>
+              <span>{t.elements.panel.page(g.page + 1)}</span>
               <span className="font-medium tabular-nums">{g.items.length}</span>
             </h3>
             <ul className="grid gap-px px-2">
@@ -115,7 +116,7 @@ export function ItemsPanel() {
       <div className="sticky bottom-0 border-t border-line bg-surface p-2 pb-[max(env(safe-area-inset-bottom),0.5rem)]">
         <Button variant="danger-ghost" size="sm" className="w-full" onClick={() => void clearAll()} disabled={allLocked}>
           <Trash />
-          Clear all items
+          {t.elements.panel.clearAll}
         </Button>
       </div>
     </div>
@@ -155,7 +156,11 @@ const ItemRow = memo(function ItemRow({
   onPick: (el: Element, e: MouseEvent) => void
   onEdit: (el: Element) => void
 }) {
-  const label = elementLabel(el)
+  const t = useT()
+  const label = elementLabel(el, t)
+  // A text item is named by what it says, which reads its own way (as dir="auto" finds it, said
+  // outright so the quotes and isolates around it can't sway it).
+  const textDir = el.kind === 'text' ? (firstStrongDirection(el.text) ?? undefined) : undefined
   return (
     <li
       data-item-id={el.id}
@@ -170,7 +175,7 @@ const ItemRow = memo(function ItemRow({
         type="button"
         data-item-row=""
         aria-pressed={selected}
-        title={el.kind === 'text' ? 'Click to select · double-click to edit' : undefined}
+        title={el.kind === 'text' ? t.elements.panel.rowHint : undefined}
         onClick={(e) => onPick(el, e)}
         onDoubleClick={() => onEdit(el)}
         onKeyDown={(e) => {
@@ -183,28 +188,38 @@ const ItemRow = memo(function ItemRow({
         }}
         onFocus={() => setHovered(el.id)}
         onBlur={() => clearHovered(el.id)}
-        className="flex h-full min-w-0 flex-1 items-center gap-2.5 rounded-lg pl-2 pr-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset"
+        className="flex h-full min-w-0 flex-1 items-center gap-2.5 rounded-lg ps-2 pe-1 text-start outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset"
       >
         <ItemThumb el={el} />
-        <span dir="auto" className={cn('min-w-0 flex-1 truncate text-left text-[13px]', selected ? 'font-medium text-fg' : 'text-fg')}>
-          {label}
+        {/* The name starts where the row does (the interface's start). One quoting what was typed reads
+            the way that text does (<bdi>), and a long one is cut at its own end. */}
+        <span className={cn('flex min-w-0 flex-1 text-[13px]', selected ? 'font-medium text-fg' : 'text-fg')}>
+          <bdi dir={textDir} className="min-w-0 truncate">
+            {label}
+          </bdi>
         </span>
-        {el.locked && <Lock aria-label="Locked" className="size-3.5 shrink-0 text-fg-subtle group-focus-within:hidden group-hover:hidden pointer-coarse:hidden" />}
+        {el.locked && (
+          <Lock
+            aria-label={t.elements.panel.locked}
+            className="size-3.5 shrink-0 text-fg-subtle group-focus-within:hidden group-hover:hidden pointer-coarse:hidden"
+          />
+        )}
       </button>
-      {/* Always shown on touch, spaced so a slightly-off tap on one can't land on the other. */}
-      <div className="hidden shrink-0 items-center gap-0.5 pr-1 group-focus-within:flex group-hover:flex pointer-coarse:flex pointer-coarse:gap-2">
+      {/* Always shown on touch, spaced so a slightly-off tap on one can't land on the other. Their
+          tooltips open toward the pages: the start side, as the panel is at the end. */}
+      <div className="hidden shrink-0 items-center gap-0.5 pe-1 group-focus-within:flex group-hover:flex pointer-coarse:flex pointer-coarse:gap-2">
         <IconButton
           size="icon-xs"
-          label={el.locked ? 'Unlock' : 'Lock'}
-          tooltipSide="left"
+          label={el.locked ? t.elements.actions.unlock : t.elements.actions.lock}
+          tooltipSide="start"
           icon={el.locked ? <Lock /> : <LockOpen />}
           active={el.locked ? true : undefined}
           onClick={() => setLocked([el.id], !el.locked)}
         />
         <IconButton
           size="icon-xs"
-          label={el.locked ? 'Unlock to delete' : 'Delete'}
-          tooltipSide="left"
+          label={el.locked ? t.elements.actions.unlockToDelete : t.elements.actions.delete}
+          tooltipSide="start"
           icon={<Trash />}
           disabled={el.locked}
           onClick={() => {

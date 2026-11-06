@@ -2,6 +2,7 @@
 
 export const PDF_ACCEPT = 'application/pdf,.pdf'
 
+/** The sample's file name: a document's name, in English like the form itself (not interface text). */
 export const SAMPLE_FORM_NAME = 'Sample application form.pdf'
 
 export function isPdfFile(file: Pick<File, 'name' | 'type'>): boolean {

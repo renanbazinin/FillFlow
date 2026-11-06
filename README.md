@@ -16,6 +16,7 @@ Fill & sign any PDF right in your browser — free, no sign-up, and private: you
 - **Handles awkward files.** Password-protected PDFs open after you enter the password, slightly damaged files still open and export, and pure XFA forms get a clear explanation instead of a blank panel.
 - **Picks up where you left off.** Work is auto-saved locally (IndexedDB) with a recent-documents list. Opening the same PDF again brings your work back, and a second tab can't silently overwrite it. If the browser blocks storage, the app says so and keeps working.
 - **Keeps going offline.** The PDF engine is fetched in the background once the page has loaded, so documents still open and fill if the connection drops.
+- **In English and Hebrew.** The interface follows the browser's language, and a switch on the home page and in the editor's ⋯ menu changes it. In Hebrew the whole frame reads right to left — top bar, panels, tool dock, dialogs — while the document pages and everything placed on them stay exactly as they are.
 - **Comfortable everywhere.** Zoom (pinch, Ctrl/⌘+wheel, fit width/page), page thumbnails, light & dark themes, a touch-friendly layout on phones with finger-sized controls, and Windows high-contrast support.
 - **Keyboard and screen readers.** Every tool works from the keyboard (Enter adds the active tool's item in the middle of the view; press `?` for all shortcuts), and controls are labelled for screen readers.
 
@@ -50,12 +51,14 @@ The app targets current Chrome, Edge, Firefox and Safari on desktop and mobile. 
 - **One coordinate system** — everything placed on a page is stored in *view space*: PDF points with the page rotation applied, origin at the top-left of the visible page (`src/model/types.ts`). `src/lib/pdf/geometry.ts` converts to PDF user space and is tested against pdf.js' own viewport math for every rotation and crop offset.
 - **Shared text layout** — `src/lib/text/layout.ts` computes line positions and baselines for both the editor and the exporter, using the bundled Arimo / Tinos / Cousine fonts (Latin, Greek, Cyrillic and Hebrew) with pinned metrics.
 - **Export** — [pdf-lib](https://pdf-lib.js.org/) writes form values into the original AcroForm and draws the placed items under a single transformation matrix per page, so they stay upright and in place on rotated pages. Text is embedded as real, selectable text (subset fonts, bidi-aware, letter spacing per grapheme cluster like the browser). Encrypted or damaged files are first rewritten through pdf.js, then their layers, page labels and field tree are restored. The export engine is a separate chunk, loaded in the background once a document is open.
+- **Languages** — `src/i18n`: one typed dictionary per language and area (English defines the shape, so a missing translation fails the type check), `<html lang dir>` set before the first paint, logical CSS for the mirrored frame. See `src/i18n/README.md` for the conventions and the Hebrew glossary.
 - **State** — a single [zustand](https://zustand.docs.pmnd.rs/) store (`src/store/editor.ts`) with snapshot-based undo/redo. Autosave writes to IndexedDB with a compare-and-swap on each document's last save, so two tabs never overwrite each other's work unnoticed.
 
 ```
 src/
   model/        types, element factories, fonts, tools
   store/        editor store (document, items, history, view)
+  i18n/         interface languages: locale, dictionaries (en, he), conventions
   lib/          pdf (pdf.js, geometry, form fields), export, text layout, storage, utils
   features/     home, editor shell, viewer, elements (editing), forms, signature, export
   components/   UI kit (Radix-based) and brand

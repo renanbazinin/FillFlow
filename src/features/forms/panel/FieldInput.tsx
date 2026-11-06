@@ -3,13 +3,15 @@ import { Checkbox, RadioGroup } from 'radix-ui'
 import { Check, ChevronDown, CircleCheck, Lock, Signature } from 'lucide-react'
 import { Button } from '../../../components/ui/button'
 import { Input } from '../../../components/ui/controls'
-import { fieldLabel, radioOptions } from '../../../lib/pdf/forms/labels'
+import { useDir, useT, type Direction } from '../../../i18n'
+import { fieldLabel } from '../../../lib/pdf/forms/labels'
+import { firstStrongDirection } from '../../../lib/text/direction'
 import { cn } from '../../../lib/utils/misc'
 import type { FormField } from '../../../model/types'
 import { useEditor } from '../../../store/editor'
 import { primaryWidget, revealField } from '../navigation'
 import { requestSignatureFor } from '../signatureTarget'
-import { setFieldValue, useComboText, useFieldSigned, useFieldValue } from '../useField'
+import { setFieldValue, useComboText, useFieldLabel, useFieldSigned, useFieldValue, useRadioOptions } from '../useField'
 
 /** Like Input: the ring shows focus, and forced colors mode (which drops rings) an outline. */
 const FIELD =
@@ -18,21 +20,36 @@ const FIELD =
 /** A read-only field: muted, with no hover emphasis. Set by prop: every <select> matches `:read-only`. */
 const LOCKED = 'bg-surface-2 text-fg-muted hover:border-control'
 
-function Label({ htmlFor, field, aside }: { htmlFor?: string; field: FormField; aside?: ReactNode }) {
+/**
+ * Which way a box of people's text reads: the way its text does, and with no letter in it yet (empty,
+ * or digits only) the interface's way, so the caret and placeholder start on the interface's side.
+ */
+function textDir(text: string, ui: Direction): Direction {
+  return firstStrongDirection(text) ?? ui
+}
+
+/**
+ * A field's label: the PDF's words, in their own direction (`labelId` lets a group of choices be named
+ * by them), then the required star and the read-only lock.
+ */
+function Label({ htmlFor, labelId, field, aside }: { htmlFor?: string; labelId?: string; field: FormField; aside?: ReactNode }) {
+  const t = useT()
   const Tag = htmlFor ? 'label' : 'div'
   return (
     <div className="mb-1.5 flex min-w-0 items-baseline gap-2">
       <Tag htmlFor={htmlFor} className="min-w-0 flex-1 text-[12.5px] font-medium leading-snug text-fg-muted">
-        <span className="break-words [overflow-wrap:anywhere]">{fieldLabel(field)}</span>
+        <bdi id={labelId} className="break-words [overflow-wrap:anywhere]">
+          {fieldLabel(field)}
+        </bdi>
         {field.required && (
-          <span className="ml-0.5 text-danger" aria-hidden>
+          <span className="ms-0.5 text-danger" aria-hidden>
             *
           </span>
         )}
         {field.readOnly && (
           <>
-            <Lock aria-hidden className="ml-1 inline size-3 -translate-y-px text-fg-subtle" />
-            <span className="sr-only"> (read-only)</span>
+            <Lock aria-hidden className="ms-1 inline size-3 -translate-y-px text-fg-subtle" />
+            <span className="sr-only"> {t.forms.panel.readOnly}</span>
           </>
         )}
       </Tag>
@@ -62,6 +79,7 @@ function AutoTextarea(props: React.ComponentProps<'textarea'>) {
 function TextInput({ field }: { field: FormField }) {
   const id = useId()
   const value = String(useFieldValue(field))
+  const ui = useDir()
   const counter =
     field.maxLength && !field.readOnly ? (
       <span className={cn('shrink-0 text-[11px] tabular-nums text-fg-subtle', value.length >= field.maxLength && 'text-warning')}>
@@ -71,7 +89,7 @@ function TextInput({ field }: { field: FormField }) {
   const common = {
     id,
     value,
-    dir: 'auto',
+    dir: textDir(value, ui),
     readOnly: field.readOnly,
     maxLength: field.maxLength,
     'aria-required': field.required || undefined,
@@ -97,6 +115,7 @@ function TextInput({ field }: { field: FormField }) {
 function CheckboxInput({ field }: { field: FormField }) {
   const id = useId()
   const checked = useFieldValue(field) === true
+  const label = useFieldLabel(field)
   return (
     <div className="flex items-start gap-2.5 py-0.5">
       <Checkbox.Root
@@ -112,8 +131,8 @@ function CheckboxInput({ field }: { field: FormField }) {
         </Checkbox.Indicator>
       </Checkbox.Root>
       <label htmlFor={id} className="min-w-0 flex-1 cursor-pointer select-none text-[13px] leading-[18px] text-fg">
-        <span className="[overflow-wrap:anywhere]">{fieldLabel(field)}</span>
-        {field.required && <span className="ml-0.5 text-danger">*</span>}
+        <bdi className="[overflow-wrap:anywhere]">{label}</bdi>
+        {field.required && <span className="ms-0.5 text-danger">*</span>}
       </label>
     </div>
   )
@@ -124,7 +143,7 @@ function CheckboxInput({ field }: { field: FormField }) {
  * in the system highlight colors, which its circle, dot and check follow.
  */
 const CHIP =
-  'inline-flex min-h-8 max-w-full items-center gap-2 rounded-lg border border-line bg-surface px-2.5 py-1 text-left text-[13px] text-fg shadow-xs transition-colors hover:border-line-strong disabled:opacity-60 data-[state=checked]:border-accent data-[state=checked]:bg-accent-soft data-[state=checked]:text-accent-ink forced-colors:focus-visible:outline-[Highlight] forced-colors:data-[state=checked]:system-highlight forced-colors:data-[state=checked]:border-[Highlight]'
+  'inline-flex min-h-8 max-w-full items-center gap-2 rounded-lg border border-line bg-surface px-2.5 py-1 text-start text-[13px] text-fg shadow-xs transition-colors hover:border-line-strong disabled:opacity-60 data-[state=checked]:border-accent data-[state=checked]:bg-accent-soft data-[state=checked]:text-accent-ink forced-colors:focus-visible:outline-[Highlight] forced-colors:data-[state=checked]:system-highlight forced-colors:data-[state=checked]:border-[Highlight]'
 
 /** The radio circle of a chip (with `group` on the chip) and its dot. */
 const CHIP_RADIO =
@@ -132,16 +151,17 @@ const CHIP_RADIO =
 const CHIP_DOT = 'size-1.5 rounded-full bg-accent forced-colors:bg-[HighlightText]'
 
 function RadioInput({ field }: { field: FormField }) {
+  const labelId = useId()
   const value = String(useFieldValue(field))
-  const options = radioOptions(field)
+  const options = useRadioOptions(field)
   return (
     <>
-      <Label field={field} />
+      <Label field={field} labelId={labelId} />
       <RadioGroup.Root
         value={value}
         onValueChange={(v) => setFieldValue(field.name, v)}
         disabled={field.readOnly}
-        aria-label={fieldLabel(field)}
+        aria-labelledby={labelId}
         aria-required={field.required || undefined}
         className="flex flex-wrap gap-1.5"
       >
@@ -163,6 +183,8 @@ function RadioInput({ field }: { field: FormField }) {
 function DropdownInput({ field }: { field: FormField }) {
   const id = useId()
   const listId = useId()
+  const t = useT()
+  const ui = useDir()
   const value = String(useFieldValue(field))
   const combo = useComboText(field, value)
   const options = field.options ?? []
@@ -174,10 +196,10 @@ function DropdownInput({ field }: { field: FormField }) {
         <Input
           id={id}
           list={listId}
-          dir="auto"
+          dir={textDir(combo.text, ui)}
           value={combo.text}
           readOnly={field.readOnly}
-          placeholder="Choose or type…"
+          placeholder={t.forms.panel.chooseOrType}
           autoComplete="off"
           className={field.readOnly ? LOCKED : undefined}
           onChange={(e) => combo.change(e.target.value)}
@@ -195,16 +217,18 @@ function DropdownInput({ field }: { field: FormField }) {
     <>
       <Label htmlFor={id} field={field} />
       <div className="relative">
+        {/* The box reads the interface's way, so its text keeps clear of the arrow at its end; the
+            choices are the PDF's words. */}
         <select
           id={id}
-          dir="auto"
+          dir={ui}
           value={value}
           disabled={field.readOnly}
           aria-required={field.required || undefined}
           onChange={(e) => setFieldValue(field.name, e.target.value)}
-          className={cn(FIELD, 'h-9 cursor-pointer appearance-none pl-3 pr-9', value === '' && 'text-fg-subtle', field.readOnly && LOCKED)}
+          className={cn(FIELD, 'h-9 cursor-pointer appearance-none ps-3 pe-9', value === '' && 'text-fg-subtle', field.readOnly && LOCKED)}
         >
-          <option value="">Select…</option>
+          <option value="">{t.forms.panel.select}</option>
           {custom && <option value={value}>{value}</option>}
           {options.map((o, i) => (
             <option key={i} value={o.value} className="text-fg">
@@ -212,25 +236,27 @@ function DropdownInput({ field }: { field: FormField }) {
             </option>
           ))}
         </select>
-        <ChevronDown aria-hidden className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-fg-subtle" />
+        <ChevronDown aria-hidden className="pointer-events-none absolute end-3 top-1/2 size-4 -translate-y-1/2 text-fg-subtle" />
       </div>
     </>
   )
 }
 
 function ListboxInput({ field }: { field: FormField }) {
+  const labelId = useId()
+  const t = useT()
   const raw = useFieldValue(field)
   const value = Array.isArray(raw) ? raw : []
   const options = field.options ?? []
   if (!field.multiSelect) {
     return (
       <>
-        <Label field={field} />
+        <Label field={field} labelId={labelId} />
         <RadioGroup.Root
           value={value[0] ?? ''}
           onValueChange={(v) => setFieldValue(field.name, [v])}
           disabled={field.readOnly}
-          aria-label={fieldLabel(field)}
+          aria-labelledby={labelId}
           className="flex flex-wrap gap-1.5"
         >
           {options.map((o, i) => (
@@ -249,8 +275,8 @@ function ListboxInput({ field }: { field: FormField }) {
   }
   return (
     <>
-      <Label field={field} aside={<span className="shrink-0 text-[11px] text-fg-subtle">Pick any</span>} />
-      <div role="group" aria-label={fieldLabel(field)} className="flex flex-wrap gap-1.5">
+      <Label field={field} labelId={labelId} aside={<span className="shrink-0 text-[11px] text-fg-subtle">{t.forms.panel.pickAny}</span>} />
+      <div role="group" aria-labelledby={labelId} className="flex flex-wrap gap-1.5">
         {options.map((o, i) => {
           const on = value.includes(o.value)
           return (
@@ -284,16 +310,18 @@ function ListboxInput({ field }: { field: FormField }) {
 
 function SignatureInput({ field }: { field: FormField }) {
   const signed = useFieldSigned(field)
+  const t = useT()
+  const m = t.forms.panel
   return (
     <div className="flex items-center gap-3">
       <div className="min-w-0 flex-1">
         <div className="text-[12.5px] font-medium leading-snug text-fg-muted [overflow-wrap:anywhere]">
-          {fieldLabel(field)}
-          {field.required && <span className="ml-0.5 text-danger">*</span>}
+          <bdi>{fieldLabel(field)}</bdi>
+          {field.required && <span className="ms-0.5 text-danger">*</span>}
         </div>
         <div className={cn('mt-0.5 flex items-center gap-1 text-xs', signed ? 'text-success' : 'text-fg-subtle')}>
           {signed && <CircleCheck className="size-3.5" />}
-          {signed ? 'Signed' : 'Not signed yet'}
+          {signed ? m.signed : m.notSigned}
         </div>
       </div>
       <Button
@@ -310,7 +338,7 @@ function SignatureInput({ field }: { field: FormField }) {
         }}
       >
         <Signature />
-        {signed ? 'Sign again' : 'Sign'}
+        {signed ? m.signAgain : m.sign}
       </Button>
     </div>
   )

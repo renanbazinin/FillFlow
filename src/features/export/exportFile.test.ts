@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { getT, setLocale } from '../../i18n'
 import { bidiIsolate } from '../../lib/utils/misc'
 import type { Element, FormField } from '../../model/types'
 import {
@@ -11,9 +12,9 @@ import {
   formatFileSize,
   isOpenShortcut,
   isSaveShortcut,
-  plural,
   progressLabel,
   quotedList,
+  summaryParts,
   typedFileName,
   unwrittenFieldLabels,
 } from './exportFile'
@@ -189,10 +190,9 @@ describe('summary counts', () => {
   })
 
   it('pluralizes', () => {
-    expect(plural(1, 'page')).toBe('1 page')
-    expect(plural(2, 'page')).toBe('2 pages')
-    expect(plural(0, 'item')).toBe('0 items')
-    expect(plural(1200, 'page')).toBe(`${(1200).toLocaleString()} pages`)
+    expect(summaryParts(1, 0, null)).toEqual(['1 page', '0 items placed'])
+    expect(summaryParts(2, 1, 3)).toEqual(['2 pages', '1 item placed', '3 fields filled'])
+    expect(summaryParts(1200, 2, 1)).toEqual([`${(1200).toLocaleString()} pages`, '2 items placed', '1 field filled'])
   })
 })
 
@@ -306,5 +306,52 @@ describe('file name edge cases', () => {
     expect(finalFileName('final?', 'x.pdf')).toBe('final.pdf')
     expect(finalFileName('Mój wniosek / final?', 'x.pdf')).toBe('Mój wniosek - final.pdf')
     expect(finalFileName('-draft-', 'x.pdf')).toBe('draft.pdf')
+  })
+})
+
+describe('in Hebrew', () => {
+  beforeEach(() => setLocale('he'))
+  afterEach(() => setLocale('en'))
+
+  it('suggests a name ending in a Hebrew word, unless asked for another language’s', () => {
+    expect(defaultBaseName('טופס 101.pdf')).toBe('טופס 101-ממולא')
+    expect(finalFileName('', 'contract.pdf')).toBe('contract-ממולא.pdf')
+    expect(finalFileName('דוח', 'contract.pdf')).toBe('דוח.pdf')
+    expect(defaultBaseName('טופס 101.pdf', 'en')).toBe('טופס 101-filled')
+  })
+
+  it('counts what the file holds, one in words', () => {
+    expect(summaryParts(1, 1, 1)).toEqual(['עמוד אחד', 'פריט אחד נוסף', 'שדה אחד מולא'])
+    expect(summaryParts(3, 0, 0)).toEqual(['3 עמודים', 'לא נוספו פריטים', 'לא מולאו שדות'])
+    expect(summaryParts(2, 5, null)).toEqual(['2 עמודים', '5 פריטים נוספו'])
+  })
+
+  it('describes each phase and sizes', () => {
+    expect(progressLabel(null)).toBe('מכין את קובץ ה-PDF…')
+    expect(progressLabel({ phase: 'pages', done: 2, total: 12 })).toBe('מוסיף את השינויים שלכם… עמוד 3 מתוך 12')
+    expect(progressLabel({ phase: 'pages', done: 0, total: 1 })).toBe('מוסיף את השינויים שלכם…')
+    expect(progressLabel({ phase: 'save', done: 1, total: 1 })).toBe('שומר…')
+    expect(formatFileSize(900)).toBe('900 בתים')
+    expect(formatFileSize(1500)).toBe('1 ק״ב')
+    expect(formatFileSize(3.25 * 1024 * 1024)).toBe('3.3 מ״ב')
+  })
+
+  it('names fields in straight quotes, each isolated, with ו before the last', () => {
+    const q = (name: string) => `"${bidiIsolate(name)}"`
+    expect(quotedList(['שם'])).toBe(q('שם'))
+    expect(quotedList(['שם', 'City'])).toBe(`${q('שם')} ו${q('City')}`)
+    expect(quotedList(['א', 'ב', 'ג'])).toBe(`${q('א')}, ${q('ב')} ו${q('ג')}`)
+    expect(quotedList(['א', 'ב', 'ג', 'ד'])).toBe(`${q('א')}, ${q('ב')}, ${q('ג')} ועוד אחד`)
+    expect(quotedList(['א', 'ב', 'ג', 'ד', 'ה'])).toBe(`${q('א')}, ${q('ב')}, ${q('ג')} ועוד 2`)
+  })
+
+  it('agrees with how many fields a sentence names', () => {
+    const sig = bidiIsolate('חתימה')
+    expect(coveredFieldsNote(['חתימה'])).toBe(`השדה "${sig}" ישוטח בכל זאת, כדי שמה שהוספתם עליו יישאר גלוי.`)
+    expect(coveredFieldsNote(['שם', 'חתימה'])).toMatch(/^השדות .* ישוטחו בכל זאת, כדי שמה שהוספתם עליהם יישאר גלוי\.$/)
+    const { unwritten } = getT().export
+    expect(unwritten.body(quotedList(['שם']), 1)).toBe(`קובץ ה-PDF לא יכלול את מה שהזנתם בשדה "${bidiIsolate('שם')}".`)
+    expect(unwritten.body(quotedList(['שם', 'עיר']), 2)).toMatch(/^קובץ ה-PDF לא יכלול את מה שהזנתם בשדות "/)
+    expect(unwritten.title(1)).toBe('לא ניתן היה למלא שדה אחד')
   })
 })

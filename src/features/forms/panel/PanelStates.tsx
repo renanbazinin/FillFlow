@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { Check, CircleCheckBig, MousePointerClick, Signature, TriangleAlert, Type } from 'lucide-react'
 import { Kbd } from '../../../components/ui/controls'
+import { useT } from '../../../i18n'
 import { cn } from '../../../lib/utils/misc'
 import { TOOL_BY_ID } from '../../../model/tools'
 import type { ToolId } from '../../../model/types'
@@ -32,6 +33,7 @@ const QUICK_TOOLS: { id: ToolId; icon: ReactNode }[] = [
 ]
 
 function ToolChips() {
+  const t = useT()
   const pick = (id: ToolId) => {
     const s = useEditor.getState()
     if (id === 'signature') s.openDialog('signature')
@@ -40,20 +42,20 @@ function ToolChips() {
   return (
     <div className="mt-5 flex w-full max-w-[300px] flex-col gap-1.5">
       {QUICK_TOOLS.map(({ id, icon }) => {
-        const tool = TOOL_BY_ID[id]
+        const { shortcut } = TOOL_BY_ID[id]
         return (
           <button
             key={id}
             type="button"
             onClick={() => pick(id)}
-            className="flex min-h-11 items-center gap-3 rounded-xl border border-line bg-surface px-3 py-2 text-left shadow-xs transition-colors hover:border-line-strong hover:bg-surface-2"
+            className="flex min-h-11 items-center gap-3 rounded-xl border border-line bg-surface px-3 py-2 text-start shadow-xs transition-colors hover:border-line-strong hover:bg-surface-2"
           >
             <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-surface-3 text-fg-muted [&_svg]:size-4">{icon}</span>
             <span className="min-w-0 flex-1">
-              <span className="block text-[13px] font-medium text-fg">{tool.label}</span>
-              <span className="block text-[11.5px] leading-snug text-fg-subtle">{tool.hint}</span>
+              <span className="block text-[13px] font-medium text-fg">{t.tools[id].label}</span>
+              <span className="block text-[11.5px] leading-snug text-fg-subtle">{t.tools[id].hint}</span>
             </span>
-            {tool.shortcut && <Kbd className="pointer-coarse:hidden">{tool.shortcut}</Kbd>}
+            {shortcut && <Kbd className="pointer-coarse:hidden">{shortcut}</Kbd>}
           </button>
         )
       })}
@@ -63,9 +65,10 @@ function ToolChips() {
 
 /** The PDF has no AcroForm fields: explain the free-form tools instead. */
 export function NoFieldsState() {
+  const t = useT()
   return (
-    <StateCard icon={<MousePointerClick />} title="No fillable fields">
-      This PDF has no built-in form fields — you can still fill it. Pick a tool and click anywhere on a page.
+    <StateCard icon={<MousePointerClick />} title={t.forms.states.noFieldsTitle}>
+      {t.forms.states.noFieldsBody}
       <div className="flex justify-center">
         <ToolChips />
       </div>
@@ -75,10 +78,10 @@ export function NoFieldsState() {
 
 /** Pure dynamic XFA documents: nothing native to fill. */
 export function XfaNotice() {
+  const t = useT()
   return (
-    <StateCard icon={<TriangleAlert />} tone="warning" title="Dynamic XFA form">
-      This PDF is an Adobe dynamic (XFA) form, which can’t be filled in a browser. You can still type, check and sign on top of
-      the pages, or open it in Adobe Acrobat Reader to use its own fields.
+    <StateCard icon={<TriangleAlert />} tone="warning" title={t.forms.states.xfaTitle}>
+      {t.forms.states.xfaBody}
       <div className="flex justify-center">
         <ToolChips />
       </div>
@@ -87,17 +90,20 @@ export function XfaNotice() {
 }
 
 export function FilterDoneState({ filter }: { filter: 'required' | 'empty' }) {
+  const t = useT()
+  const m = t.forms.states
   return (
-    <StateCard icon={<CircleCheckBig />} tone="success" title={filter === 'required' ? 'Required fields done' : 'Nothing left to fill'}>
-      {filter === 'required' ? 'Every required field has a value.' : 'Every field has a value. Review the form, then export.'}
+    <StateCard icon={<CircleCheckBig />} tone="success" title={filter === 'required' ? m.requiredDoneTitle : m.allDoneTitle}>
+      {filter === 'required' ? m.requiredDoneBody : m.allDoneBody}
     </StateCard>
   )
 }
 
 export function NoRequiredState() {
+  const t = useT()
   return (
-    <StateCard icon={<CircleCheckBig />} tone="success" title="No required fields">
-      This form doesn’t mark any field as required.
+    <StateCard icon={<CircleCheckBig />} tone="success" title={t.forms.states.noRequiredTitle}>
+      {t.forms.states.noRequiredBody}
     </StateCard>
   )
 }

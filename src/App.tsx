@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { Direction } from 'radix-ui'
 import { Toaster, type ToasterProps } from 'sonner'
 import { ConfirmHost } from './components/ui/confirm'
 import { TooltipProvider } from './components/ui/tooltip'
@@ -8,6 +9,7 @@ import { useMediaQuery } from './features/editor/useMediaQuery'
 import { FileDropOverlay } from './features/home/FileDropOverlay'
 import { HomeScreen } from './features/home/HomeScreen'
 import { STAYING_TOASTER } from './components/ui/toasts'
+import { useDir, useT, type Messages } from './i18n'
 import { useTheme } from './lib/theme'
 import { useEditor } from './store/editor'
 
@@ -39,40 +41,63 @@ export default function App() {
   const hasDoc = useEditor((s) => s.doc !== null)
   const short = useMediaQuery(SHORT_SCREEN)
   const { resolved } = useTheme()
+  const t = useT()
+  const dir = useDir()
   useBrowserChromeColor(hasDoc, resolved)
+  usePageLanguage(t, hasDoc)
   return (
-    <TooltipProvider>
-      {hasDoc ? <EditorScreen /> : <HomeScreen />}
-      <LoadOverlay />
-      <FileDropOverlay />
-      <ConfirmHost />
-      <Toaster
-        theme={resolved}
-        position="bottom-center"
-        // In the editor, stay clear of the tool dock (floating, or a bar along the bottom on phones)
-        // and its hint chip. On a short screen that would put toasts mid-screen, over the pages and
-        // the selection toolbar: they sit just above the dock there, over the hint.
-        offset={hasDoc ? (short ? 80 : 128) : 24}
-        mobileOffset={hasDoc ? { bottom: short ? 68 : 112 } : { bottom: 16 }}
-        gap={10}
-        toastOptions={TOAST_OPTIONS}
-      />
-      {/* The messages that stay until acted on, in a stack of their own just under the top bar: at the
-          bottom they would cover the popovers that open above the tool dock. Menus and popovers from
-          the top bar open over them (z-90); dialogs, sheets and the Opening… card stay below. */}
-      <Toaster
-        id={STAYING_TOASTER}
-        containerAriaLabel="Alerts"
-        theme={resolved}
-        position="top-center"
-        offset={{ top: UNDER_TOP_BAR }}
-        mobileOffset={{ top: UNDER_TOP_BAR }}
-        gap={10}
-        style={{ zIndex: 89 }}
-        toastOptions={TOAST_OPTIONS}
-      />
-    </TooltipProvider>
+    // Radix components (menus, tabs, toggle groups, sliders…) take their direction from here: arrow
+    // keys, submenus and sliders follow the interface's reading direction.
+    <Direction.Provider dir={dir}>
+      <TooltipProvider>
+        {hasDoc ? <EditorScreen /> : <HomeScreen />}
+        <LoadOverlay />
+        <FileDropOverlay />
+        <ConfirmHost />
+        <Toaster
+          theme={resolved}
+          position="bottom-center"
+          // In the editor, stay clear of the tool dock (floating, or a bar along the bottom on phones)
+          // and its hint chip. On a short screen that would put toasts mid-screen, over the pages and
+          // the selection toolbar: they sit just above the dock there, over the hint.
+          offset={hasDoc ? (short ? 80 : 128) : 24}
+          mobileOffset={hasDoc ? { bottom: short ? 68 : 112 } : { bottom: 16 }}
+          gap={10}
+          dir={dir}
+          containerAriaLabel={t.shell.notifications}
+          toastOptions={TOAST_OPTIONS}
+        />
+        {/* The messages that stay until acted on, in a stack of their own just under the top bar: at the
+            bottom they would cover the popovers that open above the tool dock. Menus and popovers from
+            the top bar open over them (z-90); dialogs, sheets and the Opening… card stay below. */}
+        <Toaster
+          id={STAYING_TOASTER}
+          containerAriaLabel={t.shell.alerts}
+          dir={dir}
+          theme={resolved}
+          position="top-center"
+          offset={{ top: UNDER_TOP_BAR }}
+          mobileOffset={{ top: UNDER_TOP_BAR }}
+          gap={10}
+          style={{ zIndex: 89 }}
+          toastOptions={TOAST_OPTIONS}
+        />
+      </TooltipProvider>
+    </Direction.Provider>
   )
+}
+
+/**
+ * The page's title (on the home page; the editor shows the document's name) and description in the
+ * interface's language. index.html carries the English ones for link previews.
+ */
+function usePageLanguage(t: Messages, hasDoc: boolean) {
+  useEffect(() => {
+    if (!hasDoc) document.title = t.shell.title
+  }, [t, hasDoc])
+  useEffect(() => {
+    document.querySelector('meta[name="description"]')?.setAttribute('content', t.shell.description)
+  }, [t])
 }
 
 /** Tints the mobile browser UI to match the top of the current screen in the active theme. */

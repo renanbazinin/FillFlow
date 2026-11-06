@@ -1,8 +1,10 @@
 import { useRef, type FocusEvent, type ReactNode } from 'react'
-import { Dialog as RDialog } from 'radix-ui'
+import { Dialog as RDialog, Direction } from 'radix-ui'
 import { X } from 'lucide-react'
+import { useT } from '../../i18n'
 import { cn } from '../../lib/utils/misc'
 import { isBackdropPress, onModalClose, onModalOpen } from './modal'
+import { physicalSide } from './side'
 
 export interface DialogProps {
   open: boolean
@@ -10,7 +12,7 @@ export interface DialogProps {
   title: ReactNode
   description?: ReactNode
   children?: ReactNode
-  /** Footer row (right-aligned buttons). */
+  /** Footer row (buttons at the end: right, or left in a right-to-left interface). */
   footer?: ReactNode
   /** Width preset. */
   size?: 'sm' | 'md' | 'lg' | 'xl'
@@ -81,6 +83,7 @@ export function Dialog({
   onOpenAutoFocus,
   onCloseAutoFocus,
 }: DialogProps) {
+  const t = useT()
   const focusMoves = useKeepFocusMoves()
   const backdropRef = useRef<HTMLDivElement>(null)
   return (
@@ -115,13 +118,13 @@ export function Dialog({
               {description ? (
                 <RDialog.Description className="mt-1 text-sm text-fg-muted">{description}</RDialog.Description>
               ) : (
-                <RDialog.Description className="sr-only">{typeof title === 'string' ? title : 'Dialog'}</RDialog.Description>
+                <RDialog.Description className="sr-only">{typeof title === 'string' ? title : t.shell.ui.dialog}</RDialog.Description>
               )}
             </div>
             {/* 40px on touch screens, grown evenly around the same icon spot. */}
             <RDialog.Close
-              className="-mr-2 -mt-1 inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-fg-subtle transition-colors hover:bg-surface-3 hover:text-fg pointer-coarse:-mr-3 pointer-coarse:-mt-2 pointer-coarse:size-10"
-              aria-label="Close"
+              className="-me-2 -mt-1 inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-fg-subtle transition-colors hover:bg-surface-3 hover:text-fg pointer-coarse:-me-3 pointer-coarse:-mt-2 pointer-coarse:size-10"
+              aria-label={t.common.close}
             >
               <X className="size-4" />
             </RDialog.Close>
@@ -141,14 +144,17 @@ export function Dialog({
 export interface SheetProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  side?: 'left' | 'right' | 'bottom'
+  /** The edge it slides in from; 'start' / 'end' are left / right, mirrored in a right-to-left interface. */
+  side?: 'start' | 'end' | 'left' | 'right' | 'bottom'
   title: string
   children: ReactNode
   className?: string
 }
 
 /** Slide-over panel (used for side panels on small screens). */
-export function Sheet({ open, onOpenChange, side = 'right', title, children, className }: SheetProps) {
+export function Sheet({ open, onOpenChange, side: logicalSide = 'end', title, children, className }: SheetProps) {
+  const dir = Direction.useDirection()
+  const side = physicalSide(logicalSide, dir)
   const contentRef = useRef<HTMLDivElement>(null)
   const backdropRef = useRef<HTMLDivElement>(null)
   const focusMoves = useKeepFocusMoves()

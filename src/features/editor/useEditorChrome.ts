@@ -1,5 +1,6 @@
-import { useEffect } from 'react'
+import { createElement, useEffect } from 'react'
 import { toast } from 'sonner'
+import { useT, type Messages } from '../../i18n'
 import { getFormDocumentInfo } from '../../lib/pdf/formFields'
 import { useSaveStatus } from '../../lib/storage/autosave'
 import { useEditor } from '../../store/editor'
@@ -10,22 +11,30 @@ import { RIGHT_PANEL_INLINE } from './useMediaQuery'
 /** Documents we've already announced form fields for (once per page load). */
 const announced = new Set<string>()
 
+/** Words of a message that stays up a while: they follow the interface language meanwhile. */
+function LiveText({ text }: { text: (t: Messages) => string }) {
+  return text(useT())
+}
+
+const live = (text: (t: Messages) => string) => createElement(LiveText, { text })
+
 /** Window-level side effects of the editor: tab title, unsaved-work guard, first-open toast. */
 export function useEditorChrome(): void {
   const docId = useEditor((s) => s.doc?.id ?? null)
   const docName = useEditor((s) => s.doc?.name ?? null)
   const loadFailed = useEditor((s) => s.doc?.sessionLoadFailed === true)
   const saveFailed = useSaveStatus((s) => s.state === 'error')
+  const t = useT()
 
-  // Tab title: "Lease agreement — FillFlow".
+  // Tab title: "Lease agreement — FillFlow" (in the interface language).
   useEffect(() => {
     if (!docName) return
     const previous = document.title
-    document.title = `${displayName(docName)} — FillFlow`
+    document.title = t.editor.tabTitle(displayName(docName))
     return () => {
       document.title = previous
     }
-  }, [docName])
+  }, [docName, t])
 
   // If the last save failed, leaving would lose work: ask first.
   useEffect(() => {
@@ -39,7 +48,8 @@ export function useEditorChrome(): void {
     return () => window.removeEventListener('beforeunload', onBeforeUnload)
   }, [saveFailed])
 
-  // A document with a form: tell people they can just click into fields (once per document).
+  // A document with a form: tell people they can just click into fields (once per document). Its
+  // words follow the interface language while it is up (the language may be switched meanwhile).
   useEffect(() => {
     // Its saved work didn't load: that warning stays in front, not a hint inviting the user to type
     // into the blank form. Once a reload (the same document again) brings the work, the hint comes.
@@ -59,25 +69,31 @@ export function useEditorChrome(): void {
             s.rightPanelOpen && s.rightPanelTab === 'form' && window.matchMedia(RIGHT_PANEL_INLINE).matches
           if (!count) {
             if (getFormDocumentInfo(s.doc.pdf)?.pureXfa) {
-              toast.warning('This dynamic XFA form can’t be filled in a browser', {
+              toast.warning(live((t) => t.editor.formHint.xfa), {
                 id: toastId,
-                description: 'You can still type, check and sign on top of the pages.',
+                description: live((t) => t.editor.formHint.xfaBody),
                 duration: 8000,
                 action: formVisible
                   ? undefined
-                  : { label: 'Details', onClick: () => useEditor.getState().setRightPanelOpen(true, 'form') },
+                  : {
+                      label: live((t) => t.editor.formHint.details),
+                      onClick: () => useEditor.getState().setRightPanelOpen(true, 'form'),
+                    },
               })
             }
             return
           }
           const touch = window.matchMedia('(pointer: coarse)').matches
-          toast(formFieldsMessage(count, touch), {
-            id: toastId,
-            duration: 6000,
-            action: formVisible
-              ? undefined
-              : { label: 'Show form', onClick: () => useEditor.getState().setRightPanelOpen(true, 'form') },
-          })
+          toast(
+            live(() => formFieldsMessage(count, touch)),
+            {
+              id: toastId,
+              duration: 6000,
+              action: formVisible
+                ? undefined
+                : { label: live((t) => t.editor.formHint.show), onClick: () => useEditor.getState().setRightPanelOpen(true, 'form') },
+            },
+          )
         }, 450)
     // Once a field is in use, the hint has done its job: it goes rather than cover the fields
     // (Tab moves on to the ones further down, where it sits).

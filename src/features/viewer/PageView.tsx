@@ -1,4 +1,5 @@
 import { memo, useCallback, useState } from 'react'
+import { useDir, useT } from '../../i18n'
 import type { PDFDocumentProxy } from '../../lib/pdf/pdfjs'
 import type { PageInfo } from '../../model/types'
 import { useEditor } from '../../store/editor'
@@ -35,6 +36,8 @@ export const PageView = memo(function PageView({ info, pdf, scale, pageCount, al
   // A drag moves the selection. Asked on its pages only, so a drag starting doesn't re-render them all.
   const selected = useEditor((s) => selectionPages(s).has(index))
   const dragging = useElementsUi((s) => selected && s.interaction === 'move')
+  const t = useT()
+  const dir = useDir()
 
   const frameRef = useCallback(
     (el: HTMLDivElement | null) => {
@@ -74,7 +77,7 @@ export const PageView = memo(function PageView({ info, pdf, scale, pageCount, al
         ref={frameRef}
         data-page-index={index}
         role="group"
-        aria-label={`Page ${index + 1} of ${pageCount}`}
+        aria-label={t.editor.viewer.page(index + 1, pageCount)}
         className="relative shrink-0 bg-white shadow-page"
         style={{ width, height }}
       >
@@ -82,8 +85,10 @@ export const PageView = memo(function PageView({ info, pdf, scale, pageCount, al
         {showLayers && <FormFieldLayer page={info} scale={scale} />}
         {showLayers && <ElementLayer page={info} scale={scale} />}
       </div>
+      {/* Interface text among the (left-to-right) pages: in the interface's direction. */}
       <div
         aria-hidden
+        dir={dir}
         className="flex select-none items-center justify-center text-[11px] font-medium leading-none tabular-nums text-fg-subtle"
         style={{ height: PAGE_LABEL_HEIGHT }}
       >

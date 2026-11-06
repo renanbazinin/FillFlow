@@ -3,6 +3,7 @@ import { CircleAlert, Eye, EyeOff, FileText, FolderOpen, LockKeyhole, RotateCw }
 import { Button } from '../../components/ui/button'
 import { Input, Spinner } from '../../components/ui/controls'
 import { Dialog } from '../../components/ui/dialog'
+import { richText, useT } from '../../i18n'
 import { cn } from '../../lib/utils/misc'
 import { useEditor, type LoadedDocument, type LoadState } from '../../store/editor'
 import { chooseAndOpenPdf } from '../home/openFile'
@@ -66,6 +67,7 @@ export function LoadOverlay() {
 }
 
 function LoadingCard({ fileName }: { fileName: string }) {
+  const t = useT()
   const [slow, setSlow] = useState(false)
   const card = useRef<HTMLDivElement>(null)
   const cancelButton = useRef<HTMLButtonElement>(null)
@@ -152,14 +154,14 @@ function LoadingCard({ fileName }: { fileName: string }) {
       onKeyDown={keepTabInside}
       className="fixed inset-0 z-[85] grid place-items-center bg-overlay/60 p-6 opacity-0 outline-none animate-fade-in [animation-delay:150ms] [animation-duration:200ms] [animation-fill-mode:forwards]"
     >
-      <div className="flex max-w-[min(92vw,420px)] items-center gap-3.5 rounded-2xl border border-line bg-surface py-3.5 pl-4 pr-5 shadow-overlay animate-scale-in [animation-delay:150ms] [animation-fill-mode:both]">
+      <div className="flex max-w-[min(92vw,420px)] items-center gap-3.5 rounded-2xl border border-line bg-surface py-3.5 ps-4 pe-5 shadow-overlay animate-scale-in [animation-delay:150ms] [animation-fill-mode:both]">
         <div className="relative grid size-10 shrink-0 place-items-center rounded-xl bg-accent-soft text-accent-ink">
           <FileText className="size-[18px]" strokeWidth={1.9} />
-          <Spinner className="absolute -bottom-1 -right-1 size-[18px] rounded-full bg-surface p-[2px] text-accent" />
+          <Spinner className="absolute -bottom-1 -end-1 size-[18px] rounded-full bg-surface p-[2px] text-accent" />
         </div>
         <div className="min-w-0 flex-1">
           <div id={titleId} className="text-[13.5px] font-semibold text-fg">
-            Opening…
+            {t.home.loading.title}
           </div>
           <div id={nameId} className="truncate text-[12.5px] text-fg-muted" dir="auto" title={fileName}>
             {displayName(fileName)}
@@ -172,9 +174,9 @@ function LoadingCard({ fileName }: { fileName: string }) {
             size="sm"
             onClick={() => useEditor.getState().cancelOpen()}
             aria-keyshortcuts="Escape"
-            className="-mr-1.5 animate-fade-in"
+            className="-me-1.5 animate-fade-in"
           >
-            Cancel
+            {t.common.cancel}
           </Button>
         )}
       </div>
@@ -195,6 +197,7 @@ function PasswordDialog({
   onSubmit: (password: string) => void
   onCancel: () => void
 }) {
+  const t = useT()
   const [password, setPassword] = useState('')
   const [reveal, setReveal] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -214,13 +217,9 @@ function PasswordDialog({
       open
       onOpenChange={(o) => !o && close()}
       size="sm"
-      title={<IconTitle icon={<LockKeyhole />}>This PDF is password&#8209;protected</IconTitle>}
-      description={
-        <>
-          {/* <bdi>: a right-to-left name keeps its own order inside the English sentence. */}
-          Enter the password to open <bdi className="font-medium text-fg">{displayName(fileName)}</bdi>.
-        </>
-      }
+      title={<IconTitle icon={<LockKeyhole />}>{t.home.password.title}</IconTitle>}
+      // <bdi>: the name keeps its own direction inside the sentence, whichever way the interface reads.
+      description={richText(t.home.password.body, { name: <bdi className="font-medium text-fg">{displayName(fileName)}</bdi> })}
       onOpenAutoFocus={(e) => {
         e.preventDefault()
         inputRef.current?.focus()
@@ -229,10 +228,10 @@ function PasswordDialog({
       footer={
         <>
           <Button variant="secondary" onClick={close}>
-            Cancel
+            {t.common.cancel}
           </Button>
           <Button variant="primary" type="submit" form="ff-password-form" disabled={!password || busy} className="min-w-20">
-            {busy ? <Spinner /> : 'Open'}
+            {busy ? <Spinner /> : t.home.password.open}
           </Button>
         </>
       }
@@ -246,28 +245,29 @@ function PasswordDialog({
         className="pb-1"
       >
         <label htmlFor="ff-pdf-password" className="sr-only">
-          Password
+          {t.home.password.label}
         </label>
         <div className="relative">
+          {/* The show / hide button sits at the end: the right, or the left right to left. */}
           <Input
             ref={inputRef}
             id="ff-pdf-password"
             type={reveal ? 'text' : 'password'}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="Password"
+            placeholder={t.home.password.label}
             autoComplete="off"
             spellCheck={false}
             disabled={busy}
             aria-invalid={incorrect || undefined}
             aria-describedby={incorrect ? 'ff-pdf-password-error' : undefined}
-            className="h-10 pr-10 aria-[invalid]:border-danger aria-[invalid]:focus:ring-danger/20"
+            className="h-10 pe-10 aria-[invalid]:border-danger aria-[invalid]:focus:ring-danger/20"
           />
           <button
             type="button"
             onClick={() => setReveal((r) => !r)}
-            aria-label={reveal ? 'Hide password' : 'Show password'}
-            className="absolute right-1 top-1/2 inline-flex size-8 -translate-y-1/2 items-center justify-center rounded-md text-fg-subtle hover:bg-surface-3 hover:text-fg"
+            aria-label={reveal ? t.home.password.hide : t.home.password.show}
+            className="absolute end-1 top-1/2 inline-flex size-8 -translate-y-1/2 items-center justify-center rounded-md text-fg-subtle hover:bg-surface-3 hover:text-fg"
           >
             {reveal ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
           </button>
@@ -275,7 +275,7 @@ function PasswordDialog({
         {incorrect && !busy && (
           <p id="ff-pdf-password-error" role="alert" className="mt-2 flex items-center gap-1.5 text-[13px] text-danger">
             <CircleAlert className="size-3.5 shrink-0" />
-            That password isn’t right. Please try again.
+            {t.home.password.incorrect}
           </p>
         )}
       </form>
@@ -284,6 +284,7 @@ function PasswordDialog({
 }
 
 function ErrorDialog({ error }: { error: Extract<LoadState, { status: 'error' }> | null }) {
+  const t = useT()
   const dismiss = () => useEditor.getState().dismissLoadError()
   // FillFlow couldn't download what opening files needs: nothing points at the file, which can be
   // tried again as is.
@@ -295,21 +296,22 @@ function ErrorDialog({ error }: { error: Extract<LoadState, { status: 'error' }>
       size="sm"
       title={
         <IconTitle icon={<CircleAlert />} danger>
-          {unavailable ? 'FillFlow couldn’t finish loading' : 'Couldn’t open this file'}
+          {unavailable ? t.home.openError.unavailableTitle : t.home.openError.title}
         </IconTitle>
       }
-      // A long word (a file name, an address) wraps instead of running out of the dialog.
+      // A long word (a file name, an address) wraps instead of running out of the dialog. (The
+      // message is written in the interface language when the open fails.)
       description={<span className="[overflow-wrap:anywhere]">{error?.message}</span>}
       onCloseAutoFocus={restoreFocusOnClose}
       footer={
         <>
           <Button variant="secondary" onClick={dismiss}>
-            Close
+            {t.common.close}
           </Button>
           {unavailable ? (
             <Button variant="primary" onClick={() => void useEditor.getState().retryOpen()}>
               <RotateCw />
-              Try again
+              {t.home.openError.tryAgain}
             </Button>
           ) : (
             <Button
@@ -321,7 +323,7 @@ function ErrorDialog({ error }: { error: Extract<LoadState, { status: 'error' }>
             >
               <FolderOpen />
               {/* A recent document whose file is gone: the same file, opened again, brings back its work. */}
-              {error?.reason === 'missing' ? 'Choose file' : 'Try another file'}
+              {error?.reason === 'missing' ? t.home.openError.chooseFile : t.home.openError.tryAnother}
             </Button>
           )}
         </>

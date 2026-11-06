@@ -2,6 +2,7 @@ import { useId, type Ref } from 'react'
 import { RadioGroup } from 'radix-ui'
 import { Check } from 'lucide-react'
 import { FieldLabel, Input } from '../../components/ui/controls'
+import { useT } from '../../i18n'
 import { cn } from '../../lib/utils/misc'
 import { useSignatureDraft } from './draft'
 import { SIGNATURE_FONTS, signatureFontLabel, signatureFontScale, signatureFontStack, type SignatureFontId } from './fonts'
@@ -19,14 +20,16 @@ export function TypePad({ role, onSubmit, inputRef }: { role: SignatureRole; onS
   const setFont = useSignatureDraft((s) => s.setFont)
   const setColor = useSignatureDraft((s) => s.setColor)
   const inputId = useId()
+  const t = useT()
   const isSignature = role === 'signature'
-  const sample = text.trim() || (isSignature ? 'Your Name' : 'YN')
+  // Until something is typed, a sample in the interface language (so its handwriting faces).
+  const sample = text.trim() || t.signature.type.sample[role]
 
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
         <div className="min-w-0 flex-1">
-          <FieldLabel htmlFor={inputId}>{isSignature ? 'Your full name' : 'Your initials'}</FieldLabel>
+          <FieldLabel htmlFor={inputId}>{t.signature.type.nameLabel[role]}</FieldLabel>
           <Input
             ref={inputRef}
             id={inputId}
@@ -39,7 +42,7 @@ export function TypePad({ role, onSubmit, inputRef }: { role: SignatureRole; onS
               }
             }}
             dir="auto"
-            placeholder={isSignature ? 'e.g. Jane Cooper' : 'e.g. JC'}
+            placeholder={t.signature.type.placeholder[role]}
             autoComplete={isSignature ? 'name' : 'off'}
             autoCapitalize="words"
             spellCheck={false}
@@ -54,7 +57,8 @@ export function TypePad({ role, onSubmit, inputRef }: { role: SignatureRole; onS
       <RadioGroup.Root
         value={font}
         onValueChange={(v) => setFont(v as SignatureFontId)}
-        aria-label="Handwriting style"
+        aria-label={t.signature.type.styles}
+        // The cards follow the interface's reading order, and so do the arrow keys.
         className="grid grid-cols-2 gap-2 sm:grid-cols-6"
       >
         {SIGNATURE_FONTS.map((f, i) => (
@@ -63,10 +67,11 @@ export function TypePad({ role, onSubmit, inputRef }: { role: SignatureRole; onS
             value={f.id}
             aria-label={signatureFontLabel(f, sample)}
             className={cn(
-              'group relative flex h-[84px] min-w-0 flex-col rounded-xl border border-line bg-white px-3 pb-2 pt-1 text-left shadow-xs transition-[border-color,box-shadow] duration-150 hover:border-line-strong data-[state=checked]:border-accent data-[state=checked]:ring-3 data-[state=checked]:ring-accent/20',
+              'group relative flex h-[84px] min-w-0 flex-col rounded-xl border border-line bg-white px-3 pb-2 pt-1 text-start shadow-xs transition-[border-color,box-shadow] duration-150 hover:border-line-strong data-[state=checked]:border-accent data-[state=checked]:ring-3 data-[state=checked]:ring-accent/20',
               CARD_SPAN[i],
             )}
           >
+            {/* What was typed, in its own direction (Hebrew or Latin, whatever the interface's). */}
             <FitText
               dir="auto"
               className={cn('flex-1', !text.trim() && 'opacity-35')}
@@ -74,8 +79,11 @@ export function TypePad({ role, onSubmit, inputRef }: { role: SignatureRole; onS
             >
               {sample}
             </FitText>
+            {/* The style's name (a font's, in Latin letters) at the start, the check at the end. */}
             <span className="flex h-4 items-center justify-between gap-2">
-              <span className="truncate text-[11px] font-medium leading-none text-black/60">{signatureFontLabel(f, sample)}</span>
+              <span dir="ltr" className="truncate text-[11px] font-medium leading-none text-black/60">
+                {signatureFontLabel(f, sample)}
+              </span>
               <RadioGroup.Indicator className="inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-accent text-accent-fg animate-scale-in">
                 <Check className="size-2.5" strokeWidth={3.5} />
               </RadioGroup.Indicator>

@@ -1,12 +1,16 @@
+import { getLocale, getT, messagesFor, type Locale } from '../../i18n'
 import { fieldsUnderItems } from '../../lib/export/coverage'
 import type { ExportProgress } from '../../lib/export/types'
 import { fieldLabel } from '../../lib/pdf/forms/labels'
 import { storedValue } from '../../lib/pdf/forms/values'
-import { bidiIsolate, suffixedFileName } from '../../lib/utils/misc'
+import { suffixedFileName } from '../../lib/utils/misc'
 import type { Element, FormField, FormValue, FormValues } from '../../model/types'
 import { shortcutLetter } from '../elements/lib/keys'
 
-/** Pure helpers behind the export dialog (file names, summary, progress copy). */
+/**
+ * Pure helpers behind the export dialog (file names, summary, progress copy). The words are the
+ * interface language's, read when called: a component showing them calls useT().
+ */
 
 const PDF_EXT = /\.pdf$/i
 
@@ -74,9 +78,12 @@ function cleanName(input: string): string {
     .slice(0, 180)
 }
 
-/** Editable part of the default name: "lease.pdf" → "lease-filled", cleaned like a typed one. */
-export function defaultBaseName(docName: string): string {
-  return cleanName(suffixedFileName(docName))
+/**
+ * Editable part of the default name: "lease.pdf" → "lease-filled", cleaned like a typed one. The
+ * suffix is a word of the interface language (of `locale`'s, when given).
+ */
+export function defaultBaseName(docName: string, locale: Locale = getLocale()): string {
+  return cleanName(suffixedFileName(docName, messagesFor(locale).export.nameSuffix))
 }
 
 /**
@@ -148,44 +155,46 @@ export function coveredFieldLabels(fields: FormField[], elements: Element[]): st
 
 /** What the dialog says about those fields when flattening is off. */
 export function coveredFieldsNote(labels: string[]): string {
-  return `${quotedList(labels)} will still be flattened so what you placed on ${labels.length === 1 ? 'it' : 'them'} stays visible.`
+  return getT().export.covered(quotedList(labels), labels.length)
 }
-
-/** Letters of the right-to-left scripts (and their presentation forms). */
-const RTL_TEXT = /[\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufefc]/
 
 /**
- * “A”, “A” and “B”, “A”, “B” and “C”, “A”, “B”, “C” and 2 more. Right-to-left items are isolated,
- * so two Hebrew labels in a row keep their order and quotes.
+ * Field labels named in a sentence, each language its own way: in English “A”, “A” and “B”,
+ * “A”, “B” and “C”, “A”, “B”, “C” and 2 more. Names are isolated where the sentence needs it (in
+ * English the right-to-left ones, in Hebrew all), so they keep their order and quotes.
  */
 export function quotedList(items: string[], max = 3): string {
-  const quoted = items.map((s) => `“${RTL_TEXT.test(s) ? bidiIsolate(s) : s}”`)
-  if (quoted.length <= max) return quoted.length > 1 ? `${quoted.slice(0, -1).join(', ')} and ${quoted.at(-1)}` : (quoted[0] ?? '')
-  return `${quoted.slice(0, max).join(', ')} and ${quoted.length - max} more`
+  return getT().export.list(items, max)
 }
 
-export function plural(n: number, one: string, many = `${one}s`): string {
-  return `${n.toLocaleString()} ${n === 1 ? one : many}`
+/** The summary's parts: pages, items placed and (`fields` when the document has a form) fields filled. */
+export function summaryParts(pages: number, items: number, fields: number | null): string[] {
+  const s = getT().export.summary
+  const parts = [s.pages(pages), s.placed(items)]
+  if (fields !== null) parts.push(s.filled(fields))
+  return parts
 }
 
 export function progressLabel(p: ExportProgress | null): string {
-  if (!p) return 'Preparing your PDF…'
+  const m = getT().export.progress
+  if (!p) return m.preparing
   switch (p.phase) {
     case 'prepare':
-      return 'Preparing your PDF…'
+      return m.preparing
     case 'forms':
-      return 'Filling in form fields…'
+      return m.forms
     case 'pages':
-      return p.total > 1 ? `Adding your changes… page ${Math.min(p.done + 1, p.total)} of ${p.total}` : 'Adding your changes…'
+      return p.total > 1 ? m.page(Math.min(p.done + 1, p.total), p.total) : m.pages
     case 'save':
-      return 'Saving…'
+      return m.saving
   }
 }
 
 export function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
-  return `${(bytes / 1024 / 1024).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`
+  const s = getT().export.size
+  if (bytes < 1024) return s.bytes(bytes)
+  if (bytes < 1024 * 1024) return s.kb(Math.max(1, Math.round(bytes / 1024)))
+  return s.mb((bytes / 1024 / 1024).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0))
 }
 
 type KeyLike = KeyboardEvent | { key: string; code?: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean }

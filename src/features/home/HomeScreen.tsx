@@ -2,6 +2,7 @@ import '@fontsource/instrument-serif/latin-400-italic.css'
 import { ArrowUpRight } from 'lucide-react'
 import { GITHUB_URL, GitHubIcon } from '../../components/brand/GitHubIcon'
 import { ErrorBoundary } from '../../components/ErrorBoundary'
+import { richText, useT } from '../../i18n'
 import { Dropzone } from './Dropzone'
 import { FeatureTiles } from './FeatureTiles'
 import { HomeHeader } from './HomeHeader'
@@ -35,30 +36,33 @@ export function HomeScreen() {
 }
 
 function Hero() {
+  const t = useT()
   return (
     <section className="mx-auto max-w-3xl pt-8 text-center sm:pt-12">
       <a
         href={GITHUB_URL}
         target="_blank"
         rel="noreferrer"
-        className="group inline-flex h-7 items-center gap-2 rounded-full border border-line bg-surface/70 pl-2.5 pr-2 text-[12.5px] font-medium text-fg-muted shadow-xs backdrop-blur transition-colors animate-slide-up [animation-fill-mode:both] hover:border-line-strong hover:text-fg"
+        className="group inline-flex h-7 items-center gap-2 rounded-full border border-line bg-surface/70 ps-2.5 pe-2 text-[12.5px] font-medium text-fg-muted shadow-xs backdrop-blur transition-colors animate-slide-up [animation-fill-mode:both] hover:border-line-strong hover:text-fg"
       >
         <span className="size-1.5 rounded-full bg-brand-gradient" aria-hidden />
-        Free &amp; open source
+        {t.shell.home.badge}
         <span className="h-3 w-px bg-line-strong" aria-hidden />
         <GitHubIcon className="size-3.5" />
-        <ArrowUpRight className="-ml-1 size-3.5 opacity-60 transition-transform duration-200 group-hover:-translate-y-px group-hover:translate-x-px" />
+        {/* Out of the page, the way the text reads: up and to the right, or the left right to left. */}
+        <ArrowUpRight className="-ms-1 size-3.5 opacity-60 transition-transform duration-200 group-hover:-translate-y-px group-hover:translate-x-px rtl:-scale-x-100 rtl:group-hover:-translate-x-px" />
       </a>
-      <h1 className="mt-6 font-display text-[44px] leading-[1.02] tracking-[-0.015em] text-fg text-balance animate-slide-up [animation-delay:60ms] [animation-fill-mode:both] min-[400px]:text-[50px] sm:mt-7 sm:text-[68px] lg:text-[76px]">
-        Fill &amp; sign any PDF, <br className="max-sm:hidden" />
+      {/* Hebrew has no italics: its letters stay upright rather than being slanted by the browser. */}
+      <h1 className="mt-6 font-display text-[44px] leading-[1.02] tracking-[-0.015em] text-fg text-balance animate-slide-up [animation-delay:60ms] [animation-fill-mode:both] [font-synthesis-style:none] min-[400px]:text-[50px] sm:mt-7 sm:text-[68px] lg:text-[76px]">
+        {t.shell.home.titleStart} <br className="max-sm:hidden" />
         {/* On the light canvas the logo's bright teal is too faint to read (large text needs 3:1): the
             gradient ends in a deeper teal there. */}
-        <em className="text-brand-gradient pr-[0.06em] italic [box-decoration-break:clone] not-dark:[--color-brand-teal:#0f766e]">
-          right in your browser.
+        <em className="text-brand-gradient pe-[0.06em] italic [box-decoration-break:clone] not-dark:[--color-brand-teal:#0f766e]">
+          {t.shell.home.titleEnd}
         </em>
       </h1>
       <p className="mx-auto mt-5 max-w-xl text-[15.5px] leading-relaxed text-fg-muted text-pretty animate-slide-up [animation-delay:110ms] [animation-fill-mode:both] sm:mt-6 sm:text-[17px]">
-        Type on any form, tick boxes, add your signature and download. Free, no sign-up — your files never leave your device.
+        {t.shell.home.lead}
       </p>
     </section>
   )
@@ -89,23 +93,31 @@ function Backdrop() {
 }
 
 function Footer() {
+  const t = useT()
   return (
     <footer className="flex flex-col items-center justify-between gap-2 border-t border-line py-6 text-[12.5px] text-fg-subtle sm:flex-row">
       <p>
         <a href={GITHUB_URL} target="_blank" rel="noreferrer" className="font-medium text-fg-muted underline-offset-4 hover:text-fg hover:underline">
-          Open source on GitHub
+          {t.shell.home.openSource}
         </a>
-        <span className="mx-2" aria-hidden>·</span>No accounts<span className="mx-2" aria-hidden>·</span>No tracking
+        <span className="mx-2" aria-hidden>·</span>
+        {t.shell.home.noAccounts}
+        <span className="mx-2" aria-hidden>·</span>
+        {t.shell.home.noTracking}
       </p>
       <p>
-        Built with{' '}
-        <a href="https://mozilla.github.io/pdf.js/" target="_blank" rel="noreferrer" className="underline-offset-4 hover:text-fg hover:underline">
-          PDF.js
-        </a>{' '}
-        and{' '}
-        <a href="https://pdf-lib.js.org/" target="_blank" rel="noreferrer" className="underline-offset-4 hover:text-fg hover:underline">
-          pdf-lib
-        </a>
+        {richText(t.shell.home.builtWith, {
+          pdfjs: (
+            <a href="https://mozilla.github.io/pdf.js/" target="_blank" rel="noreferrer" className="underline-offset-4 hover:text-fg hover:underline">
+              PDF.js
+            </a>
+          ),
+          pdflib: (
+            <a href="https://pdf-lib.js.org/" target="_blank" rel="noreferrer" className="underline-offset-4 hover:text-fg hover:underline">
+              pdf-lib
+            </a>
+          ),
+        })}
       </p>
     </footer>
   )

@@ -3,6 +3,7 @@ import { Blend, Minus, Plus } from 'lucide-react'
 import { ColorSwatches, Separator, Slider } from '../../../components/ui/controls'
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '../../../components/ui/menu'
 import { Tooltip } from '../../../components/ui/tooltip'
+import { useT } from '../../../i18n'
 import { INK_COLORS } from '../../../model/elements'
 import { clamp, cn } from '../../../lib/utils/misc'
 import { keepEditorFocus, preventFocusWhileEditing } from './focus'
@@ -109,7 +110,8 @@ const fmt = (n: number) => (Math.round(n * 10) / 10).toString()
 /**
  * − value + stepper. Unlike a live-parsed field, typing only applies on Enter/blur, so a value
  * can pass through out-of-range digits ("1" → "14") without being clamped mid-way. On touch it
- * grows so its buttons and field get the toolbar's 40px (inside the border).
+ * grows so its buttons and field get the toolbar's 40px (inside the border). − is at the start, +
+ * at the end (mirrored right to left, like the UI kit's NumberStepper).
  */
 export function SizeField({
   label,
@@ -131,6 +133,7 @@ export function SizeField({
   locked?: boolean
   className?: string
 }) {
+  const t = useT()
   const [draft, setDraft] = useState<string | null>(null)
   const set = (v: number) => onChange(clamp(Math.round(v * 100) / 100, min, max))
   const commit = () => {
@@ -161,14 +164,14 @@ export function SizeField({
       className={cn('inline-flex h-8 shrink-0 items-center rounded-lg border border-line bg-surface pointer-coarse:h-[42px]', className)}
       role="group"
       aria-label={label}
-      title={locked ? `Unlock to change the ${label.toLowerCase()}` : undefined}
+      title={locked ? t.elements.toolbar.unlockToChange(label) : undefined}
     >
       <button
         type="button"
-        aria-label={`Decrease ${label.toLowerCase()}`}
+        aria-label={t.shell.ui.decrease(label)}
         onClick={() => set(value - step)}
         disabled={locked || value <= min}
-        className="inline-flex h-full w-7 items-center justify-center rounded-l-lg text-fg-muted hover:bg-surface-3 hover:text-fg disabled:opacity-40 pointer-coarse:w-10"
+        className="inline-flex h-full w-7 items-center justify-center rounded-s-lg text-fg-muted hover:bg-surface-3 hover:text-fg disabled:opacity-40 pointer-coarse:w-10"
       >
         <Minus className="size-3.5" />
       </button>
@@ -185,10 +188,10 @@ export function SizeField({
       />
       <button
         type="button"
-        aria-label={`Increase ${label.toLowerCase()}`}
+        aria-label={t.shell.ui.increase(label)}
         onClick={() => set(value + step)}
         disabled={locked || value >= max}
-        className="inline-flex h-full w-7 items-center justify-center rounded-r-lg text-fg-muted hover:bg-surface-3 hover:text-fg disabled:opacity-40 pointer-coarse:w-10"
+        className="inline-flex h-full w-7 items-center justify-center rounded-e-lg text-fg-muted hover:bg-surface-3 hover:text-fg disabled:opacity-40 pointer-coarse:w-10"
       >
         <Plus className="size-3.5" />
       </button>
@@ -218,7 +221,10 @@ export function SliderRow({
     <div className="grid gap-2">
       <div className="flex items-center justify-between text-[13px]">
         <span className="font-medium text-fg-muted">{label}</span>
-        <span className="tabular-nums text-fg">{display}</span>
+        {/* A measurement ("2.5 pt", "1.20×") reads left to right in a right-to-left interface too. */}
+        <span dir="ltr" className="tabular-nums text-fg">
+          {display}
+        </span>
       </div>
       <Slider value={value} onValueChange={onChange} min={min} max={max} step={step} label={label} />
     </div>
@@ -227,6 +233,8 @@ export function SliderRow({
 
 /** Opacity (0–1) behind a "100%" button. */
 export function OpacityButton({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  const t = useT()
+  const m = t.elements.toolbar
   const pct = Math.round(value * 100)
   const trigger = useRef<HTMLButtonElement>(null)
   const content = useRef<HTMLDivElement>(null)
@@ -234,9 +242,9 @@ export function OpacityButton({ value, onChange }: { value: number; onChange: (v
   return (
     <Popover {...away.root}>
       <PopoverAnchor virtualRef={away.virtualRef} />
-      <Tooltip content="Opacity">
+      <Tooltip content={m.opacity}>
         <PopoverTrigger asChild>
-          <TriggerButton ref={trigger} label={`Opacity ${pct}%`} className="px-2 text-[12px] font-medium tabular-nums">
+          <TriggerButton ref={trigger} label={m.opacityValue(pct)} className="px-2 text-[12px] font-medium tabular-nums">
             <Blend className="size-4" />
             {pct}%
           </TriggerButton>
@@ -245,12 +253,12 @@ export function OpacityButton({ value, onChange }: { value: number; onChange: (v
       <PopoverContent
         ref={content}
         side={away.side}
-        aria-label="Opacity"
+        aria-label={m.opacity}
         className={cn('w-56', POPOVER_FIT)}
         onOpenAutoFocus={preventFocusWhileEditing}
         onCloseAutoFocus={preventFocusWhileEditing}
       >
-        <SliderRow label="Opacity" value={pct} display={`${pct}%`} onChange={(v) => onChange(v / 100)} min={5} max={100} step={1} />
+        <SliderRow label={m.opacity} value={pct} display={`${pct}%`} onChange={(v) => onChange(v / 100)} min={5} max={100} step={1} />
       </PopoverContent>
     </Popover>
   )

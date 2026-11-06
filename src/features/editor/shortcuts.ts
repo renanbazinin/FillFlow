@@ -1,4 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
+import { getT, type Messages } from '../../i18n'
 import { isMac } from '../../lib/utils/misc'
 import { TOOLS } from '../../model/tools'
 import { shortcutLetter } from '../elements/lib/keys'
@@ -12,9 +13,13 @@ export type KeyCombo = string[]
 
 const MODIFIER_ORDER_MAC = ['ctrl', 'alt', 'shift', 'mod']
 const MODIFIER_ORDER_PC = ['mod', 'ctrl', 'alt', 'shift']
-export const POINTER_ACTIONS = new Set(['click', 'double-click', 'right-click', 'drag', 'scroll', 'pinch'])
 
-export function isPointerAction(key: string): boolean {
+/** What the pointer does in a combination; shown as a word in the interface language. */
+export type PointerAction = keyof Messages['editor']['shortcuts']['pointer']
+
+export const POINTER_ACTIONS = new Set<string>(['click', 'double-click', 'right-click', 'drag', 'scroll', 'pinch'] satisfies PointerAction[])
+
+export function isPointerAction(key: string): key is PointerAction {
   return POINTER_ACTIONS.has(key)
 }
 
@@ -89,59 +94,65 @@ export const SHORTCUTS = {
 } satisfies Record<string, KeyCombo>
 
 /**
- * Everything shown in the shortcuts dialog. Editing keys mirror `useEditingShortcuts`, view keys
- * the viewer, file keys `useShellShortcuts`.
+ * Everything shown in the shortcuts dialog, in the interface language (`t`: the current one when
+ * not given). Editing keys mirror `useEditingShortcuts`, view keys the viewer, file keys
+ * `useShellShortcuts`.
  */
-export function shortcutGroups(mac = isMac): ShortcutGroup[] {
+export function shortcutGroups(mac = isMac, t: Messages = getT()): ShortcutGroup[] {
+  const { groups, rows: r } = t.editor.shortcuts
   return [
     {
-      title: 'Tools',
-      rows: TOOLS.filter((t) => t.shortcut).map((t) => ({ label: t.label, combos: [[t.shortcut!]], icon: t.icon })),
+      title: groups.tools,
+      rows: TOOLS.filter((tool) => tool.shortcut).map((tool) => ({
+        label: t.tools[tool.id].label,
+        combos: [[tool.shortcut!]],
+        icon: tool.icon,
+      })),
     },
     {
-      title: 'Editing',
+      title: groups.editing,
       rows: [
-        { label: 'Undo', combos: [SHORTCUTS.undo] },
-        { label: 'Redo', combos: mac ? [SHORTCUTS.redo] : [SHORTCUTS.redo, SHORTCUTS.redoAlt] },
-        { label: 'Copy', combos: [['mod', 'C']] },
-        { label: 'Cut', combos: [['mod', 'X']] },
-        { label: 'Paste', combos: [['mod', 'V']] },
-        { label: 'Duplicate', combos: [['mod', 'D']] },
-        { label: 'Delete', combos: [['delete'], ['backspace']] },
-        { label: 'Select all on the page', combos: [['mod', 'A']] },
-        { label: 'Add to selection', combos: [['shift', 'click']] },
-        { label: 'Add the active tool’s item in the middle of the view', combos: [['enter']] },
-        { label: 'Nudge (Shift for 10 pt)', combos: [['←', '↑', '→', '↓']] },
-        { label: 'Edit text', combos: [['enter'], ['double-click']] },
-        { label: 'Finish editing text', combos: [['esc'], ['mod', 'enter']] },
-        { label: 'Bold text', combos: [['mod', 'B']] },
-        { label: 'Bring to front', combos: [['mod', ']']] },
-        { label: 'Send to back', combos: [['mod', '[']] },
-        { label: 'Lock / unlock', combos: [['mod', 'shift', 'L']] },
-        { label: 'Done / deselect', combos: [['esc']] },
-        { label: 'Keep a tool on', combos: [['double-click']] },
-        { label: 'Item menu', combos: [['right-click']] },
-        { label: 'Keep proportions, 45° lines', combos: [['shift', 'drag']] },
-        { label: 'Move without snapping', combos: [['alt', 'drag']] },
-        { label: 'Cancel a drag', combos: [['esc']] },
+        { label: r.undo, combos: [SHORTCUTS.undo] },
+        { label: r.redo, combos: mac ? [SHORTCUTS.redo] : [SHORTCUTS.redo, SHORTCUTS.redoAlt] },
+        { label: r.copy, combos: [['mod', 'C']] },
+        { label: r.cut, combos: [['mod', 'X']] },
+        { label: r.paste, combos: [['mod', 'V']] },
+        { label: r.duplicate, combos: [['mod', 'D']] },
+        { label: r.delete, combos: [['delete'], ['backspace']] },
+        { label: r.selectAll, combos: [['mod', 'A']] },
+        { label: r.addToSelection, combos: [['shift', 'click']] },
+        { label: r.addInView, combos: [['enter']] },
+        { label: r.nudge, combos: [['←', '↑', '→', '↓']] },
+        { label: r.editText, combos: [['enter'], ['double-click']] },
+        { label: r.finishText, combos: [['esc'], ['mod', 'enter']] },
+        { label: r.bold, combos: [['mod', 'B']] },
+        { label: r.toFront, combos: [['mod', ']']] },
+        { label: r.toBack, combos: [['mod', '[']] },
+        { label: r.lock, combos: [['mod', 'shift', 'L']] },
+        { label: r.deselect, combos: [['esc']] },
+        { label: r.keepTool, combos: [['double-click']] },
+        { label: r.itemMenu, combos: [['right-click']] },
+        { label: r.proportions, combos: [['shift', 'drag']] },
+        { label: r.noSnap, combos: [['alt', 'drag']] },
+        { label: r.cancelDrag, combos: [['esc']] },
       ],
     },
     {
-      title: 'View',
+      title: groups.view,
       rows: [
-        { label: 'Zoom in', combos: [SHORTCUTS.zoomIn] },
-        { label: 'Zoom out', combos: [SHORTCUTS.zoomOut] },
-        { label: 'Fit to width', combos: [SHORTCUTS.fitWidth] },
-        { label: 'Zoom', combos: [['mod', 'scroll'], ['pinch']] },
-        { label: 'Pan', combos: [['space', 'drag']] },
+        { label: r.zoomIn, combos: [SHORTCUTS.zoomIn] },
+        { label: r.zoomOut, combos: [SHORTCUTS.zoomOut] },
+        { label: r.fitWidth, combos: [SHORTCUTS.fitWidth] },
+        { label: r.zoom, combos: [['mod', 'scroll'], ['pinch']] },
+        { label: r.pan, combos: [['space', 'drag']] },
       ],
     },
     {
-      title: 'File',
+      title: groups.file,
       rows: [
-        { label: 'Download PDF', combos: [SHORTCUTS.download] },
-        { label: 'Open another PDF', combos: [SHORTCUTS.open] },
-        { label: 'Keyboard shortcuts', combos: [SHORTCUTS.help] },
+        { label: r.download, combos: [SHORTCUTS.download] },
+        { label: r.open, combos: [SHORTCUTS.open] },
+        { label: r.shortcuts, combos: [SHORTCUTS.help] },
       ],
     },
   ]

@@ -62,8 +62,11 @@ function touchDistance(a: Touch, b: Touch): number {
   return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
 }
 
-/** The tool dock (editor/ToolDock): it floats over the bottom of the pages on larger screens. */
-const TOOL_DOCK = '[role="toolbar"][aria-label="Tools"]'
+/**
+ * The tool dock (editor/ToolDock): it floats over the bottom of the pages on larger screens. Found
+ * by its data attribute: its name is in the interface language.
+ */
+const TOOL_DOCK = '[data-tool-dock]'
 /** Room kept between what is revealed and the tool dock. */
 const DOCK_GAP = 8
 

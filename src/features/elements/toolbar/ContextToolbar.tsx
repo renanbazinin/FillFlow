@@ -1,6 +1,8 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
+import { Direction } from 'radix-ui'
 import { useShallow } from 'zustand/react/shallow'
+import { useDir, useT } from '../../../i18n'
 import type { ImageElement, InkElement, MarkElement, PageInfo, ShapeElement, TextElement } from '../../../model/types'
 import { getSelectedElements, useEditor } from '../../../store/editor'
 import { viewer } from '../../viewer/viewerApi'
@@ -21,9 +23,13 @@ const ANCHOR_PAD = 8
  * actions. Rendered by the page layer that holds the (first) selected item, portaled to
  * <body>, and positioned imperatively so scrolling never re-renders it. Where it's too wide
  * (phones), the style controls scroll sideways behind edge fades while the actions stay put;
- * its popovers open away from the selection. On touch its buttons are 40px.
+ * its popovers open away from the selection. On touch its buttons are 40px. It is interface, not
+ * page: it reads the interface's way (right to left in Hebrew), its controls and the arrow keys
+ * between them too, while where it sits is screen geometry.
  */
 export function ContextToolbar({ page, scale, rootRef }: { page: PageInfo; scale: number; rootRef: RefObject<HTMLDivElement | null> }) {
+  const t = useT()
+  const dir = useDir()
   const selected = useEditor(useShallow((s) => getSelectedElements(s)))
   const tool = useEditor((s) => s.tool)
   const interaction = useElementsUi((s) => s.interaction)
@@ -121,37 +127,41 @@ export function ContextToolbar({ page, scale, rootRef }: { page: PageInfo; scale
   return createPortal(
     // The outer box is positioned imperatively; the inner one animates (transforms would clash).
     <div ref={barRef} className="fixed left-0 top-0 z-[60]" style={{ visibility: 'hidden' }} data-element-toolbar="">
-      <PopoverPlacementContext value={popovers}>
-        <div
-          role="toolbar"
-          aria-label={selected.length > 1 ? `${selected.length} items` : 'Item options'}
-          onMouseDown={keepEditorFocus}
-          onKeyDown={moveToolbarFocus}
-          // Focus rings are drawn inside the controls: the style strip cuts off anything outside it.
-          className="flex h-10 max-w-[calc(100vw-16px)] animate-scale-in items-center rounded-xl border border-line bg-surface px-1 text-fg shadow-float pointer-coarse:h-12 [&_:focus-visible]:-outline-offset-2"
-        >
+      {/* Its menus, toggle groups and sliders go by the interface's direction, whatever the pages it
+          is rendered from (kept left to right) say. */}
+      <Direction.Provider dir={dir}>
+        <PopoverPlacementContext value={popovers}>
           <div
-            ref={stripRef}
-            data-toolbar-strip=""
-            // A control the keyboard moves to is scrolled into view, clear of the fades (the bar
-            // keeps pointer presses from taking focus).
-            onFocus={(e) => e.target.scrollIntoView({ block: 'nearest', inline: 'nearest' })}
-            className="min-w-0 scroll-px-10 overflow-x-auto overscroll-x-contain scrollbar-none"
-            style={{ maskImage: fades, WebkitMaskImage: fades }}
+            role="toolbar"
+            aria-label={selected.length > 1 ? t.common.items(selected.length) : t.elements.toolbar.label}
+            onMouseDown={keepEditorFocus}
+            onKeyDown={moveToolbarFocus}
+            // Focus rings are drawn inside the controls: the style strip cuts off anything outside it.
+            className="flex h-10 max-w-[calc(100vw-16px)] animate-scale-in items-center rounded-xl border border-line bg-surface px-1 text-fg shadow-float pointer-coarse:h-12 [&_:focus-visible]:-outline-offset-2"
           >
-            <div className="flex w-max items-center gap-0.5 pointer-coarse:gap-1">
-              {selected.length > 1 && (
-                <span className="shrink-0 select-none px-2 text-[12px] font-medium tabular-nums text-fg-muted">{selected.length} items</span>
-              )}
-              {controls}
+            <div
+              ref={stripRef}
+              data-toolbar-strip=""
+              // A control the keyboard moves to is scrolled into view, clear of the fades (the bar
+              // keeps pointer presses from taking focus).
+              onFocus={(e) => e.target.scrollIntoView({ block: 'nearest', inline: 'nearest' })}
+              className="min-w-0 scroll-px-10 overflow-x-auto overscroll-x-contain scrollbar-none"
+              style={{ maskImage: fades, WebkitMaskImage: fades }}
+            >
+              <div className="flex w-max items-center gap-0.5 pointer-coarse:gap-1">
+                {selected.length > 1 && (
+                  <span className="shrink-0 select-none px-2 text-[12px] font-medium tabular-nums text-fg-muted">{t.common.items(selected.length)}</span>
+                )}
+                {controls}
+              </div>
+            </div>
+            {styled && <ToolbarSeparator />}
+            <div className="flex shrink-0 items-center gap-0.5 pointer-coarse:gap-1">
+              <CommonActions selected={selected} />
             </div>
           </div>
-          {styled && <ToolbarSeparator />}
-          <div className="flex shrink-0 items-center gap-0.5 pointer-coarse:gap-1">
-            <CommonActions selected={selected} />
-          </div>
-        </div>
-      </PopoverPlacementContext>
+        </PopoverPlacementContext>
+      </Direction.Provider>
     </div>,
     document.body,
   )

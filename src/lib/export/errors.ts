@@ -1,20 +1,15 @@
+import { getT } from '../../i18n'
+
 export type ExportErrorCode = 'encrypted' | 'damaged' | 'fonts' | 'forms' | 'aborted' | 'unknown'
 
-const MESSAGES: Record<ExportErrorCode, string> = {
-  encrypted:
-    'This PDF is encrypted, so FillFlow can’t save a copy with your changes. Remove the protection first (for example, print it to a new PDF), then open that copy.',
-  damaged: 'This PDF is damaged in a way FillFlow can’t repair, so a filled copy couldn’t be created.',
-  fonts: 'The fonts needed for your text couldn’t be loaded. Check your connection and try again.',
-  forms: 'The form field values couldn’t be written into the PDF.',
-  aborted: 'Export cancelled.',
-  unknown: 'Something went wrong while creating the PDF.',
-}
-
-/** An export failure with a user-facing message. */
+/**
+ * An export failure with a user-facing message: by default its code's (src/i18n/<language>/export.ts),
+ * in the interface language of the moment it failed.
+ */
 export class ExportError extends Error {
   readonly code: ExportErrorCode
 
-  constructor(code: ExportErrorCode, message = MESSAGES[code], options?: { cause?: unknown }) {
+  constructor(code: ExportErrorCode, message = getT().export.errors[code], options?: { cause?: unknown }) {
     super(message, options)
     this.name = 'ExportError'
     this.code = code

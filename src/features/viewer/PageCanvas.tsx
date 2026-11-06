@@ -1,5 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useRef } from 'react'
 import { TriangleAlert } from 'lucide-react'
+import { useDir, useT } from '../../i18n'
 import type { PDFDocumentProxy } from '../../lib/pdf/pdfjs'
 import type { PageInfo } from '../../model/types'
 import { useRenderSettings, useViewerContext } from './context'
@@ -48,6 +49,8 @@ interface PageCanvasProps {
 export const PageCanvas = memo(function PageCanvas({ pdf, info, near }: PageCanvasProps) {
   const { controller } = useViewerContext()
   const settings = useRenderSettings(controller)
+  const t = useT()
+  const dir = useDir()
   const rootRef = useRef<HTMLDivElement>(null)
   const hostRef = useRef<HTMLDivElement>(null)
   const rendererRef = useRef<PageRenderer | null>(null)
@@ -74,9 +77,13 @@ export const PageCanvas = memo(function PageCanvas({ pdf, info, near }: PageCanv
         <div className="absolute inset-0 hidden animate-shimmer bg-[linear-gradient(100deg,transparent_35%,rgb(15_23_42/0.045)_50%,transparent_65%)] bg-[length:200%_100%] group-data-[state=loading]/canvas:block" />
       </div>
       <div ref={hostRef} className="absolute inset-0" />
-      <div className="absolute inset-0 hidden flex-col items-center gap-2 bg-white px-4 pt-[12%] text-center text-[13px] text-black/50 group-data-[state=error]/canvas:flex">
+      {/* Interface text on a (left-to-right) page: in the interface's direction. */}
+      <div
+        dir={dir}
+        className="absolute inset-0 hidden flex-col items-center gap-2 bg-white px-4 pt-[12%] text-center text-[13px] text-black/50 group-data-[state=error]/canvas:flex"
+      >
         <TriangleAlert className="size-5 text-black/35" aria-hidden />
-        This page couldn’t be displayed.
+        {t.editor.viewer.renderError}
       </div>
     </div>
   )

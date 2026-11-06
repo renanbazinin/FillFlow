@@ -22,6 +22,8 @@ export default defineConfig({
   reporter: 'list',
   use: {
     channel: 'chrome',
+    // The interface follows the browser's language: the specs expect English unless they pick another.
+    locale: 'en-US',
     baseURL: APP_URL,
     acceptDownloads: true,
     viewport: { width: 1440, height: 900 },

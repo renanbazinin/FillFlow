@@ -1,4 +1,5 @@
 import { toast } from 'sonner'
+import { getT } from '../../../i18n'
 import { createImageElement, createTextElement, IMAGE_DEFAULT_WIDTH, withTextLayout } from '../../../model/elements'
 import type { Asset, Element, Point, TextElement } from '../../../model/types'
 import { getSelectedElements, useEditor } from '../../../store/editor'
@@ -241,7 +242,8 @@ export function pastePlainText(text: string): boolean {
   const align = el.align === 'left' && firstStrongDirection(clean) === 'rtl' ? 'right' : el.align
   s.addElement({ ...el, align, x: fitted.x, y: fitted.y })
   if (el.height > size.height) {
-    toast('The pasted text doesn’t fit on the page', { description: 'Text past the bottom of the page won’t be in the download.' })
+    const m = getT().elements.toasts
+    toast(m.pastedTooLong, { description: m.pastedTooLongBody })
   }
   return true
 }

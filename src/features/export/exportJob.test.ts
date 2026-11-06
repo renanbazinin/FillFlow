@@ -1,4 +1,5 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { setLocale } from '../../i18n'
 import { ExportError } from '../../lib/export/errors'
 import { useEditor, type LoadedDocument } from '../../store/editor'
 
@@ -25,7 +26,7 @@ vi.mock('../../lib/export/exportPdf', async () => {
   }
 })
 
-const { latestExport, preloadExportEngine, prepareExport, resetExport, useExportJob } = await import('./exportJob')
+const { errorMessage, latestExport, preloadExportEngine, prepareExport, resetExport, useExportJob } = await import('./exportJob')
 
 const fakeDoc = { id: 'doc-1', name: 'a.pdf', bytes: new Uint8Array(), pages: [], formFields: [] } as unknown as LoadedDocument
 
@@ -106,5 +107,25 @@ describe('export job', () => {
     resetExport()
     expect(calls[0].signal?.aborted).toBe(true)
     expect(useExportJob.getState().status).toBe('idle')
+  })
+})
+
+describe('export failures in Hebrew', () => {
+  afterEach(() => {
+    setLocale('en')
+    resetExport()
+  })
+
+  it('are told in the interface language', async () => {
+    expect(errorMessage(new Error('share sheet broke'))).toBe('Something went wrong while creating the PDF. Please try again.')
+    setLocale('he')
+    expect(errorMessage(new Error('share sheet broke'))).toBe('משהו השתבש ביצירת קובץ ה-PDF. נסו שוב.')
+    useEditor.setState({ doc: null })
+    await expect(prepareExport(true)).rejects.toMatchObject({ code: 'unknown', message: 'פתחו קודם מסמך.' })
+    useEditor.setState({ doc: fakeDoc, revision: 1 })
+    const run = prepareExport(true)
+    calls.at(-1)!.reject(new ExportError('fonts'))
+    await expect(run).rejects.toMatchObject({ code: 'fonts' })
+    expect(useExportJob.getState().error).toMatch(/^לא ניתן היה לטעון את הגופנים/)
   })
 })

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { useShallow } from 'zustand/react/shallow'
 import { confirm } from '../../components/ui/confirm'
+import { getT, useT } from '../../i18n'
 import { getFormDocumentInfo } from '../../lib/pdf/formFields'
 import { scrollBehavior } from '../../lib/utils/motion'
 import type { FormField } from '../../model/types'
@@ -14,10 +15,11 @@ import { formIsDirty, formProgress, nextEmptyField, visibleFieldNames, type Fiel
 import { useNativeHistoryGuard } from './useField'
 
 async function resetForm(fields: FormField[]) {
+  const m = getT().forms.reset
   const ok = await confirm({
-    title: 'Reset the form?',
-    description: 'Every field goes back to the value it had when you opened the PDF. Items you placed on the pages stay.',
-    confirmLabel: 'Reset form',
+    title: m.title,
+    description: m.body,
+    confirmLabel: m.confirm,
     danger: true,
   })
   if (!ok) return
@@ -25,10 +27,12 @@ async function resetForm(fields: FormField[]) {
   s.beginGesture() // one undo step for the whole reset
   for (const f of fields) s.setFormValue(f.name, f.defaultValue)
   s.endGesture()
-  toast('Form reset', { action: { label: 'Undo', onClick: () => useEditor.getState().undo() } })
+  const { done, undo } = getT().forms.reset
+  toast(done, { action: { label: undo, onClick: () => useEditor.getState().undo() } })
 }
 
 function FieldList({ fields }: { fields: FormField[] }) {
+  const t = useT()
   const [filter, setFilter] = useState<FieldFilter>('all')
   const rootRef = useRef<HTMLDivElement>(null)
   const lastActive = useRef<string | null>(null)
@@ -89,9 +93,11 @@ function FieldList({ fields }: { fields: FormField[] }) {
       />
       <div className="flex-1 px-2 pb-6 pt-1">
         {groups.map((g) => (
-          <section key={g.page} aria-label={`Page ${g.page + 1}`}>
+          <section key={g.page} aria-label={t.forms.panel.page(g.page + 1)}>
             {multiPage && (
-              <h3 className="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-[0.06em] text-fg-subtle">Page {g.page + 1}</h3>
+              <h3 className="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-[0.06em] text-fg-subtle">
+                {t.forms.panel.page(g.page + 1)}
+              </h3>
             )}
             <div className="flex flex-col gap-0.5 pt-1">
               {g.fields.map((f) => (

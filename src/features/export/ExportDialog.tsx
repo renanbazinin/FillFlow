@@ -5,6 +5,7 @@ import { Button } from '../../components/ui/button'
 import { FieldLabel, Spinner, Switch } from '../../components/ui/controls'
 import { Dialog } from '../../components/ui/dialog'
 import { OPEN_OVERLAY } from '../../components/ui/modal'
+import { getT, useLocale, useT } from '../../i18n'
 import { ExportError } from '../../lib/export/errors'
 import { neededPassword } from '../../lib/storage/protectedDocs'
 import { firstStrongDirection } from '../../lib/text/direction'
@@ -21,9 +22,9 @@ import {
   formatFileSize,
   isOpenShortcut,
   isSaveShortcut,
-  plural,
   progressLabel,
   quotedList,
+  summaryParts,
   typedFileName,
   unwrittenFieldLabels,
 } from './exportFile'
@@ -92,12 +93,15 @@ export function ExportDialog() {
   const formValues = useEditor((s) => (s.activeDialog === 'export' ? s.formValues : null))
   const elements = useEditor((s) => (s.activeDialog === 'export' ? s.elements : null))
   const job = useExportJob()
+  const t = useT()
+  const locale = useLocale()
 
   const [flatten, setFlatten] = useState(readFlatten)
   const [baseName, setBaseName] = useState(() => defaultBaseName(docName))
-  const [nameFor, setNameFor] = useState(docId)
+  const [nameFor, setNameFor] = useState({ docId, locale })
   const [action, setAction] = useState<Action | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
+  /** Sharing needs another press (its own went to preparing the file): says so. */
+  const [shareAgain, setShareAgain] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
   const [canShare] = useState(canSharePdf)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -106,16 +110,17 @@ export function ExportDialog() {
 
   const [wasOpen, setWasOpen] = useState(open)
 
-  // A different document gets a fresh default name (an edited name sticks for the same one).
-  if (docId !== nameFor) {
-    setNameFor(docId)
-    setBaseName(defaultBaseName(docName))
+  // A different document gets a fresh default name (an edited name sticks for the same one), and so
+  // does a default name left as it was when the language changes: it ends in one of its words.
+  if (docId !== nameFor.docId || locale !== nameFor.locale) {
+    setNameFor({ docId, locale })
+    if (docId !== nameFor.docId || baseName === defaultBaseName(docName, nameFor.locale)) setBaseName(defaultBaseName(docName, locale))
   }
   // Every opening starts without leftover messages.
   if (open !== wasOpen) {
     setWasOpen(open)
     if (open) {
-      setNotice(null)
+      setShareAgain(false)
       setActionError(null)
     }
   }
@@ -171,7 +176,7 @@ export function ExportDialog() {
 
   const close = () => useEditor.getState().closeDialog()
   const fileName = finalFileName(baseName, docName)
-  const placeholder = defaultBaseName(docName)
+  const placeholder = defaultBaseName(docName, locale)
   // The name's direction, as dir="auto" would pick it (from the placeholder when it's empty).
   const nameDir = firstStrongDirection(baseName || placeholder) ?? 'ltr'
 
@@ -197,27 +202,29 @@ export function ExportDialog() {
     // The field shows the exact name the file gets (trimmed, or the default for an empty one).
     setBaseName(fileName.replace(/\.pdf$/, ''))
     setAction(kind)
-    setNotice(null)
+    setShareAgain(false)
     setActionError(null)
     try {
       const stillOpen = () => useEditor.getState().activeDialog === 'export'
       const bytes = await latestExport(flattenForms, stillOpen)
       // Closed while we were waiting: the user changed their mind.
       if (!stillOpen()) return
+      const delivered = getT().export.delivered
       if (kind === 'download') {
         downloadPdf(bytes, fileName)
-        toast.success('PDF downloaded', { description: fileName })
+        // The file's name in its own direction.
+        toast.success(delivered.downloaded, { description: <bdi>{fileName}</bdi> })
         close()
       } else if (kind === 'share') {
         // From here the system share sheet owns the interaction (it may never settle).
         setAction(null)
         const result = await sharePdf(bytes, fileName)
         if (result === 'shared') close()
-        else if (result === 'needs-gesture') setNotice('Your PDF is ready — tap Share again to send it.')
+        else if (result === 'needs-gesture') setShareAgain(true)
       } else {
         const result = printPdf(bytes, fileName)
-        if (result === 'tab') toast('Opened in a new tab', { description: 'Print it from your browser’s PDF viewer.' })
-        else if (result === 'downloaded') toast('PDF downloaded instead', { description: 'This browser can’t print PDFs directly — print it from your files.' })
+        if (result === 'tab') toast(delivered.printTab.title, { description: delivered.printTab.description })
+        else if (result === 'downloaded') toast(delivered.printDownloaded.title, { description: delivered.printDownloaded.description })
       }
     } catch (err) {
       if (err instanceof ExportError && err.code === 'aborted') return
@@ -268,22 +275,23 @@ export function ExportDialog() {
   const error = job.status === 'error' ? job.error : actionError
 
   const footer = (
+    // Print and Share at the start (left, or right in a right-to-left interface), Download at the end.
     <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center" onKeyDown={onKeyDown}>
-      <div className="flex gap-2 sm:mr-auto">
+      <div className="flex gap-2 sm:me-auto">
         <Button variant="secondary" onClick={() => void run('print')} disabled={busy} className="max-sm:h-10 max-sm:flex-1">
           {action === 'print' ? <Spinner /> : <Printer />}
-          Print
+          {t.export.actions.print}
         </Button>
         {canShare && (
           <Button variant="secondary" onClick={() => void run('share')} disabled={busy} className="max-sm:h-10 max-sm:flex-1">
             {action === 'share' ? <Spinner /> : <Share />}
-            Share…
+            {t.export.actions.share}
           </Button>
         )}
       </div>
       <Button type="submit" form={formId} variant="primary" disabled={busy} className="min-w-40 max-sm:h-11 max-sm:w-full">
         {action === 'download' ? <Spinner /> : <Download />}
-        {action === 'download' && job.status === 'working' ? 'Preparing…' : 'Download PDF'}
+        {action === 'download' && job.status === 'working' ? t.export.actions.preparing : t.export.actions.download}
       </Button>
     </div>
   )
@@ -292,16 +300,17 @@ export function ExportDialog() {
     <Dialog
       open={open}
       onOpenChange={(next) => !next && close()}
-      title="Download PDF"
-      description="Your filled copy is created right here on your device — the file never leaves it."
+      title={t.export.title}
+      description={t.export.description}
       size="md"
       onOpenAutoFocus={onOpenAutoFocus}
       footer={footer}
     >
       <form id={formId} onSubmit={onSubmit} onKeyDown={onKeyDown} noValidate className="flex flex-col gap-5">
         <div>
-          <FieldLabel htmlFor={nameId}>File name</FieldLabel>
-          {/* Laid out in the name's direction, so ".pdf" follows its end: left of a Hebrew name. */}
+          <FieldLabel htmlFor={nameId}>{t.export.fileName}</FieldLabel>
+          {/* The name is what people typed: laid out in its own direction, whatever the interface's, so
+              ".pdf" follows its end (left of a Hebrew name, right of an English one). */}
           <div
             dir={nameDir}
             className={cn(
@@ -312,6 +321,7 @@ export function ExportDialog() {
             <input
               id={nameId}
               ref={inputRef}
+              dir="auto"
               value={baseName}
               onChange={onNameChange}
               onBlur={() => setBaseName((v) => finalFileName(v, docName).replace(/\.pdf$/, ''))}
@@ -343,8 +353,8 @@ export function ExportDialog() {
             checked={flatten}
             onCheckedChange={toggleFlatten}
             disabled={busy}
-            label="Flatten form fields"
-            description="Recommended when sending — values can no longer be edited"
+            label={t.export.flatten}
+            description={t.export.flattenHint}
           />
         )}
 
@@ -358,16 +368,14 @@ export function ExportDialog() {
         {nothingAdded && !error && (flattenForms || !passwordDropped) && (
           <p className="-mt-1 flex gap-2 text-[13px] text-fg-muted">
             <Info className="mt-px size-4 shrink-0 text-fg-subtle" aria-hidden />
-            {flattenForms
-              ? 'You haven’t added anything yet. The form fields will be flattened, so they can no longer be filled in.'
-              : 'You haven’t added anything yet, so the download will match the original file.'}
+            {flattenForms ? t.export.nothingAdded.flattened : t.export.nothingAdded.unchanged}
           </p>
         )}
 
         {passwordDropped && !error && (
           <p className="-mt-1 flex gap-2 text-[13px] text-fg-muted">
             <LockOpen className="mt-px size-4 shrink-0 text-fg-subtle" aria-hidden />
-            The downloaded copy won’t be password-protected: anyone who has the file can open it.
+            {t.export.passwordDropped}
           </p>
         )}
 
@@ -375,16 +383,16 @@ export function ExportDialog() {
           <div role="status" className="flex gap-2.5 rounded-xl border border-warning/25 bg-warning-soft px-3 py-2.5 text-[13px]">
             <TriangleAlert className="mt-px size-4 shrink-0 text-warning" aria-hidden />
             <div className="min-w-0">
-              <p className="font-medium text-fg">{notWritten.length === 1 ? 'A field couldn’t be filled in' : 'Some fields couldn’t be filled in'}</p>
-              <p className="mt-0.5 text-fg-muted">The PDF won’t include what you entered in {quotedList(notWritten)}.</p>
+              <p className="font-medium text-fg">{t.export.unwritten.title(notWritten.length)}</p>
+              <p className="mt-0.5 text-fg-muted">{t.export.unwritten.body(quotedList(notWritten), notWritten.length)}</p>
             </div>
           </div>
         )}
 
-        {notice && (
+        {shareAgain && (
           <p role="status" className="flex gap-2 rounded-xl bg-accent-soft px-3 py-2.5 text-[13px] text-fg">
             <Info className="mt-px size-4 shrink-0 text-accent-ink" aria-hidden />
-            {notice}
+            {t.export.shareAgain}
           </p>
         )}
 
@@ -392,7 +400,7 @@ export function ExportDialog() {
           <div role="alert" className="flex gap-2.5 rounded-xl border border-danger/25 bg-danger-soft px-3 py-2.5 text-[13px]">
             <CircleAlert className="mt-px size-4 shrink-0 text-danger" aria-hidden />
             <div className="min-w-0">
-              <p className="font-medium text-fg">Couldn’t create the PDF</p>
+              <p className="font-medium text-fg">{t.export.failed}</p>
               <p className="mt-0.5 text-fg-muted">{error}</p>
             </div>
           </div>
@@ -418,8 +426,8 @@ function FileSummary({
   progress: string
   size: number | null
 }) {
-  const parts = [plural(pages, 'page'), `${plural(items, 'item')} placed`]
-  if (fields !== null) parts.push(`${plural(fields, 'field')} filled`)
+  const t = useT()
+  const parts = summaryParts(pages, items, fields)
   return (
     <div className="flex items-center gap-3 rounded-xl border border-line bg-surface-2 p-3">
       <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent-ink">
@@ -427,7 +435,8 @@ function FileSummary({
       </div>
       <div className="min-w-0 flex-1">
         {/* Wraps between the parts, never inside one. Each part comes after a separator, and the
-            one that would start a line is clipped off (the line starts that much further left). */}
+            one that would start a line is clipped off (the line starts that much further out, to
+            the left, or the right in a right-to-left interface). */}
         <div className="overflow-hidden">
           <p className="-ms-4 flex flex-wrap text-sm font-medium text-fg">
             {parts.map((p) => (
@@ -450,7 +459,7 @@ function FileSummary({
           {status === 'ready' && (
             <>
               <CircleCheck className="size-3.5 shrink-0 text-success" aria-hidden />
-              <span>Ready{size !== null ? ` · ${formatFileSize(size)}` : ''}</span>
+              <span>{size !== null ? t.export.summary.readySize(formatFileSize(size)) : t.export.summary.ready}</span>
             </>
           )}
         </p>

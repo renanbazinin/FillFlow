@@ -1,4 +1,5 @@
 import { toast } from 'sonner'
+import { getT } from '../../../i18n'
 import type { Element, ElementPatch, Rect } from '../../../model/types'
 import { getSelectedElements, useEditor } from '../../../store/editor'
 import { unionRects } from '../../../lib/pdf/geometry'
@@ -27,9 +28,8 @@ export function deleteElements(ids: string[]): void {
   if (!els.length) return
   const deletable = els.filter((e) => !e.locked)
   if (!deletable.length) {
-    toast(els.length === 1 ? 'This item is locked' : 'These items are locked', {
-      description: els.length === 1 ? 'Unlock it to delete it.' : 'Unlock them to delete them.',
-    })
+    const m = getT().elements.toasts
+    toast(m.lockedTitle(els.length), { description: m.lockedBody(els.length) })
     return
   }
   finishActiveTextEdit()

@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { getT } from '../../i18n'
 
 export type SaveStatus = { state: 'idle' | 'saving' | 'saved' | 'error'; savedAt: number | null; error?: string }
 
@@ -9,7 +10,8 @@ export const IDLE_STATUS: SaveStatus = { state: 'idle', savedAt: null }
  *  - idle:   nothing changed since the document was opened,
  *  - saving: changes are waiting for (or in) the debounced write,
  *  - saved:  everything is stored on this device (`savedAt`),
- *  - error:  the last write failed (`error` is a short, human-readable reason).
+ *  - error:  the last write failed (`error` is a short, human-readable reason, in the interface
+ *            language of the moment it failed).
  */
 export const useSaveStatusStore = create<SaveStatus>(() => IDLE_STATUS)
 
@@ -19,15 +21,14 @@ export function setSaveStatus(next: SaveStatus): void {
   useSaveStatusStore.setState(next, true)
 }
 
-/** Why nothing can be stored where storage can't be used at all (see `StorageUnavailableError`). */
-export const STORAGE_BLOCKED = 'This browser is blocking storage for this site.'
-
-/** Short reason for a failed IndexedDB write. */
+/** Short reason for a failed IndexedDB write (a sentence, in the interface language). */
 export function describeStorageError(err: unknown): string {
   const name = typeof err === 'object' && err !== null && 'name' in err ? String(err.name) : ''
-  if (name === 'StorageUnavailableError') return STORAGE_BLOCKED
-  if (name === 'QuotaExceededError') return 'Storage on this device is full.'
-  if (name === 'InvalidStateError' || name === 'SecurityError') return 'Storage is unavailable in this browser window.'
-  if (name === 'DataCloneError') return 'This content could not be stored.'
-  return 'Storage on this device reported an error.'
+  const reason = getT().editor.storage
+  // Storage can't be used at all (see `StorageUnavailableError`).
+  if (name === 'StorageUnavailableError') return reason.blocked
+  if (name === 'QuotaExceededError') return reason.full
+  if (name === 'InvalidStateError' || name === 'SecurityError') return reason.window
+  if (name === 'DataCloneError') return reason.content
+  return reason.other
 }

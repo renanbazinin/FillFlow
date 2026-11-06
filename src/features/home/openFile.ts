@@ -1,6 +1,6 @@
 import { toast } from 'sonner'
+import { getT } from '../../i18n'
 import { useSaveStatusStore } from '../../lib/storage/saveStatus'
-import { bidiIsolate } from '../../lib/utils/misc'
 import { useEditor } from '../../store/editor'
 import { confirmLeaveDocument } from '../editor/leaveGuard'
 import { PDF_ACCEPT, SAMPLE_FORM_NAME, displayName, firstPdf, isPdfFile } from './pdfFiles'
@@ -15,7 +15,8 @@ import { PDF_ACCEPT, SAMPLE_FORM_NAME, displayName, firstPdf, isPdfFile } from '
  */
 export async function openPdfFile(file: File): Promise<boolean> {
   if (!isPdfFile(file)) {
-    toast.error(`“${bidiIsolate(file.name)}” isn’t a PDF`, { description: 'FillFlow opens PDF files only.' })
+    const m = getT().home.open
+    toast.error(m.notPdf(file.name), { description: m.pdfOnly })
     return false
   }
   const previous = useEditor.getState().doc
@@ -24,9 +25,8 @@ export async function openPdfFile(file: File): Promise<boolean> {
   const saved = useSaveStatusStore.getState().state !== 'error'
   const ok = await useEditor.getState().openDocument(file)
   if (ok && previous && saved && previous.id !== useEditor.getState().doc?.id) {
-    toast.success(`Your work on “${bidiIsolate(displayName(previous.name))}” is saved`, {
-      description: 'Reopen it any time from the home screen.',
-    })
+    const m = getT().home.open
+    toast.success(m.workSaved(displayName(previous.name)), { description: m.reopen })
   }
   return ok
 }
@@ -37,11 +37,11 @@ export async function openFirstPdf(files: FileList | File[]): Promise<boolean> {
   if (!list.length) return false
   const pdf = firstPdf(list)
   if (!pdf) {
-    const what = list.length === 1 ? `“${bidiIsolate(list[0].name)}” isn’t a PDF` : 'None of those files is a PDF'
+    const m = getT().home.open
     const images = list.some((f) => f.type.startsWith('image/'))
     const inEditor = useEditor.getState().doc !== null
-    toast.error(what, {
-      description: images && inEditor ? 'To add a picture to the page, use the Image tool.' : 'FillFlow opens PDF files only.',
+    toast.error(list.length === 1 ? m.notPdf(list[0].name) : m.noPdfs, {
+      description: images && inEditor ? m.useImageTool : m.pdfOnly,
     })
     return false
   }
@@ -96,7 +96,8 @@ export async function openSampleForm(): Promise<boolean> {
     return await useEditor.getState().openDocument({ name: SAMPLE_FORM_NAME, bytes })
   } catch (err) {
     console.error('[sample] could not load the sample form', err)
-    toast.error('Couldn’t load the sample form', { description: 'Check your connection and try again.' })
+    const m = getT().home.open
+    toast.error(m.sampleFailed, { description: m.checkConnection })
     return false
   }
 }

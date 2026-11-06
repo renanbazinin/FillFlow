@@ -1,6 +1,7 @@
 import type { ComponentProps, ReactNode } from 'react'
 import { Slot } from 'radix-ui'
 import { cn } from '../../lib/utils/misc'
+import type { Side } from './side'
 import { Tooltip } from './tooltip'
 
 // Filled variants are drawn with a border in forced colors mode (Windows Contrast themes), which
@@ -61,7 +62,7 @@ export interface IconButtonProps extends Omit<ButtonProps, 'children'> {
   shortcut?: string
   /** Pressed/toggled state (adds aria-pressed and an active style). */
   active?: boolean
-  tooltipSide?: 'top' | 'bottom' | 'left' | 'right'
+  tooltipSide?: Side
   /** Set false to suppress the tooltip (label is still used for a11y). */
   tooltip?: boolean
 }
